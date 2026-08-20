@@ -114,6 +114,12 @@ do not implement `navigator.requestMIDIAccess`. The code degrades gracefully:
 it checks for the API and logs `No MIDI support.` rather than throwing, so
 everything except hardware controller input still works.
 
+## Credits
+
+Built by [jamubc](https://github.com/jamubc) and
+[shubin123](https://github.com/shubin123) — both are credited in the badge in
+the bottom-right corner of the running page.
+
 ## Known limitations
 
 - **The document has no `<!DOCTYPE html>`.** It starts directly with `<html>`,
