@@ -6,6 +6,13 @@ loop recorder, a metronome, an oscilloscope, and Synthesia-style falling notes.
 
 Part of the [webgl](https://github.com/Shubin123/webgl) demo collection.
 
+## Status: ✅ Working
+
+Entirely self-contained — the only external request is the Poppins webfont. Hardware MIDI input is Chromium-only; everything else works everywhere.
+
+*Verified 2026-08-20 by requesting every external dependency this project uses over the network. The demo itself was not opened in a browser, so this reflects dependency health rather than a full functional test.*
+
+
 ## Signal chain
 
 Each held note builds its own voice graph and tears it down on release:
