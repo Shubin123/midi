@@ -4,7 +4,7 @@ A polyphonic subtractive synthesizer that runs entirely in the browser on the
 Web Audio API, with a playable on-screen keyboard, live MIDI input, a four-slot
 loop recorder, a metronome, an oscilloscope, and Synthesia-style falling notes.
 
-Part of the [webgl](https://github.com/Shubin123/webgl) demo collection.
+Part of the [project-demos](https://github.com/Shubin123/project-demos) collection.
 
 ## Status: ✅ Working
 
