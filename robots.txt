@@ -1,0 +1,27 @@
+User-agent: *
+# Allow crawling of all content by default for most user agents.
+# For a single-page application, the root (/) is the most important.
+Allow: /
+
+# Disallow access to specific paths if necessary.
+# For this SPA, there might not be many paths to disallow unless you have:
+# - Specific API endpoints you don't want crawled (though these are usually handled by server config).
+# - Admin sections (if any).
+# - Temporary file directories.
+# Example (uncomment and modify if needed):
+# Disallow: /admin/
+# Disallow: /temp-files/
+# Disallow: /api/internal/
+
+# If your CSS and JS files are in specific directories and you *only* want
+# them accessed via the HTML page (not directly indexed), you could disallow
+# those directories. However, modern search engines like Google prefer to
+# crawl CSS and JS to render pages accurately.
+# For inline CSS/JS or JS in the root, this is usually not an issue.
+# If you had an /assets/js/ or /assets/css/ directory, you might consider:
+# Disallow: /assets/js/ # (Generally not recommended for Googlebot)
+# Disallow: /assets/css/ # (Generally not recommended for Googlebot)
+
+# Point to your XML sitemap(s).
+# Replace "yourdomain.com" with your actual domain name.
+Sitemap: https://shubinwang.com/midi
