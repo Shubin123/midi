@@ -1,0 +1,24 @@
+# Normalize line endings
+* text=auto eol=lf
+
+# Explicitly binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.mp4 binary
+*.mp3 binary
+*.wav binary
+*.zip binary
+*.tar binary
+*.gz binary
+*.bin binary
+*.exe binary
+*.dll binary
+*.so binary
+*.pyc binary
