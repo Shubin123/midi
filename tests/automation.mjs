@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import { valueAt } from '../js/automation.js';
+const points=Array.from({length:16},(_,i)=>60+i*10);
+assert.equal(valueAt(points,0),60);
+assert.equal(valueAt(points,0.5),65);
+assert.equal(valueAt(points,0.99,'hold'),60);
+assert.equal(valueAt(points,1,'hold'),70);
+assert.equal(valueAt(points,15.9),210);
+assert.equal(valueAt(points,-1),60);
+console.log('Automation interpolation and boundaries passed.');

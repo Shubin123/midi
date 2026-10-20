@@ -94,9 +94,39 @@ A dedicated button force-stops every voice, clears the loop slots' playback
 timers, and rebuilds the audio graph, the standard escape hatch for when a
 stuck note leaves an oscillator droning.
 
+## Modular sequencer workspace
+
+The workspace adds a 16-step polyphonic sequencer and automation lanes for tempo
+(30–300 BPM), filter cutoff, resonance, master volume, and oscillator detune.
+Enable each lane to hear it; choose linear interpolation or held step values.
+Use Ramp up and Flatten to edit a whole lane, or adjust individual step values.
+Tempo automation changes sequencer speed as it plays. Stop restores manual values.
+Playback stops when the page is hidden to avoid delayed notes on returning.
+The original loop recorder still uses recorded event durations; tempo automation
+does not time-stretch those recordings.
+
+Drag a module by its header with a mouse or finger. Focus its header and use
+arrow keys to reorder with the keyboard. The width button toggles a wide module;
+mobile screens stack modules into one column. The hamburger menu can hide and
+restore every widget and reset the layout. Widget order, widths, visibility,
+sequence notes, and automation lanes persist in browser localStorage.
+
+Source files:
+
+- `js/synth.js`: existing synthesis, keyboard, MIDI, and loop recorder engine
+- `js/sequencer.js`: sequencer transport and automation editor
+- `js/automation.js`: automation targets, interpolation, and parameter application
+- `js/widgets.js`: responsive widget layout, dragging, and visibility
+- `js/storage.js`: browser persistence
+- `js/app.js`: module assembly
+- `workspace.css`: responsive workspace styling
+
+Run the interpolation checks with `node tests/automation.mjs`.
+Serve over HTTP as below; the new JavaScript modules require a web server.
+
 ## Running it
 
-Three static files, no build step and no bundler. The only external dependency
+Static HTML, CSS, and JavaScript modules, no build step and no bundler. The only external dependency
 is the Poppins webfont from Google Fonts.
 
 ```sh
@@ -111,8 +141,10 @@ MIDI additionally requires a secure context, `https://` or `http://localhost`.
 ## Layout
 
 ```
-index.html     markup, themes, and the entire synth engine inline
-stylemain.css  784 lines of themeable, scale-aware styling
+index.html     synth markup and module entry points
+js/            synthesis, sequencer, automation, widgets, and persistence modules
+stylemain.css  themeable synth styling
+workspace.css  responsive modular workspace
 robots.txt     crawl policy and sitemap pointer
 ```
 
@@ -131,11 +163,6 @@ the bottom-right corner of the running page.
 
 ## Known limitations
 
-- **The document has no `<!DOCTYPE html>`.** It starts directly with `<html>`,
-  which puts the page into quirks mode. Given how much of the layout depends on
-  percentage-based flex sizing for the keyboard and absolute positioning for
-  black keys, this is worth fixing: add the doctype and re-check the keyboard
-  geometry.
 - **The metronome uses `setInterval`.** `startMetronome` schedules ticks on a
   JavaScript timer rather than against the audio clock. Timer callbacks drift
   and are throttled in background tabs, so the click will wander relative to
@@ -147,7 +174,5 @@ the bottom-right corner of the running page.
   unlabelled even though the mapping continues.
 - Disabling the sub-oscillator or noise section silently forces its level slider
   to 0, so re-enabling it comes back muted rather than at the previous level.
-- The synth engine, the theme table and the loop recorder all live inline in
-  `index.html` across roughly a thousand densely packed lines. It works, but any
-  further feature work would be much easier after splitting the engine, the
-  sequencer and the UI into separate modules.
+- The sequencer uses an audio-clock-driven timer; timing can still be affected by
+  heavy main-thread load. Existing loop recordings retain their original timing.
