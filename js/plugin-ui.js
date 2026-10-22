@@ -14,7 +14,7 @@ export function renderParams(host, params, onChange) {
   host.append(el('label', { className: 'plugin-param' }, el('span', {}, p.label, ' ', out), input));
  });
 }
-const format = (p, v) => (Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 100) / 100) + (p.unit ? ' ' + p.unit : '');
+const format = (p, v) => p.format ? p.format(v) : (Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 100) / 100) + (p.unit ? ' ' + p.unit : '');
 export function card(id, title) {
  const section = el('section', { id, className: 'wide' });
  section.dataset.title = title; section.dataset.wide = 'true';

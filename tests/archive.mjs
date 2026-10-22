@@ -33,3 +33,15 @@ for (const name of ['p.zip', 'stored.zip', 'p.tar.gz', 'p.tar']) {
 await assert.rejects(readArchive(new Blob(['7z\xBC\xAF\x27\x1C']), 'x.7z'), /Unsupported archive format/);
 
 console.log('Archive reading passed.');
+
+// Round-trip through the ZIP writer used to export captured plugins.
+const { writeZip } = await import('../js/archive.js');
+const written = new Map([['plugin.json', new TextEncoder().encode('{"a":1}')], ['dir/ir.f32', new Uint8Array([1, 2, 3, 250])]]);
+const back = await readArchive(writeZip(written), 'x.zip');
+assert.deepEqual([...back.keys()], ['plugin.json', 'dir/ir.f32']);
+assert.deepEqual([...back.get('dir/ir.f32')], [1, 2, 3, 250]);
+writeFileSync(join(dir, 'written.zip'), Buffer.from(await writeZip(written).arrayBuffer()));
+execFileSync('unzip', ['-tq', join(dir, 'written.zip')]);
+const bundle = await readArchive(writeZip(new Map([['Synth.vst3/Contents/x', new Uint8Array([1])]])), 'synth.zip');
+assert.deepEqual([...bundle.keys()], ['Synth.vst3/Contents/x'], 'a lone plug-in bundle folder must be kept');
+console.log('ZIP writer round-trip passed.');

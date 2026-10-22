@@ -167,6 +167,7 @@
                 }
                 
                 const now = audioContext.currentTime;
+                if (slotId !== -1 || !activeSoundUnits[noteString] || forceRetrigger) emitNote(noteString, velocity, true);
 
                 if (slotId === -1) { 
                     if (activeSoundUnits[noteString] && !forceRetrigger) { 
@@ -311,6 +312,7 @@
                     : activeSoundUnits[noteString];
 
                 if (!unit) return; 
+                emitNote(noteString, 0, false);
 
                 const now = audioContext.currentTime; 
                 let relTime;
@@ -404,8 +406,12 @@
             function toggleNoiseControls(enabled) { noiseControls.style.display = enabled ? '' : 'none'; if (!enabled && parseFloat(levelNoiseInput.value) > 0) {levelNoiseInput.value = 0;levelNoiseInput.dispatchEvent(new Event('input'));} else if (enabled && parseFloat(levelNoiseInput.value) === 0) {levelNoiseInput.value = 0.05;levelNoiseInput.dispatchEvent(new Event('input'));} }
 
 
+            // Lets plug-in instruments follow every note source: keyboard, MIDI, sequencer, and looper.
+            function emitNote(noteString, velocity, on) { const nN=noteString.replace(/\d+$/,''); const midi=parseInt(noteString.match(/\d+$/)[0])*12+midiNoteNames.indexOf(nN); window.dispatchEvent(new CustomEvent('synth:note',{detail:{note:noteString,midi,velocity,on}})); }
+
             function emergencyStopAllSounds() {
                 console.warn("PANIC: Stopping all sounds!"); 
+                window.dispatchEvent(new Event('synth:panic'));
 
                 if(!audioContext)return; 
                 const now = audioContext.currentTime; 

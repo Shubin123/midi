@@ -123,6 +123,8 @@ Source files:
 - `js/air-widget.js`, `plugins/air/`: built-in Air enhancer
 - `js/archive.js`, `js/plugin-host.js`, `plugin-sw.js`: archive plugin loader
 - `js/native-id.js`, `js/plist.js`: native plugin identification
+- `js/vst3-runtime.js`, `js/vst3-worklet.js`, `native/`: VST3 plug-ins compiled to WebAssembly
+- `js/capture.js`, `js/capture-engine.js`: plug-in capture and its playback engine
 - `js/vendor/webaudiomodules-sdk.js`: Web Audio Modules host SDK (MIT)
 - `workspace.css`: responsive workspace styling
 
@@ -176,38 +178,109 @@ Saturator and Chorus. They live in `plugins/<name>/` and ship as zips built by
 `tools/pack-plugins.sh`, so they load through the same path as any other
 plugin.
 
-### Native plugins: identified, not run
+### VST3 plug-ins (WebAssembly)
 
-VST3, Audio Unit, VST2, CLAP and AAX plugins are compiled machine code for one
-operating system, and browsers only run JavaScript and WebAssembly. They
-can't run here, zipped or not. Instead, `js/native-id.js` reads what the
-plugin says about itself, entirely in the browser:
+VST3 bundles that contain a WebAssembly build load and play like any other
+plug-in. Drop the zipped `.vst3` bundle on the widget. Effects process the
+synth. Instruments play from the keyboard, MIDI, the sequencer and the
+looper, replacing the built-in synth unless **Layer built-in synth** is
+ticked. Modules with several plug-ins get a picker, and parameters show the
+plug-in's own value text.
+
+How it works: `native/vst3web/vst3web.cpp` is a small VST3 host written
+against the official [VST3 SDK](https://github.com/steinbergmedia/vst3sdk)
+hosting classes (`HostApplication`, `HostProcessData`, `ParameterChanges`,
+`EventList`). It is compiled into the same WebAssembly module as the
+plug-in, where it drives the plug-in through the real VST3 interfaces
+(`IPluginFactory`, `IComponent`, `IAudioProcessor`, `IEditController`,
+`IConnectionPoint`). The browser runs that module in an AudioWorklet
+(`js/vst3-worklet.js`) through `js/vst3-runtime.js`. The bundle uses the
+standard VST3 layout, with `wasm32-web` as the architecture folder:
+
+```
+Name.vst3/Contents/wasm32-web/Name.wasm
+Name.vst3/Contents/Resources/VST3-SDK-LICENSE.txt
+```
+
+`native/build.sh` builds bundles with Emscripten. It fetches the SDK at a
+pinned commit:
+
+```sh
+native/build.sh                         # Steinberg's ADelay and the 34 MDA plug-ins
+native/build.sh MyPlugin path/to/source # any VST3 plug-in whose source builds with the SDK
+```
+
+The bundled builds are listed under **Add built-in**:
+
+- **Steinberg ADelay**
+- **The MDA collection**: 30 effects, the DX10, JX10, Piano and ePiano
+  instruments, and a test-tone generator.
+
+`node tests/vst3-wasm.mjs` opens all 35 classes, processes audio through
+each one or plays a note on it, and checks the output.
+
+Plug-in editors (VSTGUI or other native GUI code) are not compiled in. The
+widget shows generic controls for every parameter.
+
+### Native plug-ins: identified, not run
+
+A VST3, Audio Unit, VST2, CLAP or AAX file that only contains macOS,
+Windows or Linux machine code can't run in a browser. Browsers execute
+only JavaScript and WebAssembly, and the binary also depends on its
+operating system's frameworks. For these files, `js/native-id.js` reads
+what the plug-in says about itself, entirely in the browser:
 
 | Source | What it reads |
 | --- | --- |
 | `Contents/Info.plist` (XML or binary) | name, bundle ID, version, minimum macOS, Audio Unit type and vendor |
-| `Contents/Resources/moduleinfo.json` | VST3 class name, vendor, version, SDK version, sub-categories (`Fx`/`Reverb`, `Instrument`/`Synth`, ...) |
-| Binaries (Mach-O, PE, ELF headers) | platform and CPU architectures (e.g. macOS x86_64 + arm64, Windows x64) |
-| Strings inside binaries | VST3 sub-categories, VST SDK version, framework (JUCE, iPlug2, DPF, HISE, ...) |
-| `.pkg` installers (xar) | each component's `PackageInfo` and gzip cpio `Payload`, so plugins are found inside installers |
-| Nested archives, `.dmg`, `.exe`, `.msi` | nested `.zip`/`.tar.gz` are opened; disk images and Windows installers are flagged with what to do instead |
+| `Contents/Resources/moduleinfo.json` | VST3 class name, vendor, version, SDK version, sub-categories |
+| Binaries (Mach-O, PE, ELF, WebAssembly headers) | platform and CPU architectures |
+| Strings inside binaries | VST3 sub-categories, VST SDK version, framework (JUCE, iPlug2, DPF, ...) |
+| `.pkg` installers (xar) | each component's `PackageInfo` and gzip cpio `Payload` |
+| Nested archives, `.dmg`, `.exe`, `.msi` | nested archives are opened; the others are flagged with next steps |
 
-Builds of one plugin in several formats share a bundle ID, so a VST3 whose
-binary is only a loader takes its type from the matching Audio Unit, and the
-card says so.
+Each card then offers three routes: rebuild from source with
+`native/build.sh`, **Capture its sound**, or a quick built-in stand-in.
 
-Each identified plugin gets a card with these details and next steps:
+### Capturing a plug-in's sound
 
-- For an effect, a **Use … instead** button that loads the closest built-in
-  effect, matched by category or name.
-- The framework it was built with. iPlug2 can export Web Audio Modules
-  directly; JUCE and DPF have experimental WebAssembly builds.
-- A link to find web plugins.
+When there's no source code, a plug-in's behavior can be measured instead.
+**Capture a plugin** generates a test signal: an exponential sine sweep
+plus stepped-level 100 Hz tones. Run it through the plug-in in any DAW,
+export the result, and drop it back on the widget. `js/capture.js` then
+fits one general model:
+
+- an impulse response, from regularized FFT deconvolution of the sweep;
+- a level curve, from the stepped tones, kept only if it improves the fit.
+
+It also reports the plug-in's latency and how closely the model matches.
+`js/capture-engine.js` runs the model as a plug-in with Input, Mix and
+Output controls, and **Export .zip** shares it.
+
+Tone, EQ, filtering, reverb, delay and saturation carry over. Modulation
+and compressor timing are approximated, and the score says so.
+`tests/capture.html` checks the method against reference effects:
+
+| Reference effect | Match |
+| --- | --- |
+| Linear EQ, reverb, latency + shelf | 100% |
+| Saturation | 99% |
+| Compressor | 98% |
+| Chorus | 80% (flagged "Rough") |
+
+### Licensing
+
+The VST3 SDK is MIT-licensed (`LICENSES/VST3-SDK.txt`), and its license
+ships inside every built bundle. The MDA plug-ins and ADelay are SDK
+samples under the same license. VST is a trademark of Steinberg Media
+Technologies GmbH; this project only uses the name to describe the format.
 
 The service worker needs `https://` or `http://localhost`. Tests:
-`node tests/archive.mjs` covers the archive reader. `node tests/native-id.mjs`
-(macOS) builds real universal binaries, VST3 and AU bundles and a product
-`.pkg` with `clang`, `pkgbuild` and `productbuild`, then identifies them.
+
+- `node tests/archive.mjs`: archive reading and writing
+- `node tests/native-id.mjs`: identification (macOS; uses `clang`, `pkgbuild` and `productbuild`)
+- `node tests/vst3-wasm.mjs`: the WebAssembly VST3 builds
+- `tests/capture.html` in a browser: capture accuracy
 
 ## Running it
 
@@ -231,6 +304,8 @@ js/            synthesis, sequencer, automation, widgets, plugins, and persisten
 plugin-sw.js   service worker that serves files from loaded plugin archives
 plugins/       built-in effects (source and zip)
 tools/         plugin packaging script
+native/        VST3 SDK host shim and WebAssembly build script
+LICENSES/      third-party licenses
 stylemain.css  themeable synth styling
 workspace.css  responsive modular workspace
 robots.txt     crawl policy and sitemap pointer

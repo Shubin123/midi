@@ -79,8 +79,32 @@ function normalize(files) {
   clean.set(parts.join('/'), data);
  }
  const roots = new Set([...clean.keys()].map(p => p.split('/')[0]));
- if (roots.size === 1 && [...clean.keys()].every(p => p.includes('/'))) {
+ // A plug-in bundle folder (Name.vst3/, Name.component/, ...) is the plug-in itself, never a wrapper to strip.
+ if (roots.size === 1 && [...clean.keys()].every(p => p.includes('/')) && !/\.(vst3|component|vst|clap|aaxplugin)$/i.test([...roots][0])) {
   return new Map([...clean].map(([p, d]) => [p.slice(p.indexOf('/') + 1), d]));
  }
  return clean;
+}
+
+// Writes an uncompressed ZIP (method 0) from a Map of paths to Uint8Array contents.
+const crcTable = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+const crc32 = data => { let c = 0xffffffff; for (const b of data) c = crcTable[(c ^ b) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+export function writeZip(files) {
+ const parts = [], central = [], enc = new TextEncoder();
+ let offset = 0;
+ for (const [path, data] of files) {
+  const name = enc.encode(path), crc = crc32(data);
+  const local = new DataView(new ArrayBuffer(30));
+  local.setUint32(0, 0x04034b50, true); local.setUint16(4, 20, true); local.setUint32(14, crc, true);
+  local.setUint32(18, data.length, true); local.setUint32(22, data.length, true); local.setUint16(26, name.length, true);
+  const dir = new DataView(new ArrayBuffer(46));
+  dir.setUint32(0, 0x02014b50, true); dir.setUint16(4, 20, true); dir.setUint16(6, 20, true); dir.setUint32(16, crc, true);
+  dir.setUint32(20, data.length, true); dir.setUint32(24, data.length, true); dir.setUint16(28, name.length, true); dir.setUint32(42, offset, true);
+  parts.push(local, name, data); central.push(dir, name);
+  offset += 30 + name.length + data.length;
+ }
+ const size = central.reduce((n, p) => n + p.byteLength, 0), end = new DataView(new ArrayBuffer(22));
+ end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.size, true); end.setUint16(10, files.size, true);
+ end.setUint32(12, size, true); end.setUint32(16, offset, true);
+ return new Blob([...parts, ...central, end], { type: 'application/zip' });
 }

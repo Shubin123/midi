@@ -101,6 +101,7 @@ export function binaryInfo(b) {
    return { platform: 'Windows', archs: [({ 0x8664: 'x64', 0xaa64: 'arm64', 0x14c: 'x86', 0xa641: 'arm64ec' })[m] || `machine 0x${m.toString(16)}`] };
   }
  }
+ if (be === 0x0061736d) return { platform: 'WebAssembly', archs: ['wasm32'] };
  if (be === 0x7f454c46) { const m = v.getUint16(18, true); return { platform: 'Linux', archs: [({ 62: 'x86_64', 183: 'aarch64', 3: 'x86', 40: 'arm' })[m] || `machine ${m}`] }; }
  return null;
 }

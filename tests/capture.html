@@ -1,0 +1,55 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Capture accuracy test</title>
+<pre id="out">running…</pre>
+<script type="module">
+// Renders the capture test signal through reference effects with known behavior (standing in for a DAW
+// render of a real plugin), captures each one, then replays the capture through the plugin engine.
+// Serve the repo over HTTP and open tests/capture.html; results also land in window.results.
+import { testSignal, analyze, verdict } from '../js/capture.js';
+import { createCapturedPlugin } from '../js/capture-engine.js';
+
+const rate = 48000, input = testSignal(rate);
+async function render(build, channels = [input]) {
+ const ctx = new OfflineAudioContext(2, channels[0].length, rate);
+ const buf = ctx.createBuffer(channels.length, channels[0].length, rate);
+ channels.forEach((c, i) => buf.copyToChannel(c, i));
+ const src = ctx.createBufferSource(); src.buffer = buf;
+ const out = await build(ctx, src);
+ out.connect(ctx.destination); src.start();
+ const r = await ctx.startRendering();
+ return [r.getChannelData(0), r.getChannelData(1)];
+}
+const noiseIr = (ctx, seconds) => {
+ const b = ctx.createBuffer(2, rate * seconds, rate);
+ for (let c = 0; c < 2; c++) { const d = b.getChannelData(c); let seed = 7 + c; for (let i = 0; i < d.length; i++) { seed = (seed * 16807) % 2147483647; d[i] = (seed / 2147483647 * 2 - 1) * Math.exp(-i / (rate * seconds / 6)) * 0.3; } d[0] = 1; }
+ return b;
+};
+const cases = {
+ 'EQ (lowpass 2 kHz, -3 dB)': (ctx, src) => { const f = new BiquadFilterNode(ctx, { frequency: 2000 }), g = new GainNode(ctx, { gain: 0.7 }); return src.connect(f).connect(g); },
+ 'Reverb (1.5 s stereo)': (ctx, src) => { const c = new ConvolverNode(ctx, { disableNormalization: true }); c.buffer = noiseIr(ctx, 1.5); return src.connect(c); },
+ 'Latency 5 ms + high shelf': (ctx, src) => { const d = new DelayNode(ctx, { delayTime: 0.005 }), f = new BiquadFilterNode(ctx, { type: 'highshelf', frequency: 6000, gain: 6 }); return src.connect(d).connect(f); },
+ 'Saturation (tanh) into tone filter': (ctx, src) => {
+  const curve = Float32Array.from({ length: 2048 }, (_, i) => Math.tanh(3 * (i / 1023.5 - 1)) / 3 * 1.5);
+  const s = new WaveShaperNode(ctx, { curve }), f = new BiquadFilterNode(ctx, { frequency: 5000 }); return src.connect(s).connect(f);
+ },
+ 'Chorus (time-varying)': (ctx, src) => {
+  const out = new GainNode(ctx), d = new DelayNode(ctx, { delayTime: 0.012 }), lfo = new OscillatorNode(ctx, { frequency: 0.8 }), depth = new GainNode(ctx, { gain: 0.004 });
+  lfo.connect(depth).connect(d.delayTime); lfo.start(); src.connect(d).connect(out); src.connect(out); return out;
+ },
+ 'Compressor (dynamic)': (ctx, src) => src.connect(new DynamicsCompressorNode(ctx, { threshold: -30, ratio: 8, attack: 0.005, release: 0.1 }))
+};
+const results = [];
+for (const [name, build] of Object.entries(cases)) {
+ const recorded = await render(build);
+ const cap = await analyze(recorded, rate);
+ // Replay the capture through the same engine the plugin chain uses and compare with the reference effect.
+ const model = { name, sampleRate: rate, latency: cap.latency, points: cap.points, channels: 2, length: cap.ir[0].length };
+ const replay = await render(async (ctx, src) => { const p = await createCapturedPlugin(ctx, model, cap.ir); src.connect(p.input); return p.output; });
+ let err = 0, sig = 0;
+ for (let c = 0; c < 2; c++) for (let i = Math.max(0, cap.shift); i < input.length; i++) { const r = recorded[c][i - cap.shift] ?? 0; err += (r - replay[c][i]) ** 2; sig += r * r; }
+ results.push({ name, verdict: verdict(cap.esr)[0], analysisMatch: +(100 * (1 - cap.esr)).toFixed(2), engineMatch: +(100 * (1 - err / sig)).toFixed(2), latencyMs: +cap.report.latencyMs.toFixed(2), irSeconds: +cap.report.irSeconds.toFixed(2), levelSpreadDb: +cap.report.levelSpreadDb.toFixed(2) });
+}
+window.results = results;
+document.getElementById('out').textContent = JSON.stringify(results, null, 1);
+</script>
