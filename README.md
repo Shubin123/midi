@@ -122,6 +122,7 @@ Source files:
 - `js/fx-chain.js`: ordered insert chain for effects and plugins
 - `js/air-widget.js`, `plugins/air/`: built-in Air enhancer
 - `js/archive.js`, `js/plugin-host.js`, `plugin-sw.js`: archive plugin loader
+- `js/native-id.js`, `js/plist.js`: native plugin identification
 - `js/vendor/webaudiomodules-sdk.js`: Web Audio Modules host SDK (MIT)
 - `workspace.css`: responsive workspace styling
 
@@ -134,7 +135,7 @@ Two widgets add effects to the master output, between master volume and the
 limiter (`js/fx-chain.js` keeps them in order):
 
 ```
-synth ── master gain ── Air ── web plugins ── limiter ── output
+synth ── master gain ── Air ── plugins ── limiter ── output
 ```
 
 Everything runs in the browser. Once the page has loaded, nothing is
@@ -147,17 +148,17 @@ a peaking boost around 2.8 kHz (Mid Air), a high shelf around 9.5 kHz, and a
 saturated top-octave exciter blended back in (High Air), plus a trim. It is
 not a copy of any commercial plugin. The source is `plugins/air/index.js`.
 
-### Web plugins (ZIP)
+### Plugins
 
-Drop a `.zip`, `.tar`, `.tar.gz` or `.tgz` on the widget, or pick one with
-**Load archive**. The archive is decompressed in memory with
-`DecompressionStream`, and its files are stored in the browser's Cache API.
-`plugin-sw.js`, a service worker running in the browser, serves them under
-`plugin-fs/<id>/`, so a plugin's relative imports, AudioWorklet modules and
-`fetch` calls resolve as they would on a web server. Installed plugins and
-their settings come back after a reload.
+Drop a file, a folder, or a `.zip`, `.tar`, `.tar.gz` or `.tgz` on the
+widget, or pick one with **Load file**. Archives are decompressed in memory
+with `DecompressionStream`, and web plugins' files are stored in the
+browser's Cache API. `plugin-sw.js`, a service worker running in the browser,
+serves them under `plugin-fs/<id>/`, so a plugin's relative imports,
+AudioWorklet modules and `fetch` calls resolve as they would on a web server.
+Installed plugins and their settings come back after a reload.
 
-Supported plugin formats:
+Web plugins that load and run:
 
 - **Web Audio Modules 2.0**: an archive with `index.js` (default export is the
   WAM class) and usually `descriptor.json`. Plugins from the
@@ -168,17 +169,45 @@ Supported plugin formats:
   default export is `createPlugin(audioContext)` returning
   `{ name, input, output, params, setParam, destroy }`. `params` entries are
   `{ id, label, min, max, step, value, unit }`, and the widget generates
-  sliders for them. **Load bundled Air.zip** installs `plugins/air.zip` as an
-  example; rebuild it with `tools/pack-plugins.sh`.
+  sliders for them.
 
-**Native plugins (VST3, AU, AAX, CLAP) can't be loaded.** They are compiled
-machine code for one operating system, and browsers only run JavaScript and
-WebAssembly. Compression doesn't change that. When an archive contains one,
-the widget names the file and explains why it can't load it. A plugin can
-only run here if its developer builds it for the web, as a Web Audio Module.
+**Built-in effects** (**Add built-in**): Air, Reverb, Delay, Compressor,
+Saturator and Chorus. They live in `plugins/<name>/` and ship as zips built by
+`tools/pack-plugins.sh`, so they load through the same path as any other
+plugin.
 
-The service worker needs `https://` or `http://localhost`. Run
-`node tests/archive.mjs` to test the archive reader.
+### Native plugins: identified, not run
+
+VST3, Audio Unit, VST2, CLAP and AAX plugins are compiled machine code for one
+operating system, and browsers only run JavaScript and WebAssembly. They
+can't run here, zipped or not. Instead, `js/native-id.js` reads what the
+plugin says about itself, entirely in the browser:
+
+| Source | What it reads |
+| --- | --- |
+| `Contents/Info.plist` (XML or binary) | name, bundle ID, version, minimum macOS, Audio Unit type and vendor |
+| `Contents/Resources/moduleinfo.json` | VST3 class name, vendor, version, SDK version, sub-categories (`Fx`/`Reverb`, `Instrument`/`Synth`, ...) |
+| Binaries (Mach-O, PE, ELF headers) | platform and CPU architectures (e.g. macOS x86_64 + arm64, Windows x64) |
+| Strings inside binaries | VST3 sub-categories, VST SDK version, framework (JUCE, iPlug2, DPF, HISE, ...) |
+| `.pkg` installers (xar) | each component's `PackageInfo` and gzip cpio `Payload`, so plugins are found inside installers |
+| Nested archives, `.dmg`, `.exe`, `.msi` | nested `.zip`/`.tar.gz` are opened; disk images and Windows installers are flagged with what to do instead |
+
+Builds of one plugin in several formats share a bundle ID, so a VST3 whose
+binary is only a loader takes its type from the matching Audio Unit, and the
+card says so.
+
+Each identified plugin gets a card with these details and next steps:
+
+- For an effect, a **Use … instead** button that loads the closest built-in
+  effect, matched by category or name.
+- The framework it was built with. iPlug2 can export Web Audio Modules
+  directly; JUCE and DPF have experimental WebAssembly builds.
+- A link to find web plugins.
+
+The service worker needs `https://` or `http://localhost`. Tests:
+`node tests/archive.mjs` covers the archive reader. `node tests/native-id.mjs`
+(macOS) builds real universal binaries, VST3 and AU bundles and a product
+`.pkg` with `clang`, `pkgbuild` and `productbuild`, then identifies them.
 
 ## Running it
 
@@ -200,7 +229,7 @@ MIDI additionally requires a secure context, `https://` or `http://localhost`.
 index.html     synth markup and module entry points
 js/            synthesis, sequencer, automation, widgets, plugins, and persistence modules
 plugin-sw.js   service worker that serves files from loaded plugin archives
-plugins/       bundled example plugin (source and zip)
+plugins/       built-in effects (source and zip)
 tools/         plugin packaging script
 stylemain.css  themeable synth styling
 workspace.css  responsive modular workspace

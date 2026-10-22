@@ -84,6 +84,3 @@ function normalize(files) {
  }
  return clean;
 }
-
-// Native plugin and installer formats the browser cannot execute.
-export const nativeFormats = /^(.*?\.(?:vst3|vst|component|aaxplugin|clap|dll|so|dylib|pkg|dmg|exe|msi))(?:\/|$)/i;

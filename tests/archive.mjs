@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readArchive, nativeFormats } from '../js/archive.js';
+import { readArchive } from '../js/archive.js';
 
 const blob = path => new Blob([readFileSync(path)]);
 const text = bytes => new TextDecoder().decode(bytes);
@@ -32,6 +32,4 @@ for (const name of ['p.zip', 'stored.zip', 'p.tar.gz', 'p.tar']) {
 }
 await assert.rejects(readArchive(new Blob(['7z\xBC\xAF\x27\x1C']), 'x.7z'), /Unsupported archive format/);
 
-assert.equal('Fresh/Thing.vst3/Contents/MacOS/Thing'.match(nativeFormats)[1], 'Fresh/Thing.vst3');
-assert.equal('plugins/index.js'.match(nativeFormats), null);
 console.log('Archive reading passed.');
