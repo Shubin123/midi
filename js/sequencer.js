@@ -16,6 +16,8 @@ export function createSequencer() {
  automation.innerHTML='<div class="module-content"><div class="sequence-toolbar"><strong>Motion, one step at a time.</strong><select id="automation-target" aria-label="Automation target"></select><button id="add-lane">+ Add lane</button></div><p class="module-hint">Enable a lane to automate it. Drag the values or type a value at any step. Linear blends between points; hold keeps each value until the next step. Lanes repeat with the pattern.</p><div id="lanes"></div></div>';
  const select=automation.querySelector('select');Object.entries(targets).forEach(([id,t])=>{const opt=document.createElement('option');opt.value=id;opt.textContent=t.label;select.append(opt);});
  let running=false,timer,phase=0,lastTime=0,lastStep=-1,active=new Set(),releaseAt=0,snapshot={};
+ // A bounce plays a set number of bars without metronome clicks and resolves when playback stops.
+ let bars=0,barLimit=Infinity,clicks=true,onStopped=null;
  const release=()=>{active.forEach(note=>window.synth.noteOff(note));active.clear();};
  const restore=lane=>{if(snapshot[lane.target]!==undefined)apply(lane.target,snapshot[lane.target]);};
  const renderLanes=()=>{
@@ -46,14 +48,17 @@ export function createSequencer() {
   lanes.filter(l=>l.enabled).forEach(l=>apply(l.target,valueAt(l.points,phase,l.mode)));
   const step=Math.floor(phase);
   if(now>=releaseAt)release();
-  if(step!==lastStep){release();lastStep=step;notes.forEach((note,r)=>{if(pattern[r][step]){window.synth.noteOn(note);active.add(note);}});releaseAt=now+60/window.synth.tempo/4*0.72;if(step%4===0)window.synth.click();cells.forEach(c=>c.classList.toggle('playing',Number(c.dataset.step)===step));position.textContent=`Step ${step+1} / 16 · ${window.synth.tempo.toFixed(1)} BPM`;}
+  if(step!==lastStep){if(lastStep>=0&&step<lastStep&&++bars>=barLimit){stop();return;}release();lastStep=step;notes.forEach((note,r)=>{if(pattern[r][step]){window.synth.noteOn(note);active.add(note);}});releaseAt=now+60/window.synth.tempo/4*0.72;if(step%4===0&&clicks)window.synth.click();cells.forEach(c=>c.classList.toggle('playing',Number(c.dataset.step)===step));position.textContent=`Step ${step+1} / 16 · ${window.synth.tempo.toFixed(1)} BPM`;}
  };
- const stop=()=>{if(!running)return;running=false;clearInterval(timer);release();Object.entries(snapshot).forEach(([target,value])=>apply(target,value));window.synth.resumeClick();phase=0;lastStep=-1;play.textContent='▶ Play';position.textContent='Stopped · 16 steps / 1 bar';cells.forEach(c=>c.classList.remove('playing'));};
- play.onclick=async()=>{if(running){stop();return;}const context=window.synth.context;if(!context){position.textContent='Audio unavailable';return;}await context.resume();snapshot={tempo:window.synth.tempo};Object.keys(targets).filter(t=>t!=='tempo').forEach(t=>snapshot[t]=Number(document.getElementById(t).value));running=true;phase=0;lastStep=-1;lastTime=context.currentTime;window.synth.suspendClick();play.textContent='Ⅱ Stop';tick();timer=setInterval(tick,10);};
+ const stop=()=>{if(!running)return;running=false;clearInterval(timer);release();Object.entries(snapshot).forEach(([target,value])=>apply(target,value));window.synth.resumeClick();phase=0;lastStep=-1;play.textContent='▶ Play';position.textContent='Stopped · 16 steps / 1 bar';cells.forEach(c=>c.classList.remove('playing'));barLimit=Infinity;clicks=true;const done=onStopped;onStopped=null;done?.();};
+ const start=async(options={})=>{if(running)return;const context=window.synth.context;if(!context){position.textContent='Audio unavailable';return;}await context.resume();snapshot={tempo:window.synth.tempo};Object.keys(targets).filter(t=>t!=='tempo').forEach(t=>snapshot[t]=Number(document.getElementById(t).value));running=true;phase=0;lastStep=-1;lastTime=context.currentTime;window.synth.suspendClick();play.textContent='Ⅱ Stop';bars=0;barLimit=options.bars??Infinity;clicks=options.click??true;const stopped=new Promise(r=>onStopped=r);options.onStart?.();tick();timer=setInterval(tick,10);return stopped;};
+ play.onclick=()=>running?stop():start();
  sequence.querySelector('#seq-stop').onclick=stop;
  sequence.querySelector('#seq-clear').onclick=()=>{pattern=notes.map(()=>Array(16).fill(false));cells.forEach(c=>{c.classList.remove('on');c.setAttribute('aria-pressed','false');});persist();};
+ const refresh=()=>cells.forEach((c,k)=>{const on=!!pattern[Math.floor(k/16)][k%16];c.classList.toggle('on',on);c.setAttribute('aria-pressed',on);});
+ const setPattern=p=>{pattern=p;refresh();persist();};
  document.getElementById('stopAllSoundsButton').addEventListener('click',stop,true);
  window.addEventListener('pagehide',stop);
  document.addEventListener('visibilitychange',()=>{if(document.hidden)stop();});
- return {sequence,automation};
+ return {sequence,automation,api:{notes,get pattern(){return pattern;},setPattern,start,stop,get running(){return running;},get lanes(){return lanes;}}};
 }

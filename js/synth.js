@@ -1067,5 +1067,19 @@ window.synth = {
  noteOff: note => stopNote(note, 'emergency'),
  click: () => { if (metronomeEnabled) metronomeTick(); },
  suspendClick: () => stopMetronome(),
- resumeClick: () => { if (metronomeEnabled) startMetronome(); }
+ resumeClick: () => { if (metronomeEnabled) startMetronome(); },
+ get output() { return masterLimiter; },
+ params: () => getCurrentSynthParams(),
+ loops: () => loopSlotsData.map(s => ({ events: s.recordedEvents, duration: s.loopDuration, busy: s.isRecording || s.isPlaying })),
+ setLoop: (id, events, duration) => {
+  const slot = loopSlotsData[id];
+  if (slot.isRecording) slot.isRecording = false;
+  if (slot.isPlaying) stopPlaybackForSlot(id);
+  Object.assign(slot, { recordedEvents: events, loopDuration: duration, quantizeStartTime: 0, soundUnits: {}, statusText: `Imported (${(duration / 1000).toFixed(1)}s)` });
+  slot.notesCurrentlyPlaying.clear();
+  updateAllLoopSlotButtons();
+ },
+ // Starts a loop slot immediately, skipping beat quantization, so a bounce begins on its first frame.
+ playLoop: id => { if (!audioContext) initAudio(); const slot = loopSlotsData[id]; if (slot.isPlaying || !slot.recordedEvents.length || slot.loopDuration <= 0) return false; const q = slot.quantizeStartTime; slot.quantizeStartTime = 0; startPlaybackForSlot(id); slot.quantizeStartTime = q; return true; },
+ stopLoop: id => stopPlaybackForSlot(id)
 };

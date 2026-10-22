@@ -125,11 +125,33 @@ Source files:
 - `js/native-id.js`, `js/plist.js`: native plugin identification
 - `js/vst3-runtime.js`, `js/vst3-worklet.js`, `native/`: VST3 plug-ins compiled to WebAssembly
 - `js/capture.js`, `js/capture-engine.js`: plug-in capture and its playback engine
+- `js/io-widget.js`, `js/audio-files.js`, `js/midi-file.js`, `js/recorder-worklet.js`: import and export
 - `js/vendor/webaudiomodules-sdk.js`: Web Audio Modules host SDK (MIT)
 - `workspace.css`: responsive workspace styling
 
 Run the interpolation checks with `node tests/automation.mjs`.
 Serve over HTTP as below; the new JavaScript modules require a web server.
+
+## Import and export
+
+The **Import / Export** widget moves sounds in and out in the formats every DAW
+reads.
+
+| Direction | What | Formats |
+| --- | --- | --- |
+| Export audio | **Record** the master output (after effects), or **Render audio** of the step sequencer or a loop slot | WAV 24-bit, 16-bit (dithered) or 32-bit float; AIFF 24-bit or 16-bit |
+| Export notes | **Export MIDI** of the step sequencer or a loop slot | Standard MIDI File (.mid), type 1, with tempo (an enabled tempo lane becomes tempo changes) |
+| Import audio | Drop or pick a file; it becomes a clip you can play, run through the effect chain, and download in any export format | WAV and AIFF/AIFC at any bit depth, read at their own sample rate; FLAC, MP3, Ogg and M4A through the browser's decoder |
+| Import notes | Drop a .mid into a loop slot (full timing, plays with the current patch) or the step sequencer (first bar, snapped to sixteenths) | .mid type 0 or 1, tempo map and time signature honoured |
+
+Render audio plays in real time while recording and cuts the file to exactly
+the chosen number of bars or loop lengths, so it lines up on a DAW's grid.
+Tick **Release tail** to keep the last notes' release instead. Note numbers
+match the synth's MIDI input, so 60 is middle C. Clips live in memory for the
+session; download the ones you want to keep.
+
+`node tests/formats.mjs` round-trips every format and, on macOS, checks the
+files against Core Audio (`afinfo`, `afconvert`).
 
 ## Plugins and effects
 
@@ -295,6 +317,7 @@ name to describe the format.
 The service worker needs `https://` or `http://localhost`. Tests:
 
 - `node tests/archive.mjs`: archive reading and writing
+- `node tests/formats.mjs`: WAV, AIFF and MIDI reading and writing
 - `node tests/native-id.mjs`: identification (macOS; uses `clang`, `pkgbuild` and `productbuild`)
 - `node tests/vst3-wasm.mjs`: the WebAssembly VST3 builds
 - `tests/capture.html` in a browser: capture accuracy

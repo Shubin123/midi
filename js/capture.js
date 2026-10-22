@@ -1,6 +1,7 @@
 // Plugin capture: measures any effect from a test signal rendered through it and fits a general model.
 // Model: input -> static level-dependent curve -> stereo impulse response (a Hammerstein system).
 // The impulse response comes from regularized FFT deconvolution of an exponential sweep; the curve from stepped sine levels.
+import { encodeAudio } from './audio-files.js';
 export const LAYOUT = { preroll: 0.5, sweep: 10, tail: 4, step: 0.25, levels: [-42, -39, -36, -33, -30, -27, -24, -21, -18, -15, -12, -9, -6, -3, 0], probeHz: 100, post: 1, sweepDb: -6, f1: 20 };
 const dbToGain = db => 10 ** (db / 20);
 const gainToDb = g => 20 * Math.log10(Math.max(g, 1e-12));
@@ -74,17 +75,7 @@ export function testSignal(sampleRate) {
  return out;
 }
 
-export function encodeWav(channels, sampleRate) {
- const frames = channels[0].length, count = channels.length, bytes = 44 + frames * count * 4;
- const buffer = new ArrayBuffer(bytes), v = new DataView(buffer);
- const text = (at, s) => [...s].forEach((c, i) => v.setUint8(at + i, c.charCodeAt(0)));
- text(0, 'RIFF'); v.setUint32(4, bytes - 8, true); text(8, 'WAVE'); text(12, 'fmt ');
- v.setUint32(16, 16, true); v.setUint16(20, 3, true); v.setUint16(22, count, true); v.setUint32(24, sampleRate, true);
- v.setUint32(28, sampleRate * count * 4, true); v.setUint16(32, count * 4, true); v.setUint16(34, 32, true);
- text(36, 'data'); v.setUint32(40, frames * count * 4, true);
- for (let i = 0, at = 44; i < frames; i++) for (let c = 0; c < count; c++, at += 4) v.setFloat32(at, channels[c][i], true);
- return new Blob([buffer], { type: 'audio/wav' });
-}
+export const encodeWav = (channels, sampleRate) => encodeAudio(channels, sampleRate, 'wav32f');
 
 // Runs a Web Audio graph offline: render(ctx, source) wires source to ctx.destination.
 async function offline(channels, sampleRate, length, wire) {
