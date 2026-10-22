@@ -202,22 +202,37 @@ Name.vst3/Contents/wasm32-web/Name.wasm
 Name.vst3/Contents/Resources/VST3-SDK-LICENSE.txt
 ```
 
-`native/build.sh` builds bundles with Emscripten. It fetches the SDK at a
-pinned commit:
+The SDK is ported with Emscripten's CMake toolchain. `native/CMakeLists.txt`
+loads the SDK's own CMake modules under `emcmake`, which build its `base`,
+`pluginterfaces`, `sdk_common`, `sdk` and `sdk_hosting` libraries for
+WebAssembly (the SDK sees Emscripten as Linux). Each plug-in is then linked
+with those libraries and vst3web into one `.wasm` and zipped as a bundle.
+`native/build.sh` fetches the SDK at a pinned commit and runs:
 
 ```sh
-native/build.sh                         # Steinberg's ADelay and the 34 MDA plug-ins
-native/build.sh MyPlugin path/to/source # any VST3 plug-in whose source builds with the SDK
+emcmake cmake -S native -B native/build -DCMAKE_BUILD_TYPE=Release
+cmake --build native/build
 ```
+
+To build another plug-in, add a `vst3web_add_plugin(Name sources...)` call,
+listing the sources its own CMakeLists.txt passes to `smtg_add_vst3plugin`,
+to `native/CMakeLists.txt` or to a file passed as
+`native/build.sh -DVST3WEB_EXTRA=path/to/plugins.cmake`.
 
 The bundled builds are listed under **Add built-in**:
 
 - **Steinberg ADelay**
+- **Steinberg AGain Sample Accurate**: sample-accurate gain, plus the SDK's
+  Advanced Tutorial class
+- **Steinberg SyncDelay**: a delay synced to the host tempo
 - **The MDA collection**: 30 effects, the DX10, JX10, Piano and ePiano
   instruments, and a test-tone generator.
 
-`node tests/vst3-wasm.mjs` opens all 35 classes, processes audio through
-each one or plays a note on it, and checks the output.
+`node tests/vst3-wasm.mjs` opens all 38 classes, processes audio through
+each one or plays a note on it, and checks the output. AGain Sample
+Accurate starts at 0% gain, SyncDelay's default whole-note delay is longer
+than the test, and TestTone starts switched off, so those three are silent
+until their parameters are changed.
 
 Plug-in editors (VSTGUI or other native GUI code) are not compiled in. The
 widget shows generic controls for every parameter.
@@ -240,7 +255,8 @@ what the plug-in says about itself, entirely in the browser:
 | Nested archives, `.dmg`, `.exe`, `.msi` | nested archives are opened; the others are flagged with next steps |
 
 Each card then offers three routes: rebuild from source with
-`native/build.sh`, **Capture its sound**, or a quick built-in stand-in.
+`native/build.sh` (`vst3web_add_plugin`), **Capture its sound**, or a
+quick built-in stand-in.
 
 ### Capturing a plug-in's sound
 
@@ -271,9 +287,10 @@ and compressor timing are approximated, and the score says so.
 ### Licensing
 
 The VST3 SDK is MIT-licensed (`LICENSES/VST3-SDK.txt`), and its license
-ships inside every built bundle. The MDA plug-ins and ADelay are SDK
-samples under the same license. VST is a trademark of Steinberg Media
-Technologies GmbH; this project only uses the name to describe the format.
+ships inside every built bundle. The MDA plug-ins, ADelay, AGain Sample
+Accurate and SyncDelay are SDK samples under the same license. VST is a
+trademark of Steinberg Media Technologies GmbH; this project only uses the
+name to describe the format.
 
 The service worker needs `https://` or `http://localhost`. Tests:
 

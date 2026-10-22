@@ -2,12 +2,13 @@
 import { Vst3Module } from './vst3-runtime.js';
 
 class Vst3Processor extends AudioWorkletProcessor {
- constructor({ processorOptions: { module, classIndex, values } }) {
+ constructor({ processorOptions: { module, classIndex, values, tempo } }) {
   super();
   try {
    this.plugin = new Vst3Module(module);
    this.io = this.plugin.open(classIndex, sampleRate, 128);
    for (const [id, value] of Object.entries(values || {})) this.plugin.set(Number(id), value);
+   if (tempo) this.plugin.tempo(tempo);
    this.port.postMessage({ ready: true, io: this.io });
   } catch (e) {
    this.port.postMessage({ error: e.message });
@@ -16,6 +17,7 @@ class Vst3Processor extends AudioWorkletProcessor {
    if (!this.plugin) return;
    if (data.param !== undefined) this.plugin.set(data.param, data.value);
    if (data.note !== undefined) this.plugin.note(data.on, data.note, data.velocity);
+   if (data.tempo) this.plugin.tempo(data.tempo);
    if (data.panic) for (let p = 0; p < 128; p++) this.plugin.note(false, p, 0);
   };
  }

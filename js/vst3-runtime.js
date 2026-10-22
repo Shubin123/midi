@@ -2,6 +2,8 @@
 // Shared by the page (class list, parameter text) and the audio worklet (processing).
 
 // Standalone Emscripten modules import a few WASI/system calls; plug-ins only touch them for logging and time.
+// AudioWorkletGlobalScope has no `performance`, so fall back to Date there.
+const now = () => (globalThis.performance ? performance.now() : Date.now());
 function imports(module, memoryRef) {
  const table = {};
  for (const { module: ns, name, kind } of WebAssembly.Module.imports(module)) {
@@ -13,10 +15,10 @@ function imports(module, memoryRef) {
     let total = 0; for (let i = 0; i < args[2]; i++) total += view().getUint32(args[1] + i * 8 + 4, true);
     view().setUint32(args[3], total, true); return 0;
    }
-   if (name === 'clock_time_get') { view().setBigUint64(args[2], BigInt(Math.round(performance.now() * 1e6)), true); return 0; }
+   if (name === 'clock_time_get') { view().setBigUint64(args[2], BigInt(Math.round(now() * 1e6)), true); return 0; }
    if (name === 'environ_sizes_get' || name === 'args_sizes_get') { view().setUint32(args[0], 0, true); view().setUint32(args[1], 0, true); return 0; }
    if (name === 'proc_exit' || name === 'abort' || name.startsWith('__cxa_throw')) throw new Error(`VST3 module called ${name}`);
-   if (name === 'emscripten_get_now') return performance.now();
+   if (name === 'emscripten_get_now') return now();
    return 0;
   };
  }
@@ -55,6 +57,7 @@ export class Vst3Module {
  text(id, value) { return this.string(this.x.vst3web_param_text(id, value)); }
  set(id, value) { this.x.vst3web_param_set(id, value); }
  note(on, pitch, velocity) { this.x.vst3web_note(on ? 1 : 0, pitch, velocity); }
+ tempo(bpm) { this.x.vst3web_tempo(bpm); }
  buffer(dir, channel, frames) {
   const ptr = this.x.vst3web_buffer(dir, channel);
   return ptr ? new Float32Array(this.x.memory.buffer, ptr, frames) : null;

@@ -582,7 +582,7 @@
                 });
             }
 
-            function updateBPMDisplay() { if(bpmDisplay) bpmDisplay.textContent = currentBPM; }
+            function updateBPMDisplay() { if(bpmDisplay) bpmDisplay.textContent = currentBPM; window.dispatchEvent(new CustomEvent('synth:tempo',{detail:currentBPM})); }
             function playMetronomeClickSound() { if (!audioContext || !metronomeClickBuffer) return; const s=audioContext.createBufferSource(); s.buffer=metronomeClickBuffer; const g=audioContext.createGain(); g.gain.value=0.25; s.connect(g).connect(audioContext.destination); s.start(audioContext.currentTime);}
             function metronomeTick() { if (!metronomeEnabled || !metronomeLed) return; metronomeLed.classList.toggle('active'); playMetronomeClickSound(); setTimeout(() => { if(metronomeEnabled && metronomeLed) metronomeLed.classList.remove('active');}, 50); }
             function startMetronome() { if (!audioContext) initAudio(); if (!audioContext) { alert("Audio not ready."); if(metronomeToggle)metronomeToggle.checked=false; return; } if (metronomeIntervalId) clearInterval(metronomeIntervalId); const iMs=(60/currentBPM)*1000; metronomeIntervalId=setInterval(metronomeTick,iMs); if(metronomeLed)metronomeLed.classList.remove('active'); metronomeTick();}

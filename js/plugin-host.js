@@ -13,7 +13,8 @@ import { initializeWamHost } from './vendor/webaudiomodules-sdk.js';
 
 const CACHE = 'zip-plugins-v1';
 const BUILT_INS = { air: 'Air', reverb: 'Reverb', delay: 'Delay', compressor: 'Compressor', saturator: 'Saturator', chorus: 'Chorus',
- 'vst3/mda-vst3': 'VST3: MDA collection (34 plug-ins)', 'vst3/ADelay': 'VST3: Steinberg ADelay' };
+ 'vst3/mda-vst3': 'VST3: MDA collection (34 plug-ins)', 'vst3/ADelay': 'VST3: Steinberg ADelay',
+ 'vst3/AGainSampleAccurate': 'VST3: Steinberg AGain Sample Accurate', 'vst3/SyncDelay': 'VST3: Steinberg SyncDelay' };
 const ADVICE = [
  [/^iPlug2/, 'Built with iPlug2, which can export Web Audio Modules directly. A WAM build from the developer would load in this widget.'],
  [/^JUCE/, 'Built with JUCE. The developer could compile it to WebAssembly for the browser; JUCE support for that is experimental.'],
@@ -90,7 +91,7 @@ async function instantiateVst3(ctx, rec) {
  const io = control.open(info.index, ctx.sampleRate);
  if (!worklets.has(ctx)) { await ctx.audioWorklet.addModule(new URL('./vst3-worklet.js', import.meta.url)); worklets.add(ctx); }
  const node = new AudioWorkletNode(ctx, 'vst3-wasm', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
-  processorOptions: { module, classIndex: info.index, values: rec.values } });
+  processorOptions: { module, classIndex: info.index, values: rec.values, tempo: window.synth.tempo } });
  await new Promise((resolve, reject) => { node.port.onmessage = ({ data }) => (data.error ? reject(new Error(data.error)) : resolve()); });
  const input = ctx.createGain(), output = ctx.createGain(), layer = ctx.createGain();
  layer.gain.value = info.instrument && rec.layer ? 1 : 0;
@@ -99,6 +100,9 @@ async function instantiateVst3(ctx, rec) {
  node.connect(output);
  const onNote = ({ detail }) => node.port.postMessage({ note: detail.midi, on: detail.on, velocity: detail.velocity });
  const onPanic = () => node.port.postMessage({ panic: true });
+ // Tempo-synced plug-ins (SyncDelay, mda DubDelay, ...) follow the session tempo through the VST3 ProcessContext.
+ const onTempo = ({ detail }) => node.port.postMessage({ tempo: detail });
+ window.addEventListener('synth:tempo', onTempo);
  if (io.events) { window.addEventListener('synth:note', onNote); window.addEventListener('synth:panic', onPanic); }
  const params = control.params().map(p => ({ id: p.id, label: p.title, min: 0, max: 1, step: p.steps > 0 ? 1 / p.steps : 0.001, value: p.value,
   format: v => `${control.text(p.id, v)}${p.units ? ' ' + p.units : ''}`.trim() }));
@@ -106,7 +110,7 @@ async function instantiateVst3(ctx, rec) {
   name: info.name, input, output, params, classes, classIndex: info.index, instrument: info.instrument, events: io.events,
   setLayer: on => { layer.gain.value = on ? 1 : 0; },
   setParam: (id, value) => { control.set(Number(id), value); node.port.postMessage({ param: Number(id), value }); },
-  destroy: () => { window.removeEventListener('synth:note', onNote); window.removeEventListener('synth:panic', onPanic); node.disconnect(); input.disconnect(); layer.disconnect(); control.close(); }
+  destroy: () => { window.removeEventListener('synth:tempo', onTempo); window.removeEventListener('synth:note', onNote); window.removeEventListener('synth:panic', onPanic); node.disconnect(); input.disconnect(); layer.disconnect(); control.close(); }
  };
 }
 
