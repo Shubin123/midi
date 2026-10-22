@@ -3,6 +3,7 @@
             let audioContext;
             let masterGain, filterNode, filterBypassGain, masterLimiter, analyser, analyserOsc1, analyserOsc2;
             let summingGainOsc1, summingGainOsc2;
+            let fxInput, fxOutput; // Insert point for effect and plugin widgets
             let visualizerCanvas, visualizerContext;
 
             const activeSoundUnits = {}; // For live played notes
@@ -79,7 +80,8 @@
 
                 filterNode.connect(masterGain);
                 filterBypassGain.connect(masterGain);
-                masterGain.connect(masterLimiter);
+                fxInput = audioContext.createGain(); fxOutput = audioContext.createGain();
+                masterGain.connect(fxInput); fxInput.connect(fxOutput); fxOutput.connect(masterLimiter);
 
 
                 analyser = audioContext.createAnalyser(); analyser.fftSize = 2048;
@@ -404,6 +406,7 @@
 
             function emergencyStopAllSounds() {
                 console.warn("PANIC: Stopping all sounds!"); 
+
                 if(!audioContext)return; 
                 const now = audioContext.currentTime; 
                 
@@ -1050,6 +1053,8 @@
 
 window.synth = {
  get context() { return audioContext; },
+ get fx() { return { input: fxInput, output: fxOutput }; },
+ ensureAudio: () => { if (!audioContext) initAudio(); return audioContext; },
  get tempo() { return currentBPM; },
  set tempo(value) { currentBPM = Math.max(30, Math.min(300, value)); updateBPMDisplay(); },
  noteOn: note => playNote(note, 0.65, 'sequencer', true),

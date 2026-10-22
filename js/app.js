@@ -1,5 +1,7 @@
 import { setupWidgets } from './widgets.js';
 import { createSequencer } from './sequencer.js';
+import { createAirWidget } from './air-widget.js';
+import { createPluginHost } from './plugin-host.js';
 window.addEventListener('load',()=>{
  const container=document.querySelector('.container');
  const workspace=document.createElement('main');workspace.id='workspace';
@@ -10,6 +12,7 @@ window.addEventListener('load',()=>{
  wrap('.visualizer','scope-module','Oscilloscope');
  wrap('#keyboard','keyboard-module','Keyboard');
  wrap('#synthesiaContainer','falling-module','Falling notes');
+ workspace.append(createAirWidget(),createPluginHost());
  document.querySelector('.controls').remove();document.querySelector('.looper-toggle-bar').remove();
  const looper=workspace.querySelector('#launchpadLooperContainer');looper.classList.add('open');looper.style.display='grid';
  container.append(workspace);setupWidgets(workspace);

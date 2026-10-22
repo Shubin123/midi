@@ -119,10 +119,66 @@ Source files:
 - `js/widgets.js`: responsive widget layout, dragging, and visibility
 - `js/storage.js`: browser persistence
 - `js/app.js`: module assembly
+- `js/fx-chain.js`: ordered insert chain for effects and plugins
+- `js/air-widget.js`, `plugins/air/`: built-in Air enhancer
+- `js/archive.js`, `js/plugin-host.js`, `plugin-sw.js`: archive plugin loader
+- `js/vendor/webaudiomodules-sdk.js`: Web Audio Modules host SDK (MIT)
 - `workspace.css`: responsive workspace styling
 
 Run the interpolation checks with `node tests/automation.mjs`.
 Serve over HTTP as below; the new JavaScript modules require a web server.
+
+## Plugins and effects
+
+Two widgets add effects to the master output, between master volume and the
+limiter (`js/fx-chain.js` keeps them in order):
+
+```
+synth ── master gain ── Air ── web plugins ── limiter ── output
+```
+
+Everything runs in the browser. Once the page has loaded, nothing is
+processed on a server and nothing is downloaded at runtime.
+
+### Air (built in)
+
+An original presence and high-end enhancer made from native Web Audio nodes:
+a peaking boost around 2.8 kHz (Mid Air), a high shelf around 9.5 kHz, and a
+saturated top-octave exciter blended back in (High Air), plus a trim. It is
+not a copy of any commercial plugin. The source is `plugins/air/index.js`.
+
+### Web plugins (ZIP)
+
+Drop a `.zip`, `.tar`, `.tar.gz` or `.tgz` on the widget, or pick one with
+**Load archive**. The archive is decompressed in memory with
+`DecompressionStream`, and its files are stored in the browser's Cache API.
+`plugin-sw.js`, a service worker running in the browser, serves them under
+`plugin-fs/<id>/`, so a plugin's relative imports, AudioWorklet modules and
+`fetch` calls resolve as they would on a web server. Installed plugins and
+their settings come back after a reload.
+
+Supported plugin formats:
+
+- **Web Audio Modules 2.0**: an archive with `index.js` (default export is the
+  WAM class) and usually `descriptor.json`. Plugins from the
+  [WAM community gallery](https://www.webaudiomodules.com/community/) load
+  this way and show their own UI. The WAM host SDK is vendored in
+  `js/vendor/`.
+- **Web plugin**: `plugin.json` (`{ "name", "main" }`) plus an ES module whose
+  default export is `createPlugin(audioContext)` returning
+  `{ name, input, output, params, setParam, destroy }`. `params` entries are
+  `{ id, label, min, max, step, value, unit }`, and the widget generates
+  sliders for them. **Load bundled Air.zip** installs `plugins/air.zip` as an
+  example; rebuild it with `tools/pack-plugins.sh`.
+
+**Native plugins (VST3, AU, AAX, CLAP) can't be loaded.** They are compiled
+machine code for one operating system, and browsers only run JavaScript and
+WebAssembly. Compression doesn't change that. When an archive contains one,
+the widget names the file and explains why it can't load it. A plugin can
+only run here if its developer builds it for the web, as a Web Audio Module.
+
+The service worker needs `https://` or `http://localhost`. Run
+`node tests/archive.mjs` to test the archive reader.
 
 ## Running it
 
@@ -142,7 +198,10 @@ MIDI additionally requires a secure context, `https://` or `http://localhost`.
 
 ```
 index.html     synth markup and module entry points
-js/            synthesis, sequencer, automation, widgets, and persistence modules
+js/            synthesis, sequencer, automation, widgets, plugins, and persistence modules
+plugin-sw.js   service worker that serves files from loaded plugin archives
+plugins/       bundled example plugin (source and zip)
+tools/         plugin packaging script
 stylemain.css  themeable synth styling
 workspace.css  responsive modular workspace
 robots.txt     crawl policy and sitemap pointer
