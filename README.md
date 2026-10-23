@@ -122,6 +122,7 @@ Source files:
 - `js/fx-chain.js`: ordered insert chain for effects and plugins
 - `js/air-widget.js`, `plugins/air/`: built-in Air enhancer
 - `js/archive.js`, `js/plugin-host.js`, `plugin-sw.js`: archive plugin loader
+- `js/plugin-window.js`: each plugin's own window
 - `js/native-id.js`, `js/plist.js`: native plugin identification
 - `js/vst3-runtime.js`, `js/vst3-worklet.js`, `native/`: VST3 plug-ins compiled to WebAssembly
 - `js/capture.js`, `js/capture-engine.js`: plug-in capture and its playback engine
@@ -183,6 +184,15 @@ browser's Cache API. `plugin-sw.js`, a service worker running in the browser,
 serves them under `plugin-fs/<id>/`, so a plugin's relative imports,
 AudioWorklet modules and `fetch` calls resolve as they would on a web server.
 Installed plugins and their settings come back after a reload.
+
+Every plugin, VST3 and captured ones included, gets its own window
+(`js/plugin-window.js`) with its controls, as plug-in editors open in a DAW.
+A new plugin opens its window at the top right. Drag the title bar (or focus
+it and use the arrow keys) to move it, drag the corner to resize it, and click
+a window to bring it to the front. **×** or Escape closes the window; the
+plugin keeps running, and its row in the Plugins widget has **Open**,
+**Bypass** and **Remove**. Each window's position and whether it is open come
+back after a reload.
 
 Web plugins that load and run:
 

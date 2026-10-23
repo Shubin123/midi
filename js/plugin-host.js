@@ -9,6 +9,7 @@ import { identifyNative, standInFor } from './native-id.js';
 import { fxSlot, instrumentSlot, updateVoices } from './fx-chain.js';
 import { read, save } from './storage.js';
 import { el, renderParams, card } from './plugin-ui.js';
+import { pluginWindow } from './plugin-window.js';
 import { initializeWamHost } from './vendor/webaudiomodules-sdk.js';
 
 const CACHE = 'zip-plugins-v1';
@@ -170,36 +171,52 @@ export function createPluginHost() {
   el('p', { className: 'module-hint' }, 'Loads Web Audio Modules 2.0 and web-plugin archives (.zip, .tar, .tar.gz). Native plugins (.vst3, .component, .dll, .pkg installers, or archives of them) are identified instead: browsers cannot run compiled code, so the closest built-in effect is offered.'),
   capturePanel, found, list);
  const live = new Map();
- const teardown = id => { const item = live.get(id); if (!item) return; item.slot.clear(); item.plugin?.destroy?.(); item.box.remove(); live.delete(id); };
+ const teardown = id => { const item = live.get(id); if (!item) return; item.slot.clear(); item.plugin?.destroy?.(); item.box.remove(); item.win.remove(); live.delete(id); };
  const say = (text, error) => { status.textContent = text; status.classList.toggle('error', !!error); };
 
+ // Each plug-in gets a row in this widget and its own window with its controls; closing the window keeps it running.
  const mount = async rec => {
-  const bypass = el('input', { type: 'checkbox', checked: rec.bypass });
-  const params = el('div', { className: 'plugin-params' }), gui = el('div', { className: 'plugin-gui' });
-  const title = el('strong', { textContent: rec.name }), extra = el('span', { className: 'sequence-toolbar' });
-  const box = el('div', { className: 'plugin-card' },
-   el('div', { className: 'sequence-toolbar' }, title, extra, el('label', {}, bypass, 'Bypass'),
-    ...(rec.format === 'capture' ? [el('button', { textContent: 'Export .zip', onclick: () => exportCapture(rec) })] : []),
-    el('button', { textContent: 'Remove', onclick: async () => {
-     teardown(rec.id);
-     records.splice(records.indexOf(rec), 1); persist(); await removeFiles(rec.id); say(`Removed ${rec.name}.`);
-    } })),
-   params, gui);
+  rec.window ||= { open: false };
+  const kind = { 'vst3-wasm': 'VST3', capture: 'Capture' }[rec.format] || 'Web plugin';
+  const rowName = el('strong', { textContent: rec.name }), rowBadge = el('span', { className: 'badge', textContent: kind });
+  const rowBypass = el('input', { type: 'checkbox', checked: rec.bypass }), bypass = el('input', { type: 'checkbox', checked: rec.bypass });
+  const openButton = el('button', { textContent: 'Open' }), problem = el('span', { className: 'module-hint error' });
+  const remove = async () => {
+   teardown(rec.id);
+   records.splice(records.indexOf(rec), 1); persist(); await removeFiles(rec.id); say(`Removed ${rec.name}.`);
+  };
+  const box = el('div', { className: 'plugin-card plugin-row' },
+   el('div', { className: 'sequence-toolbar' }, rowName, rowBadge, el('label', {}, rowBypass, 'Bypass'), openButton,
+    el('button', { textContent: 'Remove', onclick: remove }), problem));
   list.append(box);
-  const item = { slot: { clear() {} }, box, plugin: null };
+  const win = pluginWindow({ title: rec.name, state: rec.window, opener: openButton,
+   onChange: open => { openButton.textContent = open ? 'Close' : 'Open'; openButton.setAttribute('aria-expanded', open); persist(); } });
+  openButton.textContent = win.open ? 'Close' : 'Open'; openButton.setAttribute('aria-expanded', win.open);
+  openButton.onclick = () => win.toggle();
+  const params = el('div', { className: 'plugin-params' }), gui = el('div', { className: 'plugin-gui' }), extra = el('span', { className: 'sequence-toolbar' });
+  win.content.append(
+   el('div', { className: 'sequence-toolbar' }, extra, el('label', {}, bypass, 'Bypass'),
+    ...(rec.format === 'capture' ? [el('button', { textContent: 'Export .zip', onclick: () => exportCapture(rec) })] : []),
+    el('button', { textContent: 'Remove', onclick: remove })),
+   params, gui);
+  const item = { slot: { clear() {} }, box, win, plugin: null };
   live.set(rec.id, item);
   try {
    const plugin = item.plugin = await instantiate(rec);
    // Instruments replace the built-in synth's voices; effects join the chain in load order.
    const slot = item.slot = plugin.instrument ? instrumentSlot() : fxSlot(20 + records.indexOf(rec) / 100);
-   if (plugin.classes) vst3Controls(rec, plugin, title, extra);
+   if (plugin.name) { rowName.textContent = plugin.name; win.setTitle(plugin.name); }
+   if (plugin.classes) { vst3Controls(rec, plugin, extra); rowBadge.textContent = `VST3 · ${plugin.instrument ? 'Instrument' : 'Effect'}`; }
    Object.entries(rec.values).forEach(([id, v]) => plugin.setParam?.(id, v));
    if (plugin.gui) gui.append(plugin.gui);
    else if (plugin.params?.length) renderParams(params, plugin.params.map(p => ({ ...p, value: rec.values[p.id] ?? p.value })), (id, v) => { rec.values[id] = v; plugin.setParam(id, v); persist(); });
-   const apply = () => (bypass.checked ? slot.clear() : slot.set(plugin));
-   bypass.onchange = () => { rec.bypass = bypass.checked; apply(); persist(); };
-   apply();
+   win.place();
+   const setBypass = on => { rec.bypass = bypass.checked = rowBypass.checked = on; on ? slot.clear() : slot.set(plugin); };
+   bypass.onchange = () => { setBypass(bypass.checked); persist(); };
+   rowBypass.onchange = () => { setBypass(rowBypass.checked); persist(); };
+   setBypass(rec.bypass);
   } catch (e) {
+   problem.textContent = 'Failed to start';
    params.append(el('p', { className: 'module-hint error', textContent: 'Failed to start: ' + e.message }));
   }
  };
@@ -265,8 +282,7 @@ export function createPluginHost() {
   const a = el('a', { href: URL.createObjectURL(writeZip(files)), download: `${rec.id}.zip` });
   a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
  };
- const vst3Controls = (rec, plugin, title, extra) => {
-  title.textContent = plugin.name;
+ const vst3Controls = (rec, plugin, extra) => {
   extra.append(el('span', { className: 'badge', textContent: `VST3 · ${plugin.instrument ? 'Instrument' : 'Effect'}` }));
   if (plugin.classes.length > 1) {
    const pick = el('select'); pick.setAttribute('aria-label', 'Plug-in in this module');
@@ -291,6 +307,7 @@ export function createPluginHost() {
    const rec = await install(wasm || findEntry(files) ? files : stripRoot(files), entry, name);
    if (wasm) { rec.classIndex = 0; if (className) rec.className = className; }
    const old = records.findIndex(r => r.id === rec.id);
+   rec.window = { ...records[old]?.window, open: true }; // a plug-in opens its own window when added, where it was before
    if (old >= 0) { teardown(rec.id); records.splice(old, 1); }
    records.push(rec); persist(); await mount(rec); say(`Loaded ${rec.name}.`);
    return;

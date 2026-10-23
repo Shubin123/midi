@@ -1,0 +1,63 @@
+// A floating window for one plug-in, styled like a workspace widget. Drag it by its title bar (arrow keys move
+// it too) and close it with × or Escape; the plug-in keeps running while its window is closed. `state` holds
+// { x, y, open } and is kept up to date so the caller can persist it.
+import { el } from './plugin-ui.js';
+
+let layer, front = 1000, cascade = 0;
+const windows = new Set();
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+export function pluginWindow({ title, state, opener, onChange }) {
+ if (!layer) {
+  layer = document.body.appendChild(el('div', { className: 'plugin-windows' }));
+  window.addEventListener('resize', () => windows.forEach(w => w.place()));
+ }
+ const name = el('span', { textContent: title });
+ const handle = el('button', { className: 'drag-handle', title: 'Drag to move. Use arrow keys to move.' }, '⠿ ', name);
+ const close = el('button', { textContent: '×', title: `Close ${title}` });
+ const content = el('div', { className: 'module-content' });
+ const win = el('section', { className: 'widget plugin-window', hidden: true }, el('div', { className: 'widget-header' }, handle, close), content);
+ win.setAttribute('role', 'dialog'); win.setAttribute('aria-label', title);
+ layer.append(win);
+ // New windows cascade down from the top right, clear of the keyboard in the default layout.
+ if (!Number.isFinite(state.x) || !Number.isFinite(state.y)) { state.x = innerWidth - 484 - (cascade % 8) * 28; state.y = 90 + (cascade % 8) * 28; cascade++; }
+
+ const place = () => {
+  if (win.hidden) return;
+  const margin = 12; // keep the window, or at least its title bar, on screen
+  state.x = Math.round(clamp(state.x, margin, Math.max(margin, innerWidth - win.offsetWidth - margin)));
+  state.y = Math.round(clamp(state.y, margin, Math.max(margin, innerHeight - 48)));
+  win.style.left = `${state.x}px`; win.style.top = `${state.y}px`;
+ };
+ const raise = () => { win.style.zIndex = ++front; };
+ const show = open => {
+  if (!open && win.contains(document.activeElement)) opener?.focus();
+  win.hidden = !open; state.open = open;
+  if (open) { raise(); place(); }
+  onChange?.(open);
+ };
+ win.addEventListener('pointerdown', raise);
+ win.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); show(false); } });
+ close.onclick = () => show(false);
+
+ let drag = null;
+ handle.onpointerdown = e => { if (e.button !== 0) return; drag = { dx: e.clientX - state.x, dy: e.clientY - state.y }; handle.setPointerCapture(e.pointerId); };
+ handle.onpointermove = e => { if (!drag) return; state.x = e.clientX - drag.dx; state.y = e.clientY - drag.dy; place(); };
+ handle.onpointerup = handle.onpointercancel = () => { if (drag) { drag = null; onChange?.(true); } };
+ handle.onkeydown = e => {
+  const step = e.shiftKey ? 80 : 20, move = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
+  if (!move) return;
+  e.preventDefault(); state.x += move[0]; state.y += move[1]; place(); onChange?.(true);
+ };
+
+ const api = {
+  content, place, show,
+  get open() { return !win.hidden; },
+  toggle: () => show(win.hidden),
+  setTitle: text => { name.textContent = text; close.title = `Close ${text}`; win.setAttribute('aria-label', text); },
+  remove: () => { windows.delete(api); win.remove(); }
+ };
+ windows.add(api);
+ if (state.open) show(true);
+ return api;
+}
