@@ -84,6 +84,13 @@ export function createIoWidget(sequencer) {
  const now = () => Math.round(window.synth.context.currentTime * window.synth.context.sampleRate);
  const wait = ms => new Promise(r => setTimeout(r, ms));
  const releaseTail = () => (window.synth.params().adsr.enabled ? window.synth.params().adsr.release : 0) + 0.25;
+ // Plug-in instruments and effects (long releases, echoes, reverb) ring on past the built-in envelope, so after it
+ // keep recording until the master output falls below -80 dB, for at most 10 s.
+ const audible = () => { const b = take?.blocks.at(-1); return !!b && b.data.some(d => d.some(v => Math.abs(v) > 1e-4)); };
+ const settle = async () => {
+  await wait(releaseTail() * 1000);
+  for (const end = performance.now() + 10000; audible() && performance.now() < end;) await wait(100);
+ };
  const busy = on => { recordButton.disabled = renderButton.disabled = on; };
 
  recordButton.onclick = async () => {
@@ -115,7 +122,7 @@ export function createIoWidget(sequencer) {
     await sequencer.start({ bars: n, click: false, onStart: () => { from = now(); } });
     // A steady tempo gives an exact bar length; tempo automation uses the measured one.
     to = steady ? from + Math.round(n * 4 * 60 / window.synth.tempo * take.rate) : now();
-    await wait(tail.checked ? releaseTail() * 1000 : 50);
+    if (tail.checked) await settle(); else await wait(50);
     audio = await stopTake(from, tail.checked ? undefined : to);
     label = `Sequence ${n} bar${n > 1 ? 's' : ''}`;
    } else {
@@ -128,7 +135,7 @@ export function createIoWidget(sequencer) {
     window.synth.playLoop(id);
     await wait(n * loop.duration - 5);
     window.synth.stopLoop(id);
-    if (tail.checked) await wait(releaseTail() * 1000);
+    if (tail.checked) await settle();
     else await wait(Math.max(0, (to / take.rate - window.synth.context.currentTime) * 1000) + 50);
     audio = await stopTake(from, tail.checked ? undefined : to);
     label = `Loop ${id + 1} ×${n}`;

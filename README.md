@@ -146,7 +146,9 @@ reads.
 
 Render audio plays in real time while recording and cuts the file to exactly
 the chosen number of bars or loop lengths, so it lines up on a DAW's grid.
-Tick **Release tail** to keep the last notes' release instead. Note numbers
+Tick **Release tail** to keep the last notes' release instead; recording
+continues until the output falls silent (up to 10 s), so plug-in releases,
+echoes and reverb tails are kept. Note numbers
 match the synth's MIDI input, so 60 is middle C. Clips live in memory for the
 session; download the ones you want to keep.
 
@@ -205,9 +207,12 @@ plugin.
 VST3 bundles that contain a WebAssembly build load and play like any other
 plug-in. Drop the zipped `.vst3` bundle on the widget. Effects process the
 synth. Instruments play from the keyboard, MIDI, the sequencer and the
-looper, replacing the built-in synth unless **Layer built-in synth** is
-ticked. Modules with several plug-ins get a picker, and parameters show the
-plug-in's own value text.
+looper, replacing the built-in synth's voices unless **Layer built-in synth**
+is ticked. They play into master volume ahead of the effect chain, so
+effects (VST3 or built-in), **Record**, **Render audio** and the scope all
+include them, and clips played through effects are not muted. Tempo-synced
+plug-ins follow the session tempo. Modules with several plug-ins get a
+picker, and parameters show the plug-in's own value text.
 
 How it works: `native/vst3web/vst3web.cpp` is a small VST3 host written
 against the official [VST3 SDK](https://github.com/steinbergmedia/vst3sdk)
@@ -249,6 +254,8 @@ The bundled builds are listed under **Add built-in**:
 - **Steinberg SyncDelay**: a delay synced to the host tempo
 - **The MDA collection**: 30 effects, the DX10, JX10, Piano and ePiano
   instruments, and a test-tone generator.
+- **VST3 instrument: MDA JX10, DX10, Piano, ePiano**: the collection's
+  instruments as their own entries, ready to play.
 
 `node tests/vst3-wasm.mjs` opens all 38 classes, processes audio through
 each one or plays a note on it, and checks the output. AGain Sample

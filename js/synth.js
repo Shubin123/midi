@@ -4,6 +4,7 @@
             let masterGain, filterNode, filterBypassGain, masterLimiter, analyser, analyserOsc1, analyserOsc2;
             let summingGainOsc1, summingGainOsc2;
             let fxInput, fxOutput; // Insert point for effect and plugin widgets
+            let voiceBus; // Built-in synth voices only; plug-in instruments mute it unless layered
             let visualizerCanvas, visualizerContext;
 
             const activeSoundUnits = {}; // For live played notes
@@ -78,8 +79,10 @@
                 masterLimiter.attack.setValueAtTime(0.003, audioContext.currentTime); 
                 masterLimiter.release.setValueAtTime(0.1, audioContext.currentTime); 
 
-                filterNode.connect(masterGain);
-                filterBypassGain.connect(masterGain);
+                voiceBus = audioContext.createGain();
+                filterNode.connect(voiceBus);
+                filterBypassGain.connect(voiceBus);
+                voiceBus.connect(masterGain);
                 fxInput = audioContext.createGain(); fxOutput = audioContext.createGain();
                 masterGain.connect(fxInput); fxInput.connect(fxOutput); fxOutput.connect(masterLimiter);
 
@@ -1060,6 +1063,8 @@
 window.synth = {
  get context() { return audioContext; },
  get fx() { return { input: fxInput, output: fxOutput }; },
+ get voices() { return voiceBus; },
+ get instrumentInput() { return masterGain; },
  ensureAudio: () => { if (!audioContext) initAudio(); return audioContext; },
  get tempo() { return currentBPM; },
  set tempo(value) { currentBPM = Math.max(30, Math.min(300, value)); updateBPMDisplay(); },

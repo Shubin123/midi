@@ -6,7 +6,7 @@ import { testSignal, encodeWav, analyze, verdict, layout } from './capture.js';
 import { createCapturedPlugin } from './capture-engine.js';
 import { Vst3Module } from './vst3-runtime.js';
 import { identifyNative, standInFor } from './native-id.js';
-import { fxSlot } from './fx-chain.js';
+import { fxSlot, instrumentSlot, updateVoices } from './fx-chain.js';
 import { read, save } from './storage.js';
 import { el, renderParams, card } from './plugin-ui.js';
 import { initializeWamHost } from './vendor/webaudiomodules-sdk.js';
@@ -14,7 +14,10 @@ import { initializeWamHost } from './vendor/webaudiomodules-sdk.js';
 const CACHE = 'zip-plugins-v1';
 const BUILT_INS = { air: 'Air', reverb: 'Reverb', delay: 'Delay', compressor: 'Compressor', saturator: 'Saturator', chorus: 'Chorus',
  'vst3/mda-vst3': 'VST3: MDA collection (34 plug-ins)', 'vst3/ADelay': 'VST3: Steinberg ADelay',
- 'vst3/AGainSampleAccurate': 'VST3: Steinberg AGain Sample Accurate', 'vst3/SyncDelay': 'VST3: Steinberg SyncDelay' };
+ 'vst3/AGainSampleAccurate': 'VST3: Steinberg AGain Sample Accurate', 'vst3/SyncDelay': 'VST3: Steinberg SyncDelay',
+ // One class of a module, loaded as its own plug-in: the MDA instruments play from the keyboard, sequencer and looper.
+ 'vst3/mda-vst3#mda JX10': 'VST3 instrument: MDA JX10 synth', 'vst3/mda-vst3#mda DX10': 'VST3 instrument: MDA DX10 FM synth',
+ 'vst3/mda-vst3#mda Piano': 'VST3 instrument: MDA Piano', 'vst3/mda-vst3#mda EPiano': 'VST3 instrument: MDA ePiano' };
 const ADVICE = [
  [/^iPlug2/, 'Built with iPlug2, which can export Web Audio Modules directly. A WAM build from the developer would load in this widget.'],
  [/^JUCE/, 'Built with JUCE. The developer could compile it to WebAssembly for the browser; JUCE support for that is experimental.'],
@@ -86,17 +89,15 @@ const worklets = new WeakSet();
 async function instantiateVst3(ctx, rec) {
  const module = await WebAssembly.compileStreaming(fetch(new URL(`${rec.id}/${rec.main}`, root)));
  const control = new Vst3Module(module), classes = control.classes();
- const info = classes[rec.classIndex] ?? classes[0];
+ const info = (rec.className && classes.find(c => c.name === rec.className)) || classes[rec.classIndex] || classes[0];
  if (!info) throw new Error('This VST3 module contains no audio plug-in classes.');
  const io = control.open(info.index, ctx.sampleRate);
  if (!worklets.has(ctx)) { await ctx.audioWorklet.addModule(new URL('./vst3-worklet.js', import.meta.url)); worklets.add(ctx); }
  const node = new AudioWorkletNode(ctx, 'vst3-wasm', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
   processorOptions: { module, classIndex: info.index, values: rec.values, tempo: window.synth.tempo } });
  await new Promise((resolve, reject) => { node.port.onmessage = ({ data }) => (data.error ? reject(new Error(data.error)) : resolve()); });
- const input = ctx.createGain(), output = ctx.createGain(), layer = ctx.createGain();
- layer.gain.value = info.instrument && rec.layer ? 1 : 0;
+ const input = ctx.createGain(), output = ctx.createGain();
  if (io.inputs && !info.instrument) input.connect(node);
- input.connect(layer).connect(output);
  node.connect(output);
  const onNote = ({ detail }) => node.port.postMessage({ note: detail.midi, on: detail.on, velocity: detail.velocity });
  const onPanic = () => node.port.postMessage({ panic: true });
@@ -106,12 +107,13 @@ async function instantiateVst3(ctx, rec) {
  if (io.events) { window.addEventListener('synth:note', onNote); window.addEventListener('synth:panic', onPanic); }
  const params = control.params().map(p => ({ id: p.id, label: p.title, min: 0, max: 1, step: p.steps > 0 ? 1 / p.steps : 0.001, value: p.value,
   format: v => `${control.text(p.id, v)}${p.units ? ' ' + p.units : ''}`.trim() }));
- return {
-  name: info.name, input, output, params, classes, classIndex: info.index, instrument: info.instrument, events: io.events,
-  setLayer: on => { layer.gain.value = on ? 1 : 0; },
+ const plugin = {
+  name: info.name, input, output, params, classes, classIndex: info.index, instrument: info.instrument, events: io.events, layer: !!rec.layer,
+  setLayer: on => { plugin.layer = on; updateVoices(); },
   setParam: (id, value) => { control.set(Number(id), value); node.port.postMessage({ param: Number(id), value }); },
-  destroy: () => { window.removeEventListener('synth:tempo', onTempo); window.removeEventListener('synth:note', onNote); window.removeEventListener('synth:panic', onPanic); node.disconnect(); input.disconnect(); layer.disconnect(); control.close(); }
+  destroy: () => { window.removeEventListener('synth:tempo', onTempo); window.removeEventListener('synth:note', onNote); window.removeEventListener('synth:panic', onPanic); node.disconnect(); input.disconnect(); control.close(); }
  };
+ return plugin;
 }
 
 async function instantiate(rec) {
@@ -188,8 +190,8 @@ export function createPluginHost() {
   live.set(rec.id, item);
   try {
    const plugin = item.plugin = await instantiate(rec);
-   // Instruments replace the built-in synth at the head of the chain; effects follow in load order.
-   const slot = item.slot = fxSlot((plugin.instrument ? 0 : 20) + records.indexOf(rec) / 100);
+   // Instruments replace the built-in synth's voices; effects join the chain in load order.
+   const slot = item.slot = plugin.instrument ? instrumentSlot() : fxSlot(20 + records.indexOf(rec) / 100);
    if (plugin.classes) vst3Controls(rec, plugin, title, extra);
    Object.entries(rec.values).forEach(([id, v]) => plugin.setParam?.(id, v));
    if (plugin.gui) gui.append(plugin.gui);
@@ -270,7 +272,7 @@ export function createPluginHost() {
    const pick = el('select'); pick.setAttribute('aria-label', 'Plug-in in this module');
    plugin.classes.forEach(c => pick.append(el('option', { value: c.index, textContent: `${c.name} (${c.instrument ? 'instrument' : 'effect'})` })));
    pick.value = plugin.classIndex;
-   pick.onchange = () => { rec.classIndex = Number(pick.value); rec.values = {}; persist(); teardown(rec.id); mount(rec); };
+   pick.onchange = () => { rec.classIndex = Number(pick.value); delete rec.className; rec.values = {}; persist(); teardown(rec.id); mount(rec); };
    extra.append(pick);
   }
   if (plugin.instrument) {
@@ -280,13 +282,14 @@ export function createPluginHost() {
   }
  };
 
- const loadFiles = async (files, name) => {
+ // className picks one class of a multi-plug-in VST3 module and names the plug-in after it.
+ const loadFiles = async (files, name, className) => {
   const wasm = wasmBinary(files);
-  const entry = wasm ? { name: wasm.match(/([^/]+)\.vst3\//i)[1], main: wasm, format: 'vst3-wasm' } : findEntry(files) || findEntry(stripRoot(files));
+  const entry = wasm ? { name: className || wasm.match(/([^/]+)\.vst3\//i)[1], main: wasm, format: 'vst3-wasm' } : findEntry(files) || findEntry(stripRoot(files));
   if (entry) {
    await serviceWorker();
    const rec = await install(wasm || findEntry(files) ? files : stripRoot(files), entry, name);
-   if (wasm) rec.classIndex = 0;
+   if (wasm) { rec.classIndex = 0; if (className) rec.className = className; }
    const old = records.findIndex(r => r.id === rec.id);
    if (old >= 0) { teardown(rec.id); records.splice(old, 1); }
    records.push(rec); persist(); await mount(rec); say(`Loaded ${rec.name}.`);
@@ -296,13 +299,16 @@ export function createPluginHost() {
   if (native.length) return showNative(native, name);
   throw new Error(`No plugin found in ${name}. Expected a Web Audio Module, a web plugin (plugin.json), or a native plugin to identify. Found: ${[...files.keys()].slice(0, 5).join(', ')}`);
  };
- const load = async (source, name) => {
+ const load = async (source, name, className) => {
   try {
    if (!(source instanceof Map) && /\.(wav|aiff?|flac|mp3|m4a|ogg)$/i.test(name)) return await analyzeFile(source, name);
-   say(`Reading ${name}…`); await loadFiles(source instanceof Map ? source : await toFiles(source, name), name);
+   say(`Reading ${name}…`); await loadFiles(source instanceof Map ? source : await toFiles(source, name), name, className);
   } catch (e) { say(e.message, true); }
  };
- const addBuiltIn = async id => load(await (await fetch(`plugins/${id}.zip`)).blob(), `${id.split('/').pop()}.zip`);
+ const addBuiltIn = async id => {
+  const [path, className] = id.split('#');
+  return load(await (await fetch(`plugins/${path}.zip`)).blob(), `${path.split('/').pop()}.zip`, className);
+ };
  capFile.onchange = () => { const f = capFile.files[0]; capFile.value = ''; if (f) load(f, f.name); };
  picker.onchange = () => { [...picker.files].forEach(f => load(f, f.name)); picker.value = ''; };
  section.addEventListener('dragover', e => { e.preventDefault(); section.classList.add('drop-target'); });
