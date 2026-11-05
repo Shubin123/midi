@@ -185,28 +185,47 @@ teacher can demonstrate progressions, not just melodies. The panel plays them
 through the synth (and any plug-in instrument following it), lights the keys as
 they sound, and keeps a ▶ button to play them again.
 
+### The panel
+
+The panel has two tabs. **Lesson** is the conversation: a live strip shows the
+note you just played and the chord under your fingers, local analysis and the
+teacher's replies stack below it, and the ask box sits at the bottom with the
+**Explain each phrase I play** switch. **Provider** is where answers come from.
+The header always says what is connected (for example *Groq · llama-3.3-70b*)
+and links to the Provider tab.
+
 ### Choosing a provider
 
-**Settings → Provider** picks what answers. Every option runs straight from the
-page, with no server of ours, so static hosting such as GitHub Pages works
-unchanged:
+Each provider is a **separate, direct connection** with its own sign-in;
+nothing is routed through anything else (only OpenRouter itself forwards to
+other model makers), and one is active at a time. The Provider tab lists them by
+how you sign in:
 
-| Provider | What you need | Notes |
-| --- | --- | --- |
-| **On your device** | Nothing | Runs a small model on your GPU through [WebLLM](https://github.com/mlc-ai/web-llm) (`js/local-model.js`). No account, key or cookie, and nothing you play leaves the page. The first **Load model** downloads 0.9–2.3 GB (cached afterwards). Needs WebGPU: desktop Chrome or Edge. |
-| **OpenRouter** | A free account | **Sign in with OpenRouter** (OAuth with PKCE, `js/ai-auth.js`): approve on their site and come back signed in, no key to copy. Free models work on a free account; GPT, Claude and Gemini need credit there. A pasted OpenRouter key also works. |
-| **Groq**, **Cerebras** | A free key | Very fast free tiers of open models. |
-| **Google Gemini**, **Mistral** | A free key | Free tiers. |
-| **OpenAI** | A paid key | |
-| **Custom** | Base URL, key, model | Any OpenAI-compatible `/chat/completions` endpoint that allows browser requests (LM Studio, Ollama with CORS enabled, a self-hosted gateway...). |
+| Group | Provider | Sign-in | Requests go to | Cost |
+| --- | --- | --- | --- | --- |
+| No sign-in | **On your device** | None | Nowhere: runs in the browser via [WebLLM](https://github.com/mlc-ai/web-llm) (`js/local-model.js`) | Free; 0.9–2.3 GB first download; needs WebGPU (desktop Chrome or Edge) |
+| Sign in | **OpenRouter** | **Sign in with OpenRouter** (OAuth with PKCE, `js/ai-auth.js`), or a pasted OpenRouter key | `openrouter.ai`, which forwards to Google, Meta, OpenAI, Anthropic and others | Free models on a free account; others need credit |
+| Your own API key | **Groq** | Groq key | `api.groq.com` | Free tier |
+| | **Cerebras** | Cerebras key | `api.cerebras.ai` | Free tier |
+| | **Google Gemini** | Google AI Studio key | `generativelanguage.googleapis.com` | Free tier |
+| | **Mistral** | Mistral key | `api.mistral.ai` | Free tier |
+| | **OpenAI** | OpenAI key | `api.openai.com` | Paid |
+| Advanced | **Custom endpoint** | Base URL and key | Any OpenAI-compatible `/chat/completions` that allows browser requests (LM Studio, Ollama with CORS enabled, a self-hosted gateway...) | Depends on the service |
 
-All the hosted options share one OpenAI-compatible request shape
-(`js/providers.js`), and the model field stays editable since model names
-change. Keys, the chosen provider and each provider's model are kept in cookies
-scoped to the app's path (`SameSite=Lax`, and `Secure` over HTTPS), so a reload
-comes back ready. A page can only read cookies its own domain set, so this
-cannot reuse a claude.ai or chatgpt.com login; the OpenRouter sign-in and the
-on-device model are the ways in that need no pasted key.
+**Connect** checks the key by listing the provider's models (a free request;
+nothing is generated), so a wrong key is reported at once and is not saved. The
+model dropdown then shows that provider's real chat models, with speech,
+embedding and image models left out, and picks a sensible default you can
+change. Every option was checked to accept requests straight from a web page,
+so there is no server of ours and GitHub Pages hosting works unchanged; the
+hosted ones share one OpenAI-compatible request shape (`js/providers.js`).
+
+Keys, the chosen provider and each provider's model are kept in cookies scoped
+to the app's path (`SameSite=Lax`, and `Secure` over HTTPS), so a reload comes
+back connected. **Forget key** (or **Sign out** for OpenRouter) removes one. A
+page can only read cookies its own domain set, so this cannot reuse a claude.ai
+or chatgpt.com login; the OpenRouter sign-in and the on-device model are the
+ways in that need no pasted key. Claude is available through OpenRouter.
 
 Requests send the last 15 exchanges for context; each analysed phrase is one
 request, so turn **Auto** off to only ask typed questions. Free tiers have rate
@@ -214,7 +233,8 @@ limits; the panel says so and you can switch provider in **Settings**.
 
 `node tests/teacher.mjs` checks scale, mode and chord detection, phrase
 tracking, note and chord suggestion parsing, the shared provider request and its
-error handling, cookie-backed settings, and the OpenRouter sign-in exchange
+error handling, key checks and model listing per provider, model choice,
+cookie-backed settings, and the OpenRouter sign-in exchange
 (against stubs, so no account or download is needed).
 
 ## Plugins and effects

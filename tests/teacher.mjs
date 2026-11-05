@@ -26,7 +26,7 @@ const requests = [];
 let respond, exchange;
 globalThis.fetch = (url, init = {}) => {
  requests.push({ url, init, body: init.body ? JSON.parse(init.body) : null });
- const { ok, status, body, wait } = (url.endsWith('/auth/keys') ? exchange : respond)();
+ const { ok, status, body, wait } = (url.endsWith('/auth/keys') ? exchange : respond)(url);
  return new Promise((resolve, reject) => {
   const done = () => resolve({ ok, status, statusText: '', json: async () => body });
   init.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
@@ -160,9 +160,9 @@ class FakeEngine {
 /* ---- Provider settings live in cookies ---- */
 {
  assert.equal(P.getProviderId(), 'local', 'defaults to on-device');
- assert.ok(P.PROVIDERS.every(p => p.id && p.label && p.auth));
+ assert.ok(P.PROVIDERS.every(p => p.id && p.name && p.how && p.where && p.cost && P.GROUPS.some(g => g.auth === p.auth)), 'every provider says how it signs in, where it sends and what it costs');
  const groq = P.providerById('groq');
- assert.match(P.engineFor(groq).error, /Add a key/);
+ assert.match(P.engineFor(groq).error, /API key/);
  P.setKey('groq', 'gsk_saved'); P.setModelFor('groq', 'llama-3.1-8b-instant'); P.setProviderId('groq');
  assert.equal(P.getProviderId(), 'groq');
  assert.ok(P.engineFor(groq).engine, 'a saved key makes the provider usable after a reload');
@@ -176,7 +176,45 @@ class FakeEngine {
  assert.equal(requests.at(-1).url, 'https://llm.example/v1/chat/completions');
 
  P.clearKey('groq');
- assert.match(P.engineFor(groq).error, /Add a key/);
+ assert.match(P.engineFor(groq).error, /API key/);
+}
+
+/* ---- Connect: checking a key by listing models (free), and choosing a model ---- */
+{
+ const json = (status, body) => () => ({ ok: status < 400, status, body });
+ const groq = P.providerById('groq'), gemini = P.providerById('gemini'), openai = P.providerById('openai'), openrouter = P.providerById('openrouter');
+
+ respond = json(200, { data: [{ id: 'llama-3.3-70b-versatile' }, { id: 'whisper-large-v3' }, { id: 'meta-llama/llama-guard-4-12b' }, { id: 'llama-3.1-8b-instant' }, { id: 'playai-tts' }] });
+ assert.deepEqual(await P.listModels(groq, 'gsk_x'), ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile'], 'speech and safety models are left out');
+ assert.equal(requests.at(-1).url, 'https://api.groq.com/openai/v1/models');
+ assert.equal(requests.at(-1).init.headers.Authorization, 'Bearer gsk_x');
+
+ respond = json(200, { data: [{ id: 'models/gemini-2.5-flash' }, { id: 'models/text-embedding-004' }, { id: 'models/gemini-2.0-flash' }, { id: 'models/imagen-3.0' }] });
+ assert.deepEqual(await P.listModels(gemini, 'AIza'), ['gemini-2.0-flash', 'gemini-2.5-flash'], 'the models/ prefix is dropped');
+
+ respond = json(200, { data: ['gpt-4.1-mini', 'gpt-5-mini', 'gpt-3.5-turbo-instruct', 'text-embedding-3-small', 'whisper-1', 'dall-e-3', 'o4-mini', 'tts-1', 'babbage-002'].map(id => ({ id })) });
+ assert.deepEqual(await P.listModels(openai, 'sk'), ['gpt-4.1-mini', 'gpt-5-mini', 'o4-mini']);
+
+ respond = json(401, { error: { message: 'invalid' } });
+ await assert.rejects(P.listModels(groq, 'bad'), e => e.status === 401 && /rejected/.test(e.message));
+ respond = json(400, { error: { message: 'API key not valid' } });
+ await assert.rejects(P.listModels(gemini, 'bad'), e => e.status === 401, 'Gemini reports a bad key as 400');
+
+ // OpenRouter checks the key first, then uses its public model list.
+ respond = url => url.endsWith('/key') ? { ok: true, status: 200, body: { data: {} } } : { ok: true, status: 200, body: { data: [
+  { id: 'google/gemma-4-31b-it:free', name: 'Gemma (free)', context_length: 9, pricing: { prompt: '0' } },
+  { id: 'openai/gpt-5', name: 'GPT-5', pricing: { prompt: '0.001' } }] } };
+ assert.deepEqual(await P.listModels(openrouter, 'sk-or'), ['google/gemma-4-31b-it:free', 'openai/gpt-5']);
+ assert.equal(requests.at(-2).url, 'https://openrouter.ai/api/v1/key');
+ respond = url => url.endsWith('/key') ? { ok: false, status: 401, body: {} } : { ok: true, status: 200, body: { data: [] } };
+ await assert.rejects(P.listModels(openrouter, 'bad'), e => e.status === 401);
+
+ // The saved model wins, then the default, then the newest match of the provider's preferences.
+ assert.equal(P.pickModel(openai, ['gpt-4o-mini', 'gpt-5-mini'], 'gpt-5-mini'), 'gpt-5-mini');
+ assert.equal(P.pickModel(openai, ['gpt-4o-mini', 'gpt-5-mini'], 'gone-model'), 'gpt-4o-mini');
+ assert.equal(P.pickModel(openai, ['gpt-4.1-mini', 'gpt-5-mini', 'gpt-4o'], null), 'gpt-5-mini');
+ assert.equal(P.pickModel(gemini, ['gemini-3.0-flash', 'gemini-2.0-flash-lite', 'gemini-2.0-flash'], null), 'gemini-3.0-flash');
+ assert.equal(P.pickModel(groq, ['qwen-x', 'mixtral'], null), 'qwen-x', 'falls back to the first listed');
 }
 
 /* ---- OpenRouter's key-free sign-in (OAuth PKCE) ---- */

@@ -1,53 +1,58 @@
-// The backends the teacher can talk to, and the one request shape most of them share. Everything here is
-// chosen to work straight from a static page in the browser: each hosted provider below answers cross-origin
-// requests (CORS), so no server of ours sits in between. Keys and the chosen model are kept in cookies
-// (js/ai-auth.js). The on-device option (js/local-model.js) needs no provider from this file at all.
+// The backends the teacher can talk to. Each one is a separate, direct connection: requests go straight from
+// the page to that provider with that provider's own credentials, and only one is active at a time. Every
+// hosted provider here answers cross-origin requests (CORS), so no server of ours sits in between. Keys and
+// the chosen model are kept in cookies (js/ai-auth.js). The on-device option runs js/local-model.js instead.
 import { getCookie, setCookie, deleteCookie } from './ai-auth.js';
 
-// auth: 'local' runs on the device; 'openrouter' has the key-free OAuth sign-in (or a pasted key); 'key'
-// wants an API key; 'custom' wants a base URL and key. `models` are suggestions — the field stays editable,
-// since model names change. `free` flags providers whose own free tier needs no payment.
+// auth decides the sign-in and the group the panel lists it under: 'local' (no sign-in), 'openrouter' (OAuth
+// sign-in or a pasted key), 'key' (the provider's own API key) or 'custom' (your endpoint). `how`, `where` and
+// `cost` are the plain-language summary shown in the list. `defaultModel` and `prefer` pick a model once the
+// provider's live model list is known; `models` are fallbacks until then.
 export const PROVIDERS = [
- { id: 'local', label: 'On your device — no key, private', auth: 'local', free: true },
+ { id: 'local', name: 'On your device', auth: 'local', how: 'No sign-in', where: 'Runs in this browser (WebGPU)', cost: 'Free' },
  {
-  id: 'openrouter', label: 'OpenRouter — sign in, free models', auth: 'openrouter', free: true,
-  base: 'https://openrouter.ai/api/v1', keyUrl: 'https://openrouter.ai/keys', keyHint: 'sk-or-…',
-  defaultModel: 'google/gemma-4-31b-it:free',
+  id: 'openrouter', name: 'OpenRouter', auth: 'openrouter', how: 'Sign in, or an OpenRouter key', where: 'openrouter.ai, which forwards to many model makers', cost: 'Free models; others paid',
+  base: 'https://openrouter.ai/api/v1', keyUrl: 'https://openrouter.ai/keys', keyHint: 'sk-or-…', defaultModel: 'google/gemma-4-31b-it:free',
  },
  {
-  id: 'groq', label: 'Groq — free, very fast', auth: 'key', free: true,
+  id: 'groq', name: 'Groq', auth: 'key', how: 'Your Groq API key', where: 'api.groq.com', cost: 'Free tier',
   base: 'https://api.groq.com/openai/v1', keyUrl: 'https://console.groq.com/keys', keyHint: 'gsk_…',
-  defaultModel: 'llama-3.3-70b-versatile', models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
+  defaultModel: 'llama-3.3-70b-versatile', prefer: [/^llama-3\.3-70b/, /^llama-4/, /gpt-oss-120b/, /^llama/], models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
  },
  {
-  id: 'gemini', label: 'Google Gemini — free tier', auth: 'key', free: true,
-  base: 'https://generativelanguage.googleapis.com/v1beta/openai', keyUrl: 'https://aistudio.google.com/apikey', keyHint: 'AIza…',
-  defaultModel: 'gemini-2.0-flash', models: ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'],
- },
- {
-  id: 'cerebras', label: 'Cerebras — free, very fast', auth: 'key', free: true,
+  id: 'cerebras', name: 'Cerebras', auth: 'key', how: 'Your Cerebras API key', where: 'api.cerebras.ai', cost: 'Free tier',
   base: 'https://api.cerebras.ai/v1', keyUrl: 'https://cloud.cerebras.ai', keyHint: 'csk-…',
-  defaultModel: 'llama-3.3-70b', models: ['llama-3.3-70b', 'llama3.1-8b'],
+  defaultModel: 'llama-3.3-70b', prefer: [/^llama-3\.3-70b/, /^llama-4/, /gpt-oss/, /^qwen/, /^llama/], models: ['llama-3.3-70b', 'llama3.1-8b'],
  },
  {
-  id: 'mistral', label: 'Mistral — free tier', auth: 'key', free: true,
-  base: 'https://api.mistral.ai/v1', keyUrl: 'https://console.mistral.ai/api-keys', keyHint: '…',
-  defaultModel: 'mistral-small-latest', models: ['mistral-small-latest', 'open-mistral-nemo'],
+  id: 'gemini', name: 'Google Gemini', auth: 'key', how: 'Your Google AI Studio key', where: 'generativelanguage.googleapis.com', cost: 'Free tier',
+  base: 'https://generativelanguage.googleapis.com/v1beta/openai', keyUrl: 'https://aistudio.google.com/apikey', keyHint: 'AIza…',
+  defaultModel: 'gemini-2.5-flash', prefer: [/^gemini-[\d.]+-flash$/, /^gemini-[\d.]+-flash/, /^gemini/], models: ['gemini-2.5-flash', 'gemini-2.0-flash'],
  },
  {
-  id: 'openai', label: 'OpenAI', auth: 'key', free: false,
+  id: 'mistral', name: 'Mistral', auth: 'key', how: 'Your Mistral API key', where: 'api.mistral.ai', cost: 'Free tier',
+  base: 'https://api.mistral.ai/v1', keyUrl: 'https://console.mistral.ai/api-keys', keyHint: 'API key',
+  defaultModel: 'mistral-small-latest', prefer: [/^mistral-small-latest$/, /^mistral-medium-latest$/, /small/], models: ['mistral-small-latest', 'mistral-medium-latest'],
+ },
+ {
+  id: 'openai', name: 'OpenAI', auth: 'key', how: 'Your OpenAI API key', where: 'api.openai.com', cost: 'Paid',
   base: 'https://api.openai.com/v1', keyUrl: 'https://platform.openai.com/api-keys', keyHint: 'sk-…',
-  defaultModel: 'gpt-4o-mini', models: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],
+  defaultModel: 'gpt-4o-mini', prefer: [/^gpt-[\d.]+-mini$/, /^gpt-[\d.o]+-mini$/, /^gpt-/], models: ['gpt-4o-mini', 'gpt-4.1-mini'],
  },
- {
-  id: 'custom', label: 'Custom (OpenAI-compatible)', auth: 'custom', free: false,
-  keyHint: 'API key', defaultModel: '',
- },
+ { id: 'custom', name: 'Custom endpoint', auth: 'custom', how: 'Your base URL and key', where: 'Any OpenAI-compatible API', cost: 'Depends on the service', keyHint: 'API key', defaultModel: '' },
+];
+
+// The list's sections, in order, keyed by `auth`.
+export const GROUPS = [
+ { auth: 'local', title: 'No sign-in' },
+ { auth: 'openrouter', title: 'Sign in' },
+ { auth: 'key', title: 'Your own API key' },
+ { auth: 'custom', title: 'Advanced' },
 ];
 
 export const providerById = id => PROVIDERS.find(p => p.id === id);
 
-// Per-provider settings in cookies, so a reload comes back signed in and on the same model.
+// Per-provider settings in cookies, so a reload comes back connected and on the same model.
 export const getProviderId = () => getCookie('teacher-provider') || 'local';
 export const setProviderId = id => setCookie('teacher-provider', id);
 export const getKey = id => getCookie(`teacher-key-${id}`);
@@ -60,12 +65,13 @@ export const setBase = (id, v) => setCookie(`teacher-base-${id}`, v);
 
 function httpError(status, data) {
  const detail = data?.error?.message || data?.message;
- if (status === 401 || status === 403) return 'The key was rejected. Check it in Settings.';
+ if (status === 401 || status === 403) return 'The key was rejected. Check it and try again.';
  if (status === 402) return 'That model needs credit on this provider. Pick a free one, or add credit.';
  if (status === 429) return 'Rate limited. Free tiers have a cap; wait a bit or switch provider.';
- if (status === 404) return `Model not found${detail ? ': ' + detail : ''}. Check the model name in Settings.`;
+ if (status === 404) return `Model not found${detail ? ': ' + detail : ''}. Pick another model.`;
  return `Request failed (${status})${detail ? ': ' + detail : ''}.`;
 }
+const apiError = (status, data) => Object.assign(new Error(httpError(status, data)), { status });
 
 // An engine for any OpenAI-compatible chat endpoint: POST {base}/chat/completions with a Bearer key.
 export function openAiEngine({ base, apiKey, model, headers = {} }) {
@@ -81,7 +87,7 @@ export function openAiEngine({ base, apiKey, model, headers = {} }) {
     signal: controller.signal,
    });
    const data = await res.json().catch(() => null);
-   if (!res.ok || !data) throw new Error(httpError(res.status, data));
+   if (!res.ok || !data) throw apiError(res.status, data);
    if (data.error) throw new Error(data.error.message || 'The provider returned an error.');
    const choice = data.choices?.[0];
    if (choice?.finish_reason === 'content_filter' || choice?.message?.refusal) {
@@ -93,25 +99,54 @@ export function openAiEngine({ base, apiKey, model, headers = {} }) {
  };
 }
 
-// Builds the hosted engine for a provider from its stored settings, or returns an error string explaining
-// what is missing. (The 'local' provider is handled by the panel through js/local-model.js, not here.)
+const baseFor = provider => (provider.auth === 'custom' ? getBase(provider.id) : provider.base);
+
+// Builds the engine for a hosted provider from its stored settings, or says what is missing.
 export function engineFor(provider) {
- const apiKey = getKey(provider.id);
+ const base = baseFor(provider), apiKey = getKey(provider.id);
  const model = getModelFor(provider.id) || provider.defaultModel;
- if (provider.auth === 'custom') {
-  const base = getBase(provider.id);
-  if (!base) return { error: 'Enter the API base URL in Settings.' };
-  if (!model) return { error: 'Enter a model name in Settings.' };
-  if (!apiKey) return { error: 'Enter the API key in Settings.' };
-  return { engine: openAiEngine({ base, apiKey, model }) };
- }
- if (!apiKey) return { error: 'Add a key in Settings (or sign in).' };
- return { engine: openAiEngine({ base: provider.base, apiKey, model, headers: openRouterHeaders(provider) }) };
+ if (!base) return { error: 'Enter the API base URL.' };
+ if (!apiKey) return { error: provider.auth === 'openrouter' ? 'Sign in or paste a key first.' : 'Enter an API key first.' };
+ if (!model) return { error: 'Enter a model name.' };
+ const headers = provider.id === 'openrouter' ? { 'X-Title': 'Ultimate Synthesia Online' } : {};
+ return { engine: openAiEngine({ base, apiKey, model, headers }) };
 }
 
-const openRouterHeaders = provider => (provider.id === 'openrouter' ? { 'X-Title': 'Ultimate Synthesia Online' } : {});
+// Model ids a provider lists that can't chat (speech, embeddings, image, safety classifiers and the like).
+const NOT_CHAT = /(whisper|tts|transcri|embed|guard|moderation|dall-e|image|imagen|audio|realtime|speech|search|rerank|ocr|aqa|veo|learnlm|computer-use)/i;
 
-// OpenRouter lists its models publicly; used to fill its model dropdown (free tier plus a premium shortlist).
+// Checks a key and returns the provider's chat models, in one free request (no model is run). A rejected key
+// throws with status 401; Gemini reports a bad key as 400, so that counts as rejected here too.
+export async function listModels(provider, apiKey) {
+ const root = baseFor(provider).replace(/\/$/, '');
+ if (provider.id === 'openrouter') {
+  const check = await fetch(`${root}/key`, { headers: { Authorization: `Bearer ${apiKey}` } });
+  if (!check.ok) throw apiError(check.status === 400 ? 401 : check.status, await check.json().catch(() => null));
+  const { free, premium } = await fetchOpenRouterModels();
+  return [...free, ...premium].map(m => m.id);
+ }
+ const res = await fetch(`${root}/models`, { headers: { Authorization: `Bearer ${apiKey}` } });
+ const data = await res.json().catch(() => null);
+ if (!res.ok || !data) throw apiError(res.status === 400 ? 401 : res.status, data);
+ let ids = (data.data || []).map(m => String(m.id || '').replace(/^models\//, '')).filter(id => id && !NOT_CHAT.test(id));
+ if (provider.id === 'openai') ids = ids.filter(id => /^(gpt|o\d|chatgpt)/.test(id) && !/instruct/.test(id));
+ if (provider.id === 'gemini') ids = ids.filter(id => /^(gemini|gemma)/.test(id));
+ return [...new Set(ids)].sort();
+}
+
+// Chooses a model from a live list: the saved one, else the default, else the newest match of the provider's
+// preferences, else the first.
+export function pickModel(provider, ids, saved) {
+ if (saved && ids.includes(saved)) return saved;
+ if (provider.defaultModel && ids.includes(provider.defaultModel)) return provider.defaultModel;
+ for (const re of provider.prefer || []) {
+  const hits = ids.filter(id => re.test(id)).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+  if (hits.length) return hits[0];
+ }
+ return ids[0] || saved || provider.defaultModel || '';
+}
+
+// OpenRouter lists its models publicly: the free ones (largest context first) and a premium shortlist.
 export async function fetchOpenRouterModels() {
  const data = await (await fetch('https://openrouter.ai/api/v1/models')).json();
  const models = (data.data || []).filter(m => m.id);
