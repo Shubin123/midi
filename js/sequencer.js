@@ -1,17 +1,69 @@
 import { read, save } from './storage.js';
 import { targets, valueAt, apply } from './automation.js';
+import { SCALE_TEMPLATES, NOTE_NAMES } from './pitch-analyzer.js';
+
+// Scales the step grid can use: every scale and mode the teacher's analyser knows, plus chromatic.
+export const SCALES = { ...SCALE_TEMPLATES, 'Chromatic': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] };
+export const SCALE_GROUPS = [
+ ['Major and its modes', ['Ionian (Major)', 'Dorian', 'Phrygian', 'Lydian', 'Mixolydian', 'Aeolian (Minor)', 'Locrian']],
+ ['Minor', ['Harmonic Minor', 'Melodic Minor']],
+ ['Other modes', ['Phrygian Dominant', 'Lydian Dominant', 'Altered']],
+ ['Pentatonic and blues', ['Major Pentatonic', 'Minor Pentatonic', 'Blues']],
+ ['Symmetric', ['Whole Tone', 'Diminished (HW)', 'Diminished (WH)', 'Chromatic']],
+];
+const KEY_LABELS = ['C', 'C♯ / D♭', 'D', 'D♯ / E♭', 'E', 'F', 'F♯ / G♭', 'G', 'G♯ / A♭', 'A', 'A♯ / B♭', 'B'];
+const OCTAVES = [2, 3, 4, 5, 6];
+const toNote = midi => NOTE_NAMES[midi % 12] + Math.floor(midi / 12); // synth naming: "C5" is MIDI 60
+const toMidi = note => Number(note.match(/-?\d+$/)[0]) * 12 + NOTE_NAMES.indexOf(note.replace(/-?\d+$/, ''));
+
+// The rows for a key (0 = C), scale and octave: one octave of the scale up from the tonic, then the tonic an
+// octave higher, lowest first.
+export function scaleNotes(key, scale, octave) {
+ const base = octave * 12 + key;
+ return [...SCALES[scale].map(s => base + s), base + 12].map(toNote);
+}
+
+// Moves a pattern onto new rows. Each old row is shifted by `shift` semitones (the key or octave change) and
+// lands on the nearest new row (the lower one on a tie), so within the same scale a melody transposes exactly
+// and into another scale it snaps to the nearest degree. Rows that land together are merged.
+export function remapPattern(oldNotes, pattern, newNotes, shift = 0) {
+ const newMidi = newNotes.map(toMidi);
+ const out = newNotes.map(() => Array(16).fill(false));
+ oldNotes.forEach((note, r) => {
+  const target = toMidi(note) + shift;
+  let best = 0;
+  newMidi.forEach((m, i) => { if (Math.abs(m - target) < Math.abs(newMidi[best] - target)) best = i; });
+  pattern[r]?.forEach((on, s) => { if (on) out[best][s] = true; });
+ });
+ return out;
+}
+
 export function createSequencer() {
  const stored=read('synth-sequence-v1',{});
- const notes=['C4','D4','E4','G4','A4','C5'];
- let pattern=Array.isArray(stored.pattern)&&stored.pattern.length===6&&stored.pattern.every(row=>Array.isArray(row)&&row.length===16)?stored.pattern:notes.map((_,r)=>Array.from({length:16},(_,i)=>r===[0,2,3,4,2,3,5,3,0,2,3,4,2,3,4,2][i]));
+ // Patterns saved before keys and scales existed are C major pentatonic in octave 4, which is still the default.
+ let key=Number.isInteger(stored.key)&&stored.key>=0&&stored.key<12?stored.key:0;
+ let scale=SCALES[stored.scale]?stored.scale:'Major Pentatonic';
+ let octave=OCTAVES.includes(stored.octave)?stored.octave:4;
+ let notes=scaleNotes(key,scale,octave);
+ const fits=p=>Array.isArray(p)&&p.length===notes.length&&p.every(row=>Array.isArray(row)&&row.length===16);
+ const demo=[0,2,3,4,2,3,5,3,0,2,3,4,2,3,4,2];
+ let pattern=fits(stored.pattern)?stored.pattern:notes.map((_,r)=>Array.from({length:16},(_,i)=>notes.length===6&&r===demo[i]));
  let lanes=Array.isArray(stored.lanes)?stored.lanes.filter(l=>targets[l.target]&&l.points?.length===16&&l.points.every(v=>Number.isFinite(v)&&v>=targets[l.target].min&&v<=targets[l.target].max)).map(l=>({...l,enabled:!!l.enabled})):[];
  if(!lanes.length)lanes=[{target:'tempo',enabled:false,mode:'linear',points:Array(16).fill(120)}];
- const persist=()=>save('synth-sequence-v1',{pattern,lanes});
+ const persist=()=>save('synth-sequence-v1',{pattern,lanes,key,scale,octave});
  const sequence=document.createElement('section');sequence.id='step-sequencer';sequence.className='wide';sequence.dataset.title='Step sequencer';sequence.dataset.wide='true';
- sequence.innerHTML='<div class="module-content"><div class="sequence-toolbar"><button id="seq-play" class="std-button">▶ Play</button><button id="seq-stop" class="std-button">■ Stop</button><label>Base BPM <input id="seq-bpm" type="number" min="30" max="300" value="120"></label><span id="seq-position" role="status">Ready · 16 steps / 1 bar</span><button id="seq-clear">Clear notes</button></div><p class="module-hint">Tap steps to compose. Each column is a sixteenth note. Patterns and automation save automatically.</p><div class="sequence-scroll"><div class="step-grid"></div></div></div>';
+ sequence.innerHTML='<div class="module-content"><div class="sequence-toolbar"><button id="seq-play" class="std-button">▶ Play</button><button id="seq-stop" class="std-button">■ Stop</button><label>Base BPM <input id="seq-bpm" type="number" min="30" max="300" value="120"></label><span id="seq-position" role="status">Ready · 16 steps / 1 bar</span><button id="seq-clear">Clear notes</button></div><div class="sequence-toolbar seq-scale-row"><label>Key <select id="seq-key"></select></label><label>Scale <select id="seq-scale"></select></label><label>Octave <select id="seq-octave"></select></label></div><p class="module-hint">Tap steps to compose. Each column is a sixteenth note and each row a note of the chosen scale; changing the key or octave transposes the pattern, and changing the scale moves each note to the nearest note of the new one. Patterns and automation save automatically.</p><div class="sequence-scroll"><div class="step-grid"></div></div></div>';
+ const keySelect=sequence.querySelector('#seq-key'),scaleSelect=sequence.querySelector('#seq-scale'),octaveSelect=sequence.querySelector('#seq-octave');
+ KEY_LABELS.forEach((label,i)=>keySelect.append(new Option(label,i)));
+ SCALE_GROUPS.forEach(([title,names])=>{const group=document.createElement('optgroup');group.label=title;names.forEach(n=>group.append(new Option(n,n)));scaleSelect.append(group);});
+ OCTAVES.forEach(o=>octaveSelect.append(new Option(o,o)));
+ keySelect.value=key;scaleSelect.value=scale;octaveSelect.value=octave;
  const grid=sequence.querySelector('.step-grid');
- const cells=[];
- notes.forEach((note,row)=>{const label=document.createElement('span');label.textContent=note;grid.append(label);for(let i=0;i<16;i++){const cell=document.createElement('button');cell.className='step';cell.dataset.step=i;cell.setAttribute('aria-label',`${note}, step ${i+1}`);const update=()=>{cell.classList.toggle('on',!!pattern[row][i]);cell.setAttribute('aria-pressed',!!pattern[row][i]);};update();cell.onclick=()=>{pattern[row][i]=!pattern[row][i];update();persist();};grid.append(cell);cells.push(cell);}});
+ let cells=[];
+ const renderGrid=()=>{
+  grid.replaceChildren();cells=[];
+  notes.forEach((note,row)=>{const label=document.createElement('span');label.textContent=note;grid.append(label);for(let i=0;i<16;i++){const cell=document.createElement('button');cell.className='step';cell.dataset.step=i;cell.setAttribute('aria-label',`${note}, step ${i+1}`);const update=()=>{cell.classList.toggle('on',!!pattern[row][i]);cell.setAttribute('aria-pressed',!!pattern[row][i]);};update();cell.onclick=()=>{pattern[row][i]=!pattern[row][i];update();persist();};grid.append(cell);cells.push(cell);}});
+ };renderGrid();
  const automation=document.createElement('section');automation.id='automation';automation.className='wide';automation.dataset.title='Automation';automation.dataset.wide='true';
  automation.innerHTML='<div class="module-content"><div class="sequence-toolbar"><strong>Motion, one step at a time.</strong><select id="automation-target" aria-label="Automation target"></select><button id="add-lane">+ Add lane</button></div><p class="module-hint">Enable a lane to automate it. Drag the values or type a value at any step. Linear blends between points; hold keeps each value until the next step. Lanes repeat with the pattern.</p><div id="lanes"></div></div>';
  const select=automation.querySelector('select');Object.entries(targets).forEach(([id,t])=>{const opt=document.createElement('option');opt.value=id;opt.textContent=t.label;select.append(opt);});
@@ -20,6 +72,15 @@ export function createSequencer() {
  let bars=0,barLimit=Infinity,clicks=true,onStopped=null;
  const release=()=>{active.forEach(note=>window.synth.noteOff(note));active.clear();};
  const restore=lane=>{if(snapshot[lane.target]!==undefined)apply(lane.target,snapshot[lane.target]);};
+ const changeScale=()=>{
+  const nextKey=Number(keySelect.value),nextScale=scaleSelect.value,nextOctave=Number(octaveSelect.value);
+  const next=scaleNotes(nextKey,nextScale,nextOctave);
+  release();
+  pattern=remapPattern(notes,pattern,next,(nextOctave*12+nextKey)-(octave*12+key));
+  key=nextKey;scale=nextScale;octave=nextOctave;notes=next;
+  renderGrid();persist();
+ };
+ keySelect.onchange=scaleSelect.onchange=octaveSelect.onchange=changeScale;
  const renderLanes=()=>{
   const host=automation.querySelector('#lanes');host.replaceChildren();
   lanes.forEach((lane,index)=>{
@@ -60,5 +121,5 @@ export function createSequencer() {
  document.getElementById('stopAllSoundsButton').addEventListener('click',stop,true);
  window.addEventListener('pagehide',stop);
  document.addEventListener('visibilitychange',()=>{if(document.hidden)stop();});
- return {sequence,automation,api:{notes,get pattern(){return pattern;},setPattern,start,stop,get running(){return running;},get lanes(){return lanes;}}};
+ return {sequence,automation,api:{get notes(){return notes;},get pattern(){return pattern;},setPattern,start,stop,get running(){return running;},get lanes(){return lanes;}}};
 }

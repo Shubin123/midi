@@ -80,7 +80,9 @@ gap. The click itself is a short synthesised buffer rather than a sample.
 
 - A 2048-point FFT oscilloscope that can be pointed at the master output,
   oscillator 1's sum, or oscillator 2's sum.
-- Optional falling-note display over the keyboard, Synthesia style.
+- Falling notes, Synthesia style, in the Keyboard module directly above the
+  keys, so each note lines up with the key that played it. They are on by
+  default; the **Falling notes** switch in that module's toolbar turns them off.
 - **13 UI themes**: Midnight Drive, Solarized Dark, Crimson Peak, Cyber Glow,
   Forest Calm, Ocean Depth, Autumn Warmth, Lavender Haze, Desert Sunset,
   Steampunk Gears, Vintage Library, Monochrome Noir and Pastel Dream: applied
@@ -103,15 +105,30 @@ The workspace adds a 16-step polyphonic sequencer and automation lanes for tempo
 Enable each lane to hear it; choose linear interpolation or held step values.
 Use Ramp up and Flatten to edit a whole lane, or adjust individual step values.
 Tempo automation changes sequencer speed as it plays. Stop restores manual values.
+
+The sequencer's rows follow a **Key**, **Scale** and **Octave**: every scale and
+mode the AI teacher's analyser knows (the seven modes of the major scale,
+harmonic and melodic minor, Phrygian dominant, Lydian dominant, altered, major
+and minor pentatonic, blues, whole tone, both diminished scales) plus
+chromatic, one octave from the tonic up to the tonic above. Changing the key or
+octave transposes the pattern; changing the scale moves each note to the
+nearest note of the new scale. The default, C major pentatonic in octave 4, is
+the original grid, so patterns saved before this still load unchanged.
 Playback stops when the page is hidden to avoid delayed notes on returning.
 The original loop recorder still uses recorded event durations; tempo automation
 does not time-stretch those recordings.
 
 Drag a module by its header with a mouse or finger. Focus its header and use
-arrow keys to reorder with the keyboard. The width button toggles a wide module;
-mobile screens stack modules into one column. The hamburger menu can hide and
-restore every widget and reset the layout. Widget order, widths, visibility,
-sequence notes, and automation lanes persist in browser localStorage.
+arrow keys to reorder with the keyboard. The **–** button (or a double-click on
+the title) minimises a module to its title bar, one column wide; **+** expands
+it. The width button toggles a wide module. Modules are packed like a masonry
+wall: in order, each goes to the column that currently ends highest, so short
+and minimised modules fill in under tall ones instead of leaving gaps. The
+layout uses four columns, two below 1100 px and one below 600 px. The hamburger
+menu can hide and restore every widget, minimise or expand them all, and reset
+the layout. Widget order, widths, minimised and hidden state, the sequencer's
+notes, key, scale and octave, and automation lanes persist in browser
+localStorage.
 
 Source files:
 
@@ -132,7 +149,8 @@ Source files:
 - `js/vendor/webaudiomodules-sdk.js`: Web Audio Modules host SDK (MIT)
 - `workspace.css`: responsive workspace styling
 
-Run the interpolation checks with `node tests/automation.mjs`.
+Run the interpolation checks with `node tests/automation.mjs`, and the
+sequencer's scale rows and pattern moves with `node tests/sequencer.mjs`.
 Serve over HTTP as below; the new JavaScript modules require a web server.
 
 ## Import and export
@@ -416,6 +434,7 @@ The service worker needs `https://` or `http://localhost`. Tests:
 
 - `node tests/archive.mjs`: archive reading and writing
 - `node tests/formats.mjs`: WAV, AIFF and MIDI reading and writing
+- `node tests/sequencer.mjs`: sequencer scales and pattern transposition
 - `node tests/teacher.mjs`: the AI teacher's analysis and API requests
 - `node tests/native-id.mjs`: identification (macOS; uses `clang`, `pkgbuild` and `productbuild`)
 - `node tests/vst3-wasm.mjs`: the WebAssembly VST3 builds

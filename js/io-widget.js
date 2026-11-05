@@ -37,7 +37,7 @@ export function createIoWidget(sequencer) {
    el('button', { textContent: 'Export MIDI', onclick: () => exportMidi() })),
   el('p', { className: 'module-hint' }, 'Render audio plays the pattern or loop in real time and saves exactly that many bars or loop lengths, ready to drop on a DAW track. Export MIDI writes a Standard MIDI File (.mid) at the current tempo.'),
   el('div', { className: 'sequence-toolbar io-row' }, el('strong', { textContent: 'Import' }), el('button', { textContent: '+ Import file…', onclick: () => picker.click() }), el('label', {}, 'MIDI into ', midiTarget), status, picker),
-  el('p', { className: 'module-hint' }, 'Audio: WAV and AIFF at any bit depth, plus FLAC, MP3, Ogg and M4A where the browser can decode them. MIDI: .mid type 0 or 1, with its tempo map. A loop slot keeps the full timing and plays with the current patch; the step sequencer takes the first bar, snapped to sixteenths on its six rows.'),
+  el('p', { className: 'module-hint' }, 'Audio: WAV and AIFF at any bit depth, plus FLAC, MP3, Ogg and M4A where the browser can decode them. MIDI: .mid type 0 or 1, with its tempo map. A loop slot keeps the full timing and plays with the current patch; the step sequencer takes the first bar, snapped to sixteenths on its rows.'),
   el('div', { className: 'sequence-toolbar' }, el('strong', { textContent: 'Clips' }), el('label', {}, throughFx, 'Play through effects')),
   clips);
 

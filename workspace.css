@@ -8,3 +8,22 @@ body{padding:24px}h1{font-size:1.5rem;letter-spacing:.3px;text-align:left;margin
 #io-module .sequence-toolbar select{width:auto;max-width:100%;margin:0}#io-module .sequence-toolbar label{white-space:nowrap}#io-module .sequence-toolbar input[type=number]{width:60px}
 .plugin-row .sequence-toolbar strong{overflow-wrap:anywhere}.plugin-row .module-hint{margin:0}.plugin-row button[aria-expanded=true]{border-color:var(--accent-color);color:var(--accent-color)}
 .plugin-window{position:fixed;left:80px;top:90px;width:min(460px,calc(100vw - 24px));min-width:min(260px,calc(100vw - 24px));max-width:calc(100vw - 24px);max-height:min(620px,calc(100vh - 24px));display:flex;flex-direction:column;overflow:auto;resize:both;box-shadow:0 18px 50px #000a}.plugin-window .widget-header{position:sticky;top:0;z-index:1;background:var(--primary-surface-color)}.plugin-window .drag-handle{cursor:move;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.plugin-window>.module-content{flex:1}.plugin-window .plugin-params{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
+/* Packed layout: modules span 2px rows sized to their height (js/widgets.js), so the vertical gap comes from the span. */
+#workspace{grid-auto-rows:2px;row-gap:0;column-gap:18px}
+@media(max-width:600px){#workspace{column-gap:12px}}
+.widget.minimized{grid-column:span 1}
+.widget.minimized>:not(.widget-header){display:none!important}
+.widget.minimized>.widget-header{border-bottom:0}
+.widget-header .min-btn{font-size:16px;line-height:1;min-width:26px}
+.widget-menu-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+/* The keyboard module carries the falling notes directly above the keys, at the same width. */
+#keyboard-module .keyboard-toolbar{display:flex;align-items:center;gap:14px;margin:12px 16px 0;font-size:12px}
+#keyboard-module .keyboard-toolbar label{display:flex;align-items:center;gap:6px;margin:0;cursor:pointer}
+#keyboard-module .keyboard-toolbar input{margin:0;transform:none}
+#keyboard-module .synthesia-container{width:auto;height:calc(170px * var(--font-scale-factor));margin:12px 16px 0;border-radius:8px 8px 0 0}
+#keyboard-module .synthesia-container.active+.keyboard{margin-top:0}
+.seq-scale-row{margin-top:10px}
+/* The column count lives in one variable so the packer reads the real count, not tracks a placed module implies. */
+#workspace{--cols:4;grid-template-columns:repeat(var(--cols),minmax(0,1fr))}
+@media(max-width:1100px){#workspace{--cols:2}}
+@media(max-width:600px){#workspace{--cols:1}}
