@@ -8,7 +8,8 @@ Part of the [project-demos](https://github.com/Shubin123/project-demos) collecti
 
 ## Status: ✅ Working
 
-Entirely self-contained; the only external request is the Poppins webfont.
+Entirely self-contained; the only external requests are the Poppins webfont and,
+once you add an API key, the AI teacher's calls to `api.anthropic.com`.
 Hardware MIDI input is Chromium-only; everything else works everywhere.
 
 *Verified 2026-08-20 by requesting every external dependency this project uses over the network. The demo itself was not opened in a browser, so this reflects dependency health rather than a full functional test.*
@@ -155,6 +156,49 @@ session; download the ones you want to keep.
 
 `node tests/formats.mjs` round-trips every format and, on macOS, checks the
 files against Core Audio (`afinfo`, `afconvert`).
+
+## AI music theory teacher
+
+A side panel on the right (the ▶ / ◀ tab hides and shows it) follows what you
+play on a MIDI controller, the computer keyboard, the mouse or touch. The step
+sequencer, the looper and the teacher's own playback are left out. It works in
+two layers:
+
+- **Instant and local** (`js/pitch-analyzer.js`). Every note-on shows its name,
+  MIDI number and pitch class (mod 12), plus the chord once three or more keys
+  are held. When every key is up and 800 ms pass in silence, the phrase is
+  matched against 18 scales and modes and 12 chord types. A full diatonic set
+  fits all seven modes, so ties go to the tonic you leaned on: the phrase's
+  last, first or lowest note. No network is involved.
+- **Claude** (`js/claude-teacher.js`). With **Auto** on, each phrase of three
+  or more notes is summarised (the notes in order, pitch classes, best local
+  match, chords) and sent to Claude Sonnet 5.5, which names what you played,
+  explains it in a few sentences and suggests what to try next. If you keep
+  playing while it answers, only your latest phrase is sent next. Type in the
+  box at the bottom to ask anything else.
+
+Claude can end a reply with `{"play": [62, 65, 69], "bpm": 120}`. The panel
+plays those notes through the synth (and any plug-in instrument following it),
+lights the keys as they sound, and keeps a ▶ button to play them again.
+
+To set it up, open **Settings** in the panel and paste an Anthropic API key.
+The key is kept in a cookie scoped to the app's path (`SameSite=Strict`, and
+`Secure` over HTTPS), and requests go straight from the browser to
+`api.anthropic.com` with the `anthropic-dangerous-direct-browser-access`
+header, so there is no server and static hosting such as GitHub Pages still
+works. Anything that runs script on the page can read the key, and like any
+cookie it is attached to requests for the site's own files, so use a key with
+a spend limit.
+
+Requests use `claude-sonnet-5-5` at `effort: "low"` to keep replies quick, keep
+the last 15 exchanges, and opt into server-side fallback (`fallbacks:
+"default"`), so a safety-classifier decline is retried on another model
+rather than returned. Each analysed phrase is one request; turn **Auto** off to
+only ask questions.
+
+`node tests/teacher.mjs` checks scale, mode and chord detection, phrase
+tracking, suggestion parsing, and the API requests (against a stub, so no key
+is needed).
 
 ## Plugins and effects
 
@@ -335,6 +379,7 @@ The service worker needs `https://` or `http://localhost`. Tests:
 
 - `node tests/archive.mjs`: archive reading and writing
 - `node tests/formats.mjs`: WAV, AIFF and MIDI reading and writing
+- `node tests/teacher.mjs`: the AI teacher's analysis and API requests
 - `node tests/native-id.mjs`: identification (macOS; uses `clang`, `pkgbuild` and `productbuild`)
 - `node tests/vst3-wasm.mjs`: the WebAssembly VST3 builds
 - `tests/capture.html` in a browser: capture accuracy
@@ -342,7 +387,7 @@ The service worker needs `https://` or `http://localhost`. Tests:
 ## Running it
 
 Static HTML, CSS, and JavaScript modules, no build step and no bundler. The only external dependency
-is the Poppins webfont from Google Fonts.
+is the Poppins webfont from Google Fonts (plus the Claude API, for the AI teacher only).
 
 ```sh
 python -m http.server 8000
