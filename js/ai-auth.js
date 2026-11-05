@@ -1,31 +1,24 @@
-// Sign-in portal for the AI teacher: OpenRouter OAuth 2.0 with PKCE, straight from the browser. No server
-// and no API key to paste. The user clicks Sign in, approves on openrouter.ai, and comes back with a short
-// code that we trade for a key; the key lives in a cookie in this browser only. A free OpenRouter account
-// can use the free models; adding credit there unlocks GPT, Claude, Gemini and the rest behind the same
-// sign-in. (A page cannot read a cookie set by another site such as claude.ai, so this is the cookie-based,
-// key-free sign-in that a static site can actually do.)
-const AUTH_URL = 'https://openrouter.ai/auth';
-const KEY_EXCHANGE = 'https://openrouter.ai/api/v1/auth/keys';
-const TOKEN_COOKIE = 'openrouter_key';
-const MODEL_COOKIE = 'openrouter_model';
-const VERIFIER_STORE = 'openrouter_pkce_verifier';
+// Cookie helpers for the teacher, plus OpenRouter's key-free sign-in. The provider keys and settings live in
+// cookies (scoped to this app's path), which is what "keep it in cookies" means here: a page can only read
+// cookies its own domain set, so this never touches a claude.ai or chatgpt.com login. OpenRouter adds an
+// OAuth 2.0 PKCE flow so that provider needs no key pasted at all: the user approves on openrouter.ai and
+// comes back with a short code we trade for a key, which we then store like any other.
 
 const cookiePath = () => location.pathname.replace(/[^/]*$/, '') || '/';
-function readCookie(name) {
- const m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+export function getCookie(name) {
+ const m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)'));
  return m ? decodeURIComponent(m[1]) : null;
 }
-function writeCookie(name, val, days) {
+export function setCookie(name, val, days = 400) {
  const secure = location.protocol === 'https:' ? ';Secure' : ''; // http://localhost drops a Secure cookie in Safari
  document.cookie = `${name}=${encodeURIComponent(val)};max-age=${days * 86400};path=${cookiePath()};SameSite=Lax${secure}`;
 }
-function dropCookie(name) { document.cookie = `${name}=;max-age=0;path=${cookiePath()};SameSite=Lax`; }
+export function deleteCookie(name) { document.cookie = `${name}=;max-age=0;path=${cookiePath()};SameSite=Lax`; }
 
-export const getToken = () => readCookie(TOKEN_COOKIE);
-export const setToken = v => writeCookie(TOKEN_COOKIE, v, 400);
-export const clearToken = () => dropCookie(TOKEN_COOKIE);
-export const getModel = () => readCookie(MODEL_COOKIE);
-export const setModel = v => writeCookie(MODEL_COOKIE, v, 400);
+/* ---- OpenRouter OAuth (PKCE) ---- */
+const AUTH_URL = 'https://openrouter.ai/auth';
+const KEY_EXCHANGE = 'https://openrouter.ai/api/v1/auth/keys';
+const VERIFIER_STORE = 'openrouter_pkce_verifier';
 
 const base64url = bytes => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
@@ -45,12 +38,11 @@ export async function signIn() {
  location.assign(`${AUTH_URL}?callback_url=${encodeURIComponent(callbackUrl())}&code_challenge=${challenge}&code_challenge_method=S256`);
 }
 
-// Call once on load. If the page opened with ?code= (back from OpenRouter), trade it for a key, store the
-// key in a cookie, and strip the code from the URL. Returns true when a sign-in just completed, false when
-// there was no code; throws with a readable message when the exchange fails.
+// Call once on load. If the page opened with ?code= (back from OpenRouter), trade it for a key and return it,
+// stripping the code from the URL. Returns null when there is no code; throws when the exchange fails.
 export async function completeSignIn() {
  const code = new URLSearchParams(location.search).get('code');
- if (!code) return false;
+ if (!code) return null;
  let verifier = null;
  try { verifier = localStorage.getItem(VERIFIER_STORE); localStorage.removeItem(VERIFIER_STORE); } catch { /* storage blocked */ }
  const clean = () => { try { history.replaceState(null, '', callbackUrl()); } catch { /* ignore */ } };
@@ -60,8 +52,8 @@ export async function completeSignIn() {
   const res = await fetch(KEY_EXCHANGE, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const data = await res.json().catch(() => null);
   if (!res.ok || !data?.key) throw new Error(data?.error?.message || data?.message || `Sign-in failed (${res.status}). Please try again.`);
-  setToken(data.key); clean();
-  return true;
+  clean();
+  return data.key;
  } catch (err) {
   clean();
   throw err;

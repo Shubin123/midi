@@ -9,7 +9,8 @@ Part of the [project-demos](https://github.com/Shubin123/project-demos) collecti
 ## Status: ✅ Working
 
 Entirely self-contained; the only external requests are the Poppins webfont and,
-once you sign in to the AI teacher, its calls to `openrouter.ai`.
+once you set up the AI teacher, calls to the provider you pick (or a one-time
+model download for the on-device option).
 Hardware MIDI input is Chromium-only; everything else works everywhere.
 
 *Verified 2026-08-20 by requesting every external dependency this project uses over the network. The demo itself was not opened in a browser, so this reflects dependency health rather than a full functional test.*
@@ -177,35 +178,44 @@ two layers:
   answers, only your latest phrase is sent next. Type in the box at the bottom
   to ask anything else.
 
-The model can end a reply with `{"play": [62, 65, 69], "bpm": 120}`. The panel
-plays those notes through the synth (and any plug-in instrument following it),
-lights the keys as they sound, and keeps a ▶ button to play them again.
+The model can end a reply with a line like
+`{"play": [48, [60,64,67], [65,69,72]], "bpm": 90}`. Each item is one beat: a
+number is a single note, and an array is a chord struck together, so the
+teacher can demonstrate progressions, not just melodies. The panel plays them
+through the synth (and any plug-in instrument following it), lights the keys as
+they sound, and keeps a ▶ button to play them again.
 
-### Signing in
+### Choosing a provider
 
-The panel talks to a model through [OpenRouter](https://openrouter.ai), so
-**no API key is pasted anywhere**. Open the panel and click **Sign in with
-OpenRouter**: you approve on their site and come back signed in (OAuth 2.0 with
-PKCE, `js/ai-auth.js`). A **free OpenRouter account** can use the free models
-right away; adding credit there unlocks GPT, Claude, Gemini and the rest, which
-the **Model** dropdown lists under *Premium*. Pick any of them with the same
-sign-in.
+**Settings → Provider** picks what answers. Every option runs straight from the
+page, with no server of ours, so static hosting such as GitHub Pages works
+unchanged:
 
-The sign-in is a key OpenRouter issues to the browser, kept in a cookie scoped
-to the app's path (`SameSite=Lax`, and `Secure` over HTTPS). Requests go
-straight from the page to `openrouter.ai`, so there is no server of ours and
-static hosting such as GitHub Pages works unchanged. Note that a site can only
-read cookies it set itself, so this is a sign-in to OpenRouter, not a way to
-reuse a claude.ai or chatgpt.com login. (If you already have an OpenRouter key,
-*Settings → Paste it instead* takes one.)
+| Provider | What you need | Notes |
+| --- | --- | --- |
+| **On your device** | Nothing | Runs a small model on your GPU through [WebLLM](https://github.com/mlc-ai/web-llm) (`js/local-model.js`). No account, key or cookie, and nothing you play leaves the page. The first **Load model** downloads 0.9–2.3 GB (cached afterwards). Needs WebGPU: desktop Chrome or Edge. |
+| **OpenRouter** | A free account | **Sign in with OpenRouter** (OAuth with PKCE, `js/ai-auth.js`): approve on their site and come back signed in, no key to copy. Free models work on a free account; GPT, Claude and Gemini need credit there. A pasted OpenRouter key also works. |
+| **Groq**, **Cerebras** | A free key | Very fast free tiers of open models. |
+| **Google Gemini**, **Mistral** | A free key | Free tiers. |
+| **OpenAI** | A paid key | |
+| **Custom** | Base URL, key, model | Any OpenAI-compatible `/chat/completions` endpoint that allows browser requests (LM Studio, Ollama with CORS enabled, a self-hosted gateway...). |
+
+All the hosted options share one OpenAI-compatible request shape
+(`js/providers.js`), and the model field stays editable since model names
+change. Keys, the chosen provider and each provider's model are kept in cookies
+scoped to the app's path (`SameSite=Lax`, and `Secure` over HTTPS), so a reload
+comes back ready. A page can only read cookies its own domain set, so this
+cannot reuse a claude.ai or chatgpt.com login; the OpenRouter sign-in and the
+on-device model are the ways in that need no pasted key.
 
 Requests send the last 15 exchanges for context; each analysed phrase is one
-request, so turn **Auto** off to only ask typed questions. The free models have
-a daily cap — switch model in **Settings** if you hit it.
+request, so turn **Auto** off to only ask typed questions. Free tiers have rate
+limits; the panel says so and you can switch provider in **Settings**.
 
 `node tests/teacher.mjs` checks scale, mode and chord detection, phrase
-tracking, suggestion parsing, the PKCE sign-in exchange, and the API requests
-(against a stub, so no account is needed).
+tracking, note and chord suggestion parsing, the shared provider request and its
+error handling, cookie-backed settings, and the OpenRouter sign-in exchange
+(against stubs, so no account or download is needed).
 
 ## Plugins and effects
 
@@ -394,7 +404,8 @@ The service worker needs `https://` or `http://localhost`. Tests:
 ## Running it
 
 Static HTML, CSS, and JavaScript modules, no build step and no bundler. The only external dependency
-is the Poppins webfont from Google Fonts (plus OpenRouter, for the AI teacher only).
+is the Poppins webfont from Google Fonts (plus whichever AI provider you pick for
+the teacher, if any).
 
 ```sh
 python -m http.server 8000
