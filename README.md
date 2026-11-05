@@ -189,26 +189,60 @@ two layers:
   matched against 18 scales and modes and 12 chord types. A full diatonic set
   fits all seven modes, so ties go to the tonic you leaned on: the phrase's
   last, first or lowest note. No network is involved.
-- **The model** (`js/ai-teacher.js`). With **Auto** on, each phrase of three or
-  more notes is summarised (the notes in order, pitch classes, best local match,
-  chords) and sent to the model, which names what you played, explains it in a
-  few sentences and suggests what to try next. If you keep playing while it
-  answers, only your latest phrase is sent next. Type in the box at the bottom
-  to ask anything else.
+- **Fast coaching: System 1** (`js/laya.js`, `js/coach.js`). With the on-device
+  option loaded, [Laya](https://github.com/vishalmysore/layaForWeb), a small
+  decision model, reads each finished phrase and picks the next step from a fixed
+  menu: hear the whole scale, build the home chord, add a seventh, the main
+  chords of the key, a ii–V–I, the relative major or minor, a neighbouring mode,
+  the pentatonic or blues scale, an arpeggio, or replay with steady timing. Laya
+  only chooses; the app writes the words and works out the example's notes from
+  the key you are in, so the theory is always right, and the example plays at
+  once (about 0.7 s on a laptop GPU). Steps the phrase shows you already know,
+  and the last three suggested, are left out so the lesson keeps moving.
+- **Thinking: System 2** (`js/ai-teacher.js`). A language model explains and
+  answers questions: Qwen 3.5 on the device, or any provider below. In **Fast**
+  mode it answers typed questions straight away and stays out of the way while
+  you play; **Explain why** under a coaching step asks it to think that step
+  through (Laya marks the steps where it judges an explanation would help). In
+  **Slow** mode it also thinks every phrase through after Laya's step, building
+  on it, and answers questions after thinking. On the device, thinking has a
+  budget of 400 tokens: left alone, Qwen 3.5 often reasoned for over 3,000
+  tokens (two to four minutes) without reaching an answer, so after the budget
+  it answers from the notes it has made. If you keep playing while it answers,
+  only your latest phrase is sent next.
 
-The model can end a reply with a line like
-`{"play": [48, [60,64,67], [65,69,72]], "bpm": 90}`. Each item is one beat: a
-number is a single note, and an array is a chord struck together, so the
-teacher can demonstrate progressions, not just melodies. The panel plays them
-through the synth (and any plug-in instrument following it), lights the keys as
-they sound, and keeps a ▶ button to play them again.
+Models name what to play, as a last line such as `{"chords": ["Dm7", "G7",
+"Cmaj7"]}`, `{"scale": "A minor pentatonic"}` or `{"notes": ["C4", "E4",
+"G4"]}`, and the app works out the notes (`parseChordName`, `parseScaleName` in
+`js/pitch-analyzer.js`). Testing the on-device models showed why: asked for MIDI
+numbers, 1–3B models got the notes right in one example out of 24, while they
+name chords and scales reliably. Chords play one per beat, scales up and back
+down. Every example plays through the synth (and any plug-in instrument
+following it), lights the keys as they sound, and keeps a ▶ button to hear it
+again; a System 2 example waits if you have started playing again.
+
+### Talk mode
+
+The **🎙 Talk** button next to Ask turns on voice (`js/voice.js`, the browser's
+Web Speech API). Ask a question out loud and the teacher answers aloud, then
+plays its example once it has finished speaking; Laya's coaching steps are read
+out too. Listening pauses while the teacher speaks so it doesn't hear itself,
+and playing a note interrupts it, since that is your turn. Chord symbols are
+spoken as words ("D minor seven, then G seven"). Recognition runs on the device
+where the browser offers that (newer Chrome installs an on-device speech pack
+the first time); otherwise the browser's own speech service does it, which in
+Chrome is online, and the panel says which. Voices that run on the device are
+preferred for speaking. Firefox has no speech recognition, so there talk mode
+only reads replies aloud.
 
 ### The panel
 
 The panel has two tabs. **Lesson** is the conversation: a live strip shows the
 note you just played and the chord under your fingers, local analysis and the
-teacher's replies stack below it, and the ask box sits at the bottom with the
-**Explain each phrase I play** switch. **Provider** is where answers come from.
+teacher's replies stack below it, each labelled with who answered (System 1 ·
+Laya, or System 2 with how long it thought), and the bottom holds the **Fast /
+Slow** switch (once Laya is loaded), the **Coach each phrase I play** switch and
+the ask box. **Provider** is where answers come from.
 The header always says what is connected (for example *Groq · llama-3.3-70b*)
 and links to the Provider tab.
 
@@ -221,7 +255,7 @@ how you sign in:
 
 | Group | Provider | Sign-in | Requests go to | Cost |
 | --- | --- | --- | --- | --- |
-| No sign-in | **On your device** | None | Nowhere: runs in the browser via [WebLLM](https://github.com/mlc-ai/web-llm) (`js/local-model.js`) | Free; 0.9–2.3 GB first download; needs WebGPU (desktop Chrome or Edge) |
+| No sign-in | **On your device** | None | Nowhere: Laya (System 1, 291 MB, ONNX Runtime Web) and Qwen 3.5 4B or 2B (System 2, [WebLLM](https://github.com/mlc-ai/web-llm), `js/local-model.js`) run in the browser | Free; downloaded once, then cached; Qwen needs WebGPU (desktop Chrome or Edge), Laya also runs on the CPU |
 | Sign in | **OpenRouter** | **Sign in with OpenRouter** (OAuth with PKCE, `js/ai-auth.js`), or a pasted OpenRouter key | `openrouter.ai`, which forwards to Google, Meta, OpenAI, Anthropic and others | Free models on a free account; others need credit |
 | Your own API key | **Groq** | Groq key | `api.groq.com` | Free tier |
 | | **Cerebras** | Cerebras key | `api.cerebras.ai` | Free tier |
@@ -430,11 +464,21 @@ Accurate and SyncDelay are SDK samples under the same license. VST is a
 trademark of Steinberg Media Technologies GmbH; this project only uses the
 name to describe the format.
 
+The AI teacher's on-device models load at runtime from CDNs and are not
+bundled: Laya by ConvAI Innovations, in the browser port
+[layaForWeb](https://github.com/vishalmysore/layaForWeb) (both Apache-2.0;
+`laya-core.js` is loaded from jsDelivr pinned to a commit, the weights from
+Hugging Face pinned to a revision), ONNX Runtime Web (MIT),
+`@huggingface/tokenizers` (Apache-2.0), WebLLM (Apache-2.0), and Qwen 3.5 under
+its own model licence.
+
 The service worker needs `https://` or `http://localhost`. Tests:
 
 - `node tests/archive.mjs`: archive reading and writing
 - `node tests/formats.mjs`: WAV, AIFF and MIDI reading and writing
 - `node tests/sequencer.mjs`: sequencer scales and pattern transposition
+- `node tests/coach.mjs`: chord and scale names to notes, and every coaching step in every key
+- `node tests/voice.mjs`: how talk mode reads music notation aloud
 - `node tests/teacher.mjs`: the AI teacher's analysis and API requests
 - `node tests/native-id.mjs`: identification (macOS; uses `clang`, `pkgbuild` and `productbuild`)
 - `node tests/vst3-wasm.mjs`: the WebAssembly VST3 builds

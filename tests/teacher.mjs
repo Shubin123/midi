@@ -17,7 +17,7 @@ globalThis.localStorage = { getItem: k => (ls.has(k) ? ls.get(k) : null), setIte
 globalThis.history = { replaceState() {} };
 globalThis.location = { search: '', origin: 'https://app.test', pathname: '/midi/', protocol: 'https:', assign() {} };
 
-const { AiTeacher, parsePlayCommand } = await import('../js/ai-teacher.js');
+const { AiTeacher, parsePlayCommand, stripThinking, SYSTEM_PROMPT } = await import('../js/ai-teacher.js');
 const { createPkcePair, completeSignIn } = await import('../js/ai-auth.js');
 const P = await import('../js/providers.js');
 
@@ -60,28 +60,42 @@ assert.deepEqual(detectChord([0, 4]), []);
  await new Promise(r => setTimeout(r, 30));
  assert.equal(phrases.length, 1);
  assert.deepEqual(phrases[0].chords.map(c => c.best.chordName), ['Fmaj']);
- assert.equal(phrases[0].scales[0].tonicName, 'C');
+ // C-E-G then an F chord ends on F in the bass: heard as V-I, so the phrase reads as F, not C.
+ assert.equal(phrases[0].scales[0].tonicName, 'F');
 }
 
 /* ---- Suggestions: single notes, chords, and mixes ---- */
-// Single notes become one-note steps.
-assert.deepEqual(parsePlayCommand('Try Dorian.\n{"play": [62, 64, 65], "bpm": 90}'), { text: 'Try Dorian.', play: { steps: [[62], [64], [65]], bpm: 90 } });
-// Nested arrays are chords struck together; the brace matcher survives the inner brackets.
-assert.deepEqual(parsePlayCommand('I to IV.\n{"play": [[60,64,67], [65,69,72]], "bpm": 80}'), { text: 'I to IV.', play: { steps: [[60, 64, 67], [65, 69, 72]], bpm: 80 } });
-// A bass note then a chord, mixed in one command.
-assert.deepEqual(parsePlayCommand('{"play": [48, [60,64,67]]}').play, { steps: [[48], [60, 64, 67]], bpm: 120 });
-// Code fences, invalid notes, and an out-of-range tempo are cleaned up.
-assert.deepEqual(parsePlayCommand('Here:\n```json\n{"play":[[60,200,61.5,64], 999, 62],"bpm":1000}\n```'), { text: 'Here:', play: { steps: [[60, 64], [62]], bpm: 300 } });
-// No suggestion, or nothing valid, gives no playback.
+// Models name what to play and the notes are worked out here. Chords play one per beat (60 BPM by default).
+const ex = r => r.play && { steps: r.play.steps, bpm: r.play.bpm, label: r.play.label };
+assert.deepEqual(parsePlayCommand('The ii-V-I.\n{"chords": ["Dm7", "G7", "Cmaj7"]}'), { text: 'The ii-V-I.', play: { steps: [[50, 53, 57, 60], [55, 59, 62, 65], [48, 52, 55, 59]], bpm: 60, label: 'Dm7 → G7 → Cmaj7' } });
+// A scale plays up and back down from its tonic.
+assert.deepEqual(ex(parsePlayCommand('Try it.\n{"scale": "A minor pentatonic"}')), { steps: [57, 60, 62, 64, 67, 69, 67, 64, 62, 60, 57].map(n => [n]), bpm: 120, label: 'A minor pentatonic' });
+// Note names use scientific pitch (C4 is middle C).
+assert.deepEqual(ex(parsePlayCommand('{"notes": ["C4", "E4", "G4", "Bb4"], "bpm": 90}')), { steps: [[60], [64], [67], [70]], bpm: 90, label: '4 notes' });
+// Unknown names are skipped; nothing playable means no example.
+assert.deepEqual(ex(parsePlayCommand('{"chords": ["Dm7", "Zzz", "G7"]}')).label, 'Dm7 → G7');
+assert.equal(parsePlayCommand('{"chords": ["Zzz"], "scale": "Q dorian"}').play, null);
+// Key order, code fences and a stray earlier brace don't matter: the last JSON that names something wins.
+assert.deepEqual(ex(parsePlayCommand('Sets look like {a, b}.\n```json\n{"bpm": 70, "chords": ["C", "Am"]}\n```')), { steps: [[48, 52, 55], [57, 60, 64]], bpm: 70, label: 'C → Am' });
+assert.equal(parsePlayCommand('Sets look like {a, b}.\n```json\n{"bpm": 70, "chords": ["C", "Am"]}\n```').text, 'Sets look like {a, b}.');
+// The older form with MIDI numbers still works: single notes and nested chord arrays.
+assert.deepEqual(ex(parsePlayCommand('I to IV.\n{"play": [[60,64,67], [65,69,72]], "bpm": 80}')), { steps: [[60, 64, 67], [65, 69, 72]], bpm: 80, label: '6 notes' });
+assert.deepEqual(parsePlayCommand('Here:\n```json\n{"play":[[60,200,61.5,64], 999, 62],"bpm":1000}\n```').play.steps, [[60, 64], [62]]);
+assert.equal(parsePlayCommand('Here:\n{"play":[1],"bpm":1000}').play.bpm, 300);
+// No example, and echoed [PLAYED] or Coach: lines are dropped from the text.
 assert.deepEqual(parsePlayCommand('No notes this time. '), { text: 'No notes this time.', play: null });
-assert.equal(parsePlayCommand('{"play": [128, [200]]}').play, null);
-// At most 32 notes are kept across all steps.
-assert.equal(parsePlayCommand(`{"play": [${Array.from({ length: 12 }, () => '[60,64,67]').join(',')}]}`).play.steps.flat().length, 32);
+assert.equal(parsePlayCommand('[PLAYED] 3 notes | midi: [60]\nCoach: try this\nNice C major.').text, 'Nice C major.');
+// At most 40 notes are kept across all steps.
+assert.equal(parsePlayCommand(`{"chords": [${Array(20).fill('"C"').join(',')}]}`).play.steps.flat().length, 39);
+// Reasoning models think inline; only the answer after </think> counts, and an unfinished thought has none.
+assert.equal(stripThinking('<think>\nC major has no sharps...\n</think>\n\nThat is C major.'), 'That is C major.');
+assert.equal(stripThinking('<think>still going and ran out of room'), '');
+assert.deepEqual(ex(parsePlayCommand('<think>{"chords": ["Dm"]} maybe?</think>Use this.\n{"chords": ["G7"]}')), { steps: [[55, 59, 62, 65]], bpm: 60, label: 'G7' });
 
 /* ---- The teacher with an injected engine ---- */
 class FakeEngine {
- constructor() { this.calls = []; this.reply = () => 'C major.\n{"play":[[60,64,67]],"bpm":100}'; this.interrupted = 0; }
- async generate(messages) { this.calls.push(messages); return this.reply(messages); }
+ constructor() { this.calls = []; this.opts = []; this.reply = () => 'C major.\n{"chords": ["C"], "bpm": 100}'; this.interrupted = 0; }
+ async generate(messages, opts) { this.calls.push(messages); this.opts.push(opts); return this.reply(messages); }
  interrupt() { this.interrupted++; }
 }
 {
@@ -95,20 +109,26 @@ class FakeEngine {
  const engine = new FakeEngine(), t = new AiTeacher();
  t.setEngine(engine);
  const replies = [], errors = [];
- t.onResponse = (text, play) => replies.push({ text, play });
- t.onError = m => errors.push(m);
- await t.analyzePhrase({ noteCount: 3, durationMs: 412.4, noteOns: [{ note: 60 }, { note: 64 }, { note: 67 }], pitchClasses: [0, 4, 7], scales: [{ tonicName: 'C', scaleName: 'Major Pentatonic', score: 0.6 }], chords: [] });
+ const statuses = [];
+ t.onResponse = (text, play, info) => replies.push({ text, play, think: info.think });
+ t.onError = m => errors.push(m); t.onStatus = s => statuses.push(s);
+ await t.analyzePhrase({ noteCount: 3, durationMs: 412.4, noteOns: [{ note: 60 }, { note: 64 }, { note: 67 }], pitchClasses: [0, 4, 7], scales: [{ tonicName: 'C', scaleName: 'Major Pentatonic', score: 0.6 }], chords: [] }, { coach: 'build the home chord', think: true });
  assert.equal(engine.calls[0][0].role, 'system');
- assert.match(engine.calls[0][0].content, /array of numbers played together as a chord/);
- assert.equal(engine.calls[0][1].content, '[PLAYED] 3 notes, 412ms | midi: [60, 64, 67] | pcs: [0, 4, 7] | best: C Major Pentatonic (0.60)');
- assert.deepEqual(replies, [{ text: 'C major.', play: { steps: [[60, 64, 67]], bpm: 100 } }]);
+ assert.match(engine.calls[0][0].content, /Use names, never numbers/);
+ assert.equal(engine.calls[0][1].content, '[PLAYED] 3 notes, 412ms | midi: [60, 64, 67] | pcs: [0, 4, 7] | best: C Major Pentatonic (0.60)\nCoach: build the home chord');
+ assert.deepEqual(engine.opts[0], { think: true }, 'only the thinking switch reaches the engine; the coach hint is in the message');
+ assert.deepEqual(statuses, ['reasoning', 'ready']);
+ assert.deepEqual(replies, [{ text: 'C major.', play: { steps: [[48, 52, 55]], bpm: 100, label: 'C' }, think: true }]);
 
  engine.reply = () => '';
  await t.ask('Why?');
  engine.reply = () => { throw new Error('out of memory'); };
  await t.ask('Why?');
- assert.deepEqual(errors, ['The model returned nothing. Try again, or pick another model.', 'out of memory']);
+ engine.reply = () => '<think>so many thoughts';
+ await t.ask('Why?');
+ assert.deepEqual(errors, ['The model returned nothing. Try again, or pick another model.', 'out of memory', 'The model ran out of room while thinking. Try again, or switch to Fast.']);
  assert.equal(t.conversationHistory.length, 2, 'failed turns leave the history untouched');
+ assert.ok(!/<think>/.test(t.conversationHistory[1].content), 'thinking is not kept in the history');
 
  engine.reply = () => 'ok';
  for (let i = 0; i < 20; i++) await t.ask(`q${i}`);

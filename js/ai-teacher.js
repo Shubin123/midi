@@ -1,47 +1,89 @@
 // The teacher's conversation logic, independent of which engine answers. It keeps a short rolling history,
-// sends one request at a time, and pulls note and chord suggestions out of the replies. The engine is
-// injected (see js/providers.js and js/local-model.js): any object with `generate(messages) -> text` and an
-// optional `interrupt()`.
-const MAX_HISTORY = 30; // messages, dropped oldest-first in user/assistant pairs
+// sends one request at a time, and turns the reply into text plus an example to play. Models name what to
+// play ("Dm7", "A minor pentatonic", "C4") and the notes are worked out here, because small models get note
+// arithmetic wrong far more often than names. The engine is injected (js/providers.js, js/local-model.js): any
+// object with `generate(messages, { think }) -> text` and an optional `interrupt()`.
+import { parseChordName, parseScaleName, midiFromName, chordMidi, scaleRunMidi } from './pitch-analyzer.js';
 
-export const SYSTEM_PROMPT = `You are a music theory teacher built into a live piano app.
-Messages that start with [PLAYED] are automatic summaries of the phrase the student just played: note count and length, the MIDI notes in order, the pitch classes mod 12 (C=0, C#=1, D=2 ... B=11), the best local scale or mode match, and any chords. The local match is a guess from the pitch set alone; correct it when the note order points to a different tonic. Any other message is a question the student typed.
-For a [PLAYED] summary, say what scale, mode, chord or progression they played, explain the theory in one to three sentences, and suggest one thing to try next.
-Keep every reply short: this is a live session, not a lecture. Write plain text without Markdown.
-To have the app play notes for the student, end the reply with one line of JSON, not in a code block: {"play": [60, 64, 67], "bpm": 120}
-Each item is a step played in turn at that tempo (60 is middle C). A step can be a single MIDI number, or an array of numbers played together as a chord: {"play": [[60,64,67], [65,69,72]], "bpm": 90} plays a C major triad then an F major triad. Mix them freely, e.g. a bass note then a chord.`;
+const MAX_HISTORY = 30; // messages, dropped oldest-first in user/assistant pairs
+const MAX_NOTES = 40;
+
+// No sample reply: small models copied one word for word, example included, whatever they were asked.
+export const SYSTEM_PROMPT = `You are a friendly music theory teacher inside a live piano app. Guide the student one small step at a time.
+
+Messages starting with [PLAYED] describe a phrase the student just played: the notes in order (MIDI numbers, 60 is middle C), the pitch classes, the app's scale or mode guess, and any chords. The guess comes from the pitch set alone; correct it if the order or the bass points to another tonic. A line starting with "Coach:" is the step the app is suggesting to the student next; they have not done it yet. Build on it and explain why it helps, unless it is clearly wrong. Any other message is the student's own question.
+
+Reply in plain text, two to four short sentences, no Markdown, and never repeat the [PLAYED] or Coach: lines. Say what they played (or answer the question), explain the idea, and end with one concrete thing to try next.
+
+To play an example, add one last line of JSON naming exactly what your reply is about. Use names, never numbers; the app works out the notes. Use one of these forms, filling in the real names:
+{"chords": ["<chord symbol>", "<chord symbol>"]} plays chords in order, one per beat
+{"scale": "<tonic> <scale or mode>"} plays a scale up and back down
+{"notes": ["<note name and octave>"]} plays single notes in order (C4 is middle C)
+Leave the line out if there is nothing worth playing.`;
+
+// Reasoning models write their thinking inline; only the answer after it is shown. A reply that is still
+// inside an unfinished <think> block (it ran out of room) has no answer yet.
+export function stripThinking(text) {
+ const s = String(text);
+ const open = s.lastIndexOf('<think>'), close = s.lastIndexOf('</think>');
+ if (open >= 0 && close < open) return '';
+ return s.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+}
+
+const KEYS = ['chords', 'scale', 'notes', 'play'];
+// The last balanced {...} in the reply that parses as JSON and names something to play.
+function findExample(reply) {
+ for (let start = reply.lastIndexOf('{'); start >= 0; start = reply.lastIndexOf('{', start - 1)) {
+  let depth = 0, end = -1, inStr = false, esc = false;
+  for (let i = start; i < reply.length; i++) {
+   const c = reply[i];
+   if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; }
+   else if (c === '"') inStr = true;
+   else if (c === '{' || c === '[') depth++;
+   else if (c === '}' || c === ']') { if (--depth === 0) { end = i + 1; break; } }
+  }
+  if (end < 0) continue;
+  try {
+   const obj = JSON.parse(reply.slice(start, end));
+   if (obj && typeof obj === 'object' && !Array.isArray(obj) && KEYS.some(k => k in obj)) return { obj, start, end };
+  } catch { /* not this one */ }
+ }
+ return null;
+}
 
 const validNote = n => Number.isInteger(n) && n >= 0 && n <= 127;
 
-// Finds a {"play": ...} object in the reply by matching braces (so nested chord arrays survive), and returns
-// its text with that object removed plus a normalised suggestion. Each step becomes an array of MIDI notes
-// (a single note becomes a one-note step); invalid notes are dropped, empty steps removed, 32 notes max, and
-// the tempo held to 30-300 BPM like the synth's. Code fences around the JSON are tolerated.
-export function parsePlayCommand(reply) {
- const start = reply.search(/\{\s*"play"\s*:/);
- if (start < 0) return { text: reply.trim(), play: null };
- let depth = 0, end = -1, inStr = false, esc = false;
- for (let i = start; i < reply.length; i++) {
-  const c = reply[i];
-  if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; }
-  else if (c === '"') inStr = true;
-  else if (c === '{' || c === '[') depth++;
-  else if (c === '}' || c === ']') { if (--depth === 0) { end = i + 1; break; } }
- }
- const clean = () => reply.trim();
- if (end < 0) return { text: clean(), play: null };
- let cmd;
- try { cmd = JSON.parse(reply.slice(start, end)); } catch { return { text: clean(), play: null }; }
- const bpm = Number.isFinite(cmd.bpm) && cmd.bpm > 0 ? Math.max(30, Math.min(300, cmd.bpm)) : 120;
- let left = 32;
- const steps = [];
- for (const item of Array.isArray(cmd.play) ? cmd.play : []) {
-  const notes = (Array.isArray(item) ? item : [item]).filter(validNote).slice(0, left);
-  if (notes.length) { steps.push(notes); left -= notes.length; }
-  if (left <= 0) break;
- }
- const text = (reply.slice(0, start) + reply.slice(end)).replace(/```(?:json)?/g, '').trim();
- return { text, play: steps.length ? { steps, bpm } : null };
+// Splits a reply into its text and an example: { steps: [[midi, ...], ...], bpm, label }. Chords play one per
+// beat, a scale up and back down, notes in order; names the app does not recognise are skipped, and the old
+// {"play": [60, [60, 64, 67]]} form of MIDI numbers still works. At most 40 notes, tempo held to 30-300 BPM.
+export function parsePlayCommand(raw) {
+ const reply = stripThinking(raw);
+ const found = findExample(reply);
+ const clean = s => s.replace(/```(?:json)?/g, '').split('\n').filter(l => !/^\s*(\[PLAYED\]|Coach:)/.test(l)).join('\n').trim();
+ if (!found) return { text: clean(reply), play: null };
+ const { obj } = found, steps = [], labels = [];
+ const add = step => { const total = steps.flat().length; if (step.length && total + step.length <= MAX_NOTES) steps.push(step); };
+ const chordNames = (Array.isArray(obj.chords) ? obj.chords : []).filter(c => typeof c === 'string' && parseChordName(c));
+ chordNames.forEach(c => add(chordMidi(parseChordName(c))));
+ if (chordNames.length) labels.push(chordNames.join(' → '));
+ const scale = typeof obj.scale === 'string' && parseScaleName(obj.scale);
+ if (scale) { scaleRunMidi(scale.tonic, scale.scaleName).forEach(n => add([n])); labels.push(obj.scale.trim()); }
+ const notes = (Array.isArray(obj.notes) ? obj.notes : []).map(n => (typeof n === 'string' ? midiFromName(n) : n)).filter(validNote);
+ notes.forEach(n => add([n]));
+ if (notes.length) labels.push(`${notes.length} notes`);
+ for (const item of Array.isArray(obj.play) ? obj.play : []) add((Array.isArray(item) ? item : [item]).filter(validNote));
+ const bpm = Number.isFinite(obj.bpm) && obj.bpm > 0 ? Math.max(30, Math.min(300, obj.bpm)) : (chordNames.length ? 60 : 120);
+ const text = clean(reply.slice(0, found.start) + reply.slice(found.end));
+ return { text, play: steps.length ? { steps, bpm, label: labels.join(', ') || `${steps.flat().length} notes` } : null };
+}
+
+// The [PLAYED] summary the model reads, plus the System 1 coach's suggestion when there is one.
+export function phraseMessage(a, coachHint = '') {
+ const midi = a.noteOns.slice(0, 48).map(n => n.note).join(', ') + (a.noteOns.length > 48 ? ', ...' : '');
+ const parts = [`${a.noteCount} notes, ${Math.round(a.durationMs)}ms`, `midi: [${midi}]`, `pcs: [${a.pitchClasses.join(', ')}]`];
+ if (a.scales.length) { const b = a.scales[0]; parts.push(`best: ${b.tonicName} ${b.scaleName} (${b.score.toFixed(2)})`); }
+ if (a.chords.length) parts.push(`chords: ${a.chords.map(c => c.best.chordName).join(' → ')}`);
+ return `[PLAYED] ${parts.join(' | ')}${coachHint ? `\nCoach: ${coachHint}` : ''}`;
 }
 
 export class AiTeacher {
@@ -54,38 +96,30 @@ export class AiTeacher {
  get isConfigured() { return !!this.engine; }
  setEngine(engine) { this.engine = engine; }
 
- analyzePhrase(a) {
-  const midi = a.noteOns.slice(0, 48).map(n => n.note).join(', ') + (a.noteOns.length > 48 ? ', ...' : '');
-  const parts = [`${a.noteCount} notes, ${Math.round(a.durationMs)}ms`, `midi: [${midi}]`, `pcs: [${a.pitchClasses.join(', ')}]`];
-  if (a.scales.length) {
-   const b = a.scales[0];
-   parts.push(`best: ${b.tonicName} ${b.scaleName} (${b.score.toFixed(2)})`);
-  }
-  if (a.chords.length) parts.push(`chords: ${a.chords.map(c => c.best.chordName).join(' → ')}`);
-  return this._send(`[PLAYED] ${parts.join(' | ')}`);
- }
-
- ask(q) { return this._send(q); }
+ // opts.think asks a reasoning model to think first (System 2); opts.coach adds the System 1 suggestion.
+ analyzePhrase(a, opts = {}) { return this._send(phraseMessage(a, opts.coach), opts); }
+ ask(q, opts = {}) { return this._send(q, opts); }
  reset() { this._generation++; this.conversationHistory = []; this.engine?.interrupt?.(); }
 
  // One request at a time, so the history always alternates user and assistant turns.
  // Requests queued before a reset() are skipped.
- _send(msg) {
+ _send(msg, opts) {
   const generation = this._generation;
-  return this._queue = this._queue.then(() => generation === this._generation ? this._request(msg) : null);
+  return this._queue = this._queue.then(() => generation === this._generation ? this._request(msg, opts) : null);
  }
 
- async _request(msg) {
+ async _request(msg, { think = false } = {}) {
   if (!this.engine) { this.onError?.('Set up a model in Settings first.'); return null; }
-  this.onStatus?.('thinking');
-  const history = this.conversationHistory, generation = this._generation;
+  this.onStatus?.(think ? 'reasoning' : 'thinking');
+  const history = this.conversationHistory, generation = this._generation, started = performance.now();
   while (history.length >= MAX_HISTORY) history.splice(0, 2); // still opens with a user turn
   history.push({ role: 'user', content: msg });
   let reply;
   try {
-   reply = (await this.engine.generate([{ role: 'system', content: SYSTEM_PROMPT }, ...history])).trim();
+   const raw = await this.engine.generate([{ role: 'system', content: SYSTEM_PROMPT }, ...history], { think });
    if (generation !== this._generation) { history.pop(); return null; } // reset() while generating: discard
-   if (!reply) throw new Error('The model returned nothing. Try again, or pick another model.');
+   reply = stripThinking(raw);
+   if (!reply) throw new Error(/<think>/.test(raw) ? 'The model ran out of room while thinking. Try again, or switch to Fast.' : 'The model returned nothing. Try again, or pick another model.');
   } catch (err) {
    history.pop();
    this.onStatus?.('ready');
@@ -96,7 +130,8 @@ export class AiTeacher {
   history.push({ role: 'assistant', content: reply });
   this.onStatus?.('ready');
   const { text, play } = parsePlayCommand(reply);
-  this.onResponse?.(text, play);
-  return { text, playCmd: play };
+  const seconds = (performance.now() - started) / 1000;
+  this.onResponse?.(text, play, { think, seconds });
+  return { text, playCmd: play, seconds };
  }
 }

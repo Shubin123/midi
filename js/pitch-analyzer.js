@@ -107,30 +107,115 @@ export class PhraseTracker {
   const noteOns = phrase.filter(e => e.type === 'on');
   const pcs = [...new Set(noteOns.map(e => e.pc))];
   const lowest = noteOns.reduce((lo, e) => (e.note < lo.note ? e : lo), noteOns[0]);
+  // The tonic hints use the bass of the first and last chord (or the note itself), not the top of a chord:
+  // C-F-G-C played as triads ends on G at the top but is plainly in C.
+  const wins = this._windows(noteOns), bass = win => win.reduce((lo, n) => (n.note < lo.note ? n : lo)).pc;
   this.onPhrase({
    pitchClasses: pcs, noteOns,
    durationMs: phrase[phrase.length - 1].time - phrase[0].time,
    noteCount: noteOns.length,
-   scales: detectScale(pcs, [noteOns[noteOns.length - 1].pc, noteOns[0].pc, lowest.pc]),
-   chords: this._chordWins(noteOns),
+   scales: detectScale(pcs, [bass(wins[wins.length - 1]), bass(wins[0]), lowest.pc]),
+   chords: this._chordWins(wins),
   });
  }
- // Notes struck within `chordWindowMs` of each other count as one chord.
- _chordWins(noteOns) {
-  const chords = [];
-  const close = win => {
-   if (win.length < 3) return;
-   const bass = win.reduce((lo, n) => Math.min(lo, n.note), Infinity);
-   const c = detectChord(win.map(n => n.pc), bass);
-   if (c.length) chords.push({ notes: win.map(n => pitchClassName(n.pc)), best: c[0] });
-  };
+ // Notes struck within `chordWindowMs` of each other form one window (a chord, or a single note).
+ _windows(noteOns) {
+  const wins = [];
   let win = [noteOns[0]];
   for (let i = 1; i < noteOns.length; i++) {
    if (noteOns[i].time - win[0].time <= this.chordWindowMs) win.push(noteOns[i]);
-   else { close(win); win = [noteOns[i]]; }
+   else { wins.push(win); win = [noteOns[i]]; }
   }
-  close(win);
+  wins.push(win);
+  return wins;
+ }
+ _chordWins(wins) {
+  const chords = [];
+  for (const win of wins) {
+   if (win.length < 3) continue;
+   const bass = win.reduce((lo, n) => Math.min(lo, n.note), Infinity);
+   const c = detectChord(win.map(n => n.pc), bass);
+   if (c.length) chords.push({ notes: win.map(n => pitchClassName(n.pc)), best: c[0] });
+  }
   return chords;
  }
  reset() { clearTimeout(this._timer); this.currentPhrase = []; this.heldNotes.clear(); }
+}
+
+/* ---- Names to notes: models name a scale or chord, and the notes are worked out here, exactly. ---- */
+
+const LETTER = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+const FLAT_NAMES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+const accidental = s => [...s].reduce((n, a) => n + (a === '#' || a === '♯' ? 1 : -1), 0);
+
+// "C", "F#", "Bb", "E♭" → pitch class 0-11, or null.
+export function pcFromName(name) {
+ const m = /^([A-Ga-g])([#♯b♭]*)$/.exec(String(name).trim());
+ return m ? midiToPitchClass(LETTER[m[1].toUpperCase()] + accidental(m[2])) : null;
+}
+
+// Scientific pitch, as the models write it: "C4" is middle C, MIDI 60 (and "B#3" is MIDI 60 too).
+export function midiFromName(name) {
+ const m = /^([A-Ga-g])([#♯b♭]*)(-?\d)$/.exec(String(name).trim());
+ return m ? (Number(m[3]) + 1) * 12 + LETTER[m[1].toUpperCase()] + accidental(m[2]) : null;
+}
+
+// Flat keys (F, Bb, Eb, Ab, Db, Gb and their relative minors) spell with flats; the rest with sharps.
+export const prefersFlats = (tonic, minor = false) => [5, 10, 3, 8, 1, 6].includes(minor ? (tonic + 3) % 12 : tonic);
+export const spell = (pc, flats = false) => (flats ? FLAT_NAMES : NOTE_NAMES)[midiToPitchClass(pc)];
+
+// Chord symbols, by the suffix after the root. Exact case first, so "CM7" is major seventh and "Cm7" minor.
+export const CHORD_FORMULAS = {
+ '': [0, 4, 7], M: [0, 4, 7], maj: [0, 4, 7], major: [0, 4, 7],
+ m: [0, 3, 7], min: [0, 3, 7], '-': [0, 3, 7], minor: [0, 3, 7],
+ dim: [0, 3, 6], '°': [0, 3, 6], o: [0, 3, 6], aug: [0, 4, 8], '+': [0, 4, 8],
+ 7: [0, 4, 7, 10], dom7: [0, 4, 7, 10],
+ maj7: [0, 4, 7, 11], M7: [0, 4, 7, 11], 'Δ': [0, 4, 7, 11], 'Δ7': [0, 4, 7, 11],
+ m7: [0, 3, 7, 10], min7: [0, 3, 7, 10], '-7': [0, 3, 7, 10],
+ m7b5: [0, 3, 6, 10], min7b5: [0, 3, 6, 10], 'ø': [0, 3, 6, 10], 'ø7': [0, 3, 6, 10],
+ dim7: [0, 3, 6, 9], '°7': [0, 3, 6, 9], o7: [0, 3, 6, 9],
+ mmaj7: [0, 3, 7, 11], mM7: [0, 3, 7, 11], minmaj7: [0, 3, 7, 11],
+ sus2: [0, 2, 7], sus4: [0, 5, 7], sus: [0, 5, 7], '7sus4': [0, 5, 7, 10],
+ 6: [0, 4, 7, 9], m6: [0, 3, 7, 9], 9: [0, 4, 7, 10, 14], maj9: [0, 4, 7, 11, 14], m9: [0, 3, 7, 10, 14],
+ add9: [0, 4, 7, 14], madd9: [0, 3, 7, 14], 5: [0, 7],
+};
+
+// "Dm7", "F#maj7", "Bb", "G7/B" → { root, bass, intervals }, or null for anything unrecognised.
+export function parseChordName(text) {
+ const m = /^\s*([A-Ga-g][#♯b♭]?)([^/\s]*)(?:\s*\/\s*([A-Ga-g][#♯b♭]?))?\s*$/.exec(String(text));
+ if (!m) return null;
+ const intervals = CHORD_FORMULAS[m[2]] ?? CHORD_FORMULAS[m[2].toLowerCase()];
+ if (!intervals) return null;
+ const root = pcFromName(m[1]);
+ return { root, bass: m[3] ? pcFromName(m[3]) : root, intervals };
+}
+
+const SCALE_ALIASES = [
+ [/^(major|ionian|maj)$/, 'Ionian (Major)'], [/^(natural minor|minor|aeolian|min)$/, 'Aeolian (Minor)'],
+ [/^dorian$/, 'Dorian'], [/^phrygian$/, 'Phrygian'], [/^lydian$/, 'Lydian'], [/^mixolydian$/, 'Mixolydian'], [/^locrian$/, 'Locrian'],
+ [/^harmonic minor$/, 'Harmonic Minor'], [/^(melodic minor|jazz minor)$/, 'Melodic Minor'],
+ [/^(major pentatonic|pentatonic major|pentatonic)$/, 'Major Pentatonic'], [/^(minor pentatonic|pentatonic minor)$/, 'Minor Pentatonic'],
+ [/^(blues|minor blues)$/, 'Blues'], [/^whole[ -]?tone$/, 'Whole Tone'],
+ [/^(diminished|half[ -]whole diminished|octatonic)$/, 'Diminished (HW)'], [/^whole[ -]half diminished$/, 'Diminished (WH)'],
+ [/^(lydian dominant|lydian b7)$/, 'Lydian Dominant'], [/^(altered|super ?locrian)$/, 'Altered'], [/^(phrygian dominant|spanish phrygian)$/, 'Phrygian Dominant'],
+];
+
+// "D Dorian", "A minor pentatonic scale", "Bb major" → { tonic, scaleName } (a SCALE_TEMPLATES key), or null.
+export function parseScaleName(text) {
+ const m = /^\s*([A-Ga-g][#♯b♭]?)\s+(.+?)\s*$/.exec(String(text));
+ if (!m) return null;
+ const kind = m[2].toLowerCase().replace(/\s+/g, ' ').replace(/ (scale|mode)$/, '').replace(/[()]/g, '');
+ const hit = SCALE_ALIASES.find(([re]) => re.test(kind));
+ return hit ? { tonic: pcFromName(m[1]), scaleName: hit[1] } : null;
+}
+
+// Voicings that sit on the app's default keyboard (MIDI 48-71): chord roots and scale tonics between C3 and B3.
+export function chordMidi({ root, bass = root, intervals }, low = 48) {
+ const notes = intervals.map(i => low + root + i);
+ if (bass === root) return notes;
+ return [low + root - ((root - bass + 12) % 12), ...notes]; // a slash chord's bass goes just below the root
+}
+export function scaleRunMidi(tonic, scaleName, low = 48) {
+ const up = [...SCALE_TEMPLATES[scaleName].map(s => low + tonic + s), low + tonic + 12];
+ return [...up, ...up.slice(0, -1).reverse()];
 }
