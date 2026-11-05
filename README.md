@@ -9,7 +9,7 @@ Part of the [project-demos](https://github.com/Shubin123/project-demos) collecti
 ## Status: ✅ Working
 
 Entirely self-contained; the only external requests are the Poppins webfont and,
-once you add an API key, the AI teacher's calls to `api.anthropic.com`.
+once you sign in to the AI teacher, its calls to `openrouter.ai`.
 Hardware MIDI input is Chromium-only; everything else works everywhere.
 
 *Verified 2026-08-20 by requesting every external dependency this project uses over the network. The demo itself was not opened in a browser, so this reflects dependency health rather than a full functional test.*
@@ -170,35 +170,42 @@ two layers:
   matched against 18 scales and modes and 12 chord types. A full diatonic set
   fits all seven modes, so ties go to the tonic you leaned on: the phrase's
   last, first or lowest note. No network is involved.
-- **Claude** (`js/claude-teacher.js`). With **Auto** on, each phrase of three
-  or more notes is summarised (the notes in order, pitch classes, best local
-  match, chords) and sent to Claude Sonnet 5.5, which names what you played,
-  explains it in a few sentences and suggests what to try next. If you keep
-  playing while it answers, only your latest phrase is sent next. Type in the
-  box at the bottom to ask anything else.
+- **The model** (`js/ai-teacher.js`). With **Auto** on, each phrase of three or
+  more notes is summarised (the notes in order, pitch classes, best local match,
+  chords) and sent to the model, which names what you played, explains it in a
+  few sentences and suggests what to try next. If you keep playing while it
+  answers, only your latest phrase is sent next. Type in the box at the bottom
+  to ask anything else.
 
-Claude can end a reply with `{"play": [62, 65, 69], "bpm": 120}`. The panel
+The model can end a reply with `{"play": [62, 65, 69], "bpm": 120}`. The panel
 plays those notes through the synth (and any plug-in instrument following it),
 lights the keys as they sound, and keeps a ▶ button to play them again.
 
-To set it up, open **Settings** in the panel and paste an Anthropic API key.
-The key is kept in a cookie scoped to the app's path (`SameSite=Strict`, and
-`Secure` over HTTPS), and requests go straight from the browser to
-`api.anthropic.com` with the `anthropic-dangerous-direct-browser-access`
-header, so there is no server and static hosting such as GitHub Pages still
-works. Anything that runs script on the page can read the key, and like any
-cookie it is attached to requests for the site's own files, so use a key with
-a spend limit.
+### Signing in
 
-Requests use `claude-sonnet-5-5` at `effort: "low"` to keep replies quick, keep
-the last 15 exchanges, and opt into server-side fallback (`fallbacks:
-"default"`), so a safety-classifier decline is retried on another model
-rather than returned. Each analysed phrase is one request; turn **Auto** off to
-only ask questions.
+The panel talks to a model through [OpenRouter](https://openrouter.ai), so
+**no API key is pasted anywhere**. Open the panel and click **Sign in with
+OpenRouter**: you approve on their site and come back signed in (OAuth 2.0 with
+PKCE, `js/ai-auth.js`). A **free OpenRouter account** can use the free models
+right away; adding credit there unlocks GPT, Claude, Gemini and the rest, which
+the **Model** dropdown lists under *Premium*. Pick any of them with the same
+sign-in.
+
+The sign-in is a key OpenRouter issues to the browser, kept in a cookie scoped
+to the app's path (`SameSite=Lax`, and `Secure` over HTTPS). Requests go
+straight from the page to `openrouter.ai`, so there is no server of ours and
+static hosting such as GitHub Pages works unchanged. Note that a site can only
+read cookies it set itself, so this is a sign-in to OpenRouter, not a way to
+reuse a claude.ai or chatgpt.com login. (If you already have an OpenRouter key,
+*Settings → Paste it instead* takes one.)
+
+Requests send the last 15 exchanges for context; each analysed phrase is one
+request, so turn **Auto** off to only ask typed questions. The free models have
+a daily cap — switch model in **Settings** if you hit it.
 
 `node tests/teacher.mjs` checks scale, mode and chord detection, phrase
-tracking, suggestion parsing, and the API requests (against a stub, so no key
-is needed).
+tracking, suggestion parsing, the PKCE sign-in exchange, and the API requests
+(against a stub, so no account is needed).
 
 ## Plugins and effects
 
@@ -387,7 +394,7 @@ The service worker needs `https://` or `http://localhost`. Tests:
 ## Running it
 
 Static HTML, CSS, and JavaScript modules, no build step and no bundler. The only external dependency
-is the Poppins webfont from Google Fonts (plus the Claude API, for the AI teacher only).
+is the Poppins webfont from Google Fonts (plus OpenRouter, for the AI teacher only).
 
 ```sh
 python -m http.server 8000

@@ -1,9 +1,11 @@
-// The AI teacher's line to Claude: calls the Anthropic Messages API straight from the browser (no server),
-// keeps a short rolling conversation, and pulls note suggestions out of the replies. The API key is kept in
-// a cookie scoped to this app's path and is only ever sent to api.anthropic.com by this code.
-const API_URL = 'https://api.anthropic.com/v1/messages';
-const MODEL = 'claude-sonnet-5-5';
-const COOKIE = 'anthropic_api_key';
+// The AI teacher's line to the model: calls OpenRouter's chat-completions endpoint (OpenAI-compatible, so
+// GPT, Claude, Gemini and the free models all go through one request shape) straight from the browser. The
+// sign-in token comes from the cookie set by ai-auth.js, never from a pasted key. A short rolling history
+// keeps the session going, and note suggestions are pulled out of the replies.
+import { getToken, getModel } from './ai-auth.js';
+
+const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+export const FALLBACK_MODEL = 'google/gemma-4-31b-it:free'; // used only until the panel sets a chosen model
 const MAX_HISTORY = 30; // messages, dropped oldest-first in user/assistant pairs
 
 export const SYSTEM_PROMPT = `You are a music theory teacher built into a live piano app.
@@ -12,19 +14,6 @@ For a [PLAYED] summary, say what scale, mode, chord or progression they played, 
 Keep every reply short: this is a live session, not a lecture. Write plain text without Markdown.
 To have the app play notes for the student, end the reply with one line of JSON, not in a code block: {"play": [60, 64, 67], "bpm": 120}
 The notes are MIDI numbers (60 is middle C) played one after another at that tempo.`;
-
-const cookiePath = () => location.pathname.replace(/[^/]*$/, '') || '/';
-function getCookie(name) {
- const m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
- return m ? decodeURIComponent(m[1]) : null;
-}
-function setCookie(name, val, days = 365) {
- const secure = location.protocol === 'https:' ? ';Secure' : ''; // http://localhost would drop a Secure cookie in Safari
- document.cookie = `${name}=${encodeURIComponent(val)};max-age=${days * 86400};path=${cookiePath()};SameSite=Strict${secure}`;
-}
-function deleteCookie(name) {
- document.cookie = `${name}=;max-age=0;path=${cookiePath()};SameSite=Strict`;
-}
 
 // Splits a reply into its text and an optional {"play": [...], "bpm": n} suggestion (code fences tolerated).
 // Notes outside 0-127 are dropped, at most 32 play, and the tempo is held to 30-300 BPM like the synth's.
@@ -39,16 +28,14 @@ export function parsePlayCommand(reply) {
  return { text, play: notes.length ? { play: notes, bpm } : null };
 }
 
-export class ClaudeTeacher {
+export class AiTeacher {
  constructor() {
-  this.apiKey = getCookie(COOKIE);
   this.conversationHistory = [];
   this.onResponse = null; this.onError = null; this.onStatus = null;
   this._abortController = null; this._queue = Promise.resolve(); this._generation = 0;
  }
- get isConfigured() { return !!this.apiKey; }
- setApiKey(key) { this.apiKey = key; setCookie(COOKIE, key); }
- clearApiKey() { this.apiKey = null; deleteCookie(COOKIE); }
+ get isConfigured() { return !!getToken(); }
+ get model() { return getModel() || FALLBACK_MODEL; }
 
  analyzePhrase(a) {
   const midi = a.noteOns.slice(0, 48).map(n => n.note).join(', ') + (a.noteOns.length > 48 ? ', ...' : '');
@@ -73,7 +60,8 @@ export class ClaudeTeacher {
  }
 
  async _request(msg) {
-  if (!this.apiKey) { this.onError?.('No API key. Open Settings.'); return null; }
+  const token = getToken();
+  if (!token) { this.onError?.('Sign in to turn on the teacher.'); return null; }
   this.onStatus?.('thinking');
   const controller = this._abortController = new AbortController();
   const history = this.conversationHistory, generation = this._generation;
@@ -85,27 +73,25 @@ export class ClaudeTeacher {
     method: 'POST',
     headers: {
      'Content-Type': 'application/json',
-     'x-api-key': this.apiKey,
-     'anthropic-version': '2026-10-21',
-     'anthropic-beta': 'server-side-fallback-2026-07-01',
-     'anthropic-dangerous-direct-browser-access': 'true',
+     'Authorization': `Bearer ${token}`,
+     'X-Title': 'Ultimate Synthesia Online',
     },
     body: JSON.stringify({
-     model: MODEL, max_tokens: 4096,
-     // Low effort keeps a live session responsive: the model skips thinking on most simple requests.
-     output_config: { effort: 'low' },
-     // If a safety classifier declines, the API reruns the request on another model instead.
-     fallbacks: 'default',
-     system: SYSTEM_PROMPT, messages: history,
+     model: this.model,
+     max_tokens: 1024,
+     messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...history],
     }),
     signal: controller.signal,
    });
    const data = await res.json().catch(() => null);
-   if (!res.ok || !data) throw new Error(`API ${res.status}: ${data?.error?.message || res.statusText || 'unreadable response'}`);
-   if (data.stop_reason === 'refusal') throw new Error('Claude declined to answer that one. Try rephrasing it.');
-   // Read blocks by type: a reply can open with a (possibly empty) thinking block.
-   reply = data.content.filter(b => b.type === 'text').map(b => b.text).join('').trim();
-   if (!reply) throw new Error(`Claude sent an empty reply (stop reason: ${data.stop_reason}).`);
+   if (!res.ok || !data) throw new Error(this._httpError(res.status, data));
+   if (data.error) throw new Error(data.error.message || 'The model returned an error.');
+   const choice = data.choices?.[0];
+   if (choice?.finish_reason === 'content_filter' || choice?.message?.refusal) {
+    throw new Error('The model declined to answer that one. Try rephrasing it.');
+   }
+   reply = (choice?.message?.content || '').trim();
+   if (!reply) throw new Error('The model sent an empty reply. Try again, or pick another model in Settings.');
   } catch (err) {
    history.pop();
    this.onStatus?.('ready');
@@ -114,13 +100,19 @@ export class ClaudeTeacher {
   } finally {
    if (this._abortController === controller) this._abortController = null;
   }
-  // Only the text goes back into the history. Trimming the window rewrites earlier turns, and the API
-  // rejects replayed thinking blocks after such an edit; the teacher doesn't need its old reasoning.
   history.push({ role: 'assistant', content: reply });
   this.onStatus?.('ready');
   if (generation !== this._generation) return null;
   const { text, play } = parsePlayCommand(reply);
   this.onResponse?.(text, play);
   return { text, playCmd: play };
+ }
+
+ _httpError(status, data) {
+  const detail = data?.error?.message || data?.message;
+  if (status === 401) return 'Your sign-in expired. Sign in again.';
+  if (status === 402) return 'This model needs OpenRouter credit. Pick a free model in Settings, or add credit.';
+  if (status === 429) return 'Rate limited. The free models have a daily cap; wait a bit or pick another model.';
+  return `Request failed (${status})${detail ? ': ' + detail : ''}.`;
  }
 }
