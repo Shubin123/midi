@@ -209,7 +209,7 @@ export function parseScaleName(text) {
  return hit ? { tonic: pcFromName(m[1]), scaleName: hit[1] } : null;
 }
 
-// Voicings that sit on the app's default keyboard (MIDI 48-71): chord roots and scale tonics between C3 and B3.
+// Voicings that sit on the app's default keyboard (MIDI 48-72): chord roots and scale tonics between C3 and B3.
 export function chordMidi({ root, bass = root, intervals }, low = 48) {
  const notes = intervals.map(i => low + root + i);
  if (bass === root) return notes;
@@ -218,4 +218,38 @@ export function chordMidi({ root, bass = root, intervals }, low = 48) {
 export function scaleRunMidi(tonic, scaleName, low = 48) {
  const up = [...SCALE_TEMPLATES[scaleName].map(s => low + tonic + s), low + tonic + 12];
  return [...up, ...up.slice(0, -1).reverse()];
+}
+
+/* ---- The keyboard: everything the teacher plays fits on a 25-key controller, two octaves from C to C. ---- */
+
+export const KEYS_LOW = 48, KEYS_SPAN = 24; // a 25-key controller's default range, C3-C5, and the app's keyboard
+
+// The window follows the student's octave buttons: a note played outside it moves it by whole octaves.
+export function followKeys(low, note) {
+ if (note < low) return note - midiToPitchClass(note);
+ if (note > low + KEYS_SPAN) return Math.ceil((note - KEYS_SPAN) / 12) * 12;
+ return low;
+}
+
+// The octave move (in semitones) nearest zero that brings lo..hi inside low..high, or null if none does.
+function octaveMove(notes, low, high) {
+ const min = Math.ceil((low - Math.min(...notes)) / 12), max = Math.floor((high - Math.max(...notes)) / 12);
+ return min <= max ? Math.min(Math.max(0, min), max) * 12 : null;
+}
+
+// Moves an example onto the keys from `low` to `low + 24`: the whole example by octaves when it fits, so a run
+// keeps its shape; otherwise each step on its own. A chord that still doesn't fit keeps its bass at the bottom
+// and closes up within the octave above it (G7/B becomes B D F G).
+export function fitToKeys(steps, low = KEYS_LOW) {
+ const high = low + KEYS_SPAN, all = steps.flat();
+ if (!all.length) return steps;
+ const whole = octaveMove(all, low, high);
+ if (whole !== null) return steps.map(s => s.map(n => n + whole));
+ return steps.map(s => {
+  if (!s.length) return s;
+  const d = octaveMove(s, low, high);
+  if (d !== null) return s.map(n => n + d);
+  const bass = low + midiToPitchClass(Math.min(...s) - low);
+  return [...new Set(s.map(n => bass + midiToPitchClass(n - bass)))].sort((a, b) => a - b);
+ });
 }

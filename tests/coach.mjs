@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { pcFromName, midiFromName, parseChordName, parseScaleName, chordMidi, scaleRunMidi, detectChord, detectScale, PhraseTracker, SCALE_TEMPLATES } from '../js/pitch-analyzer.js';
+import { pcFromName, midiFromName, parseChordName, parseScaleName, chordMidi, scaleRunMidi, detectChord, detectScale, PhraseTracker, SCALE_TEMPLATES, fitToKeys, followKeys } from '../js/pitch-analyzer.js';
 import { MOVES, CURRICULUM, buildMove, keyOf, describePlayed, layaState, layaQuestions, availableMoves } from '../js/coach.js';
 
 /* ---- Names to notes ---- */
@@ -83,6 +83,32 @@ for (const id of CURRICULUM) for (const scaleName of Object.keys(SCALE_TEMPLATES
  const m = buildMove(id, analysis(tonic, scaleName));
  assert.ok(m.say.length > 20 && !/undefined|NaN/.test(m.say), `${id} in ${tonic} ${scaleName}: ${m.say}`);
  assert.ok(m.example.steps.length && m.example.steps.flat().every(n => Number.isInteger(n) && n >= 36 && n <= 84), `${id} notes in range`);
+}
+
+/* ---- Everything the teacher plays fits on a 25-key controller, C3-C5 by default ---- */
+{
+ const onKeys = (steps, low = 48) => steps.flat().every(n => n >= low && n <= low + 24);
+ const cls = steps => steps.map(s => [...new Set(s.map(n => n % 12))].sort((a, b) => a - b));
+ for (let tonic = 0; tonic < 12; tonic++) for (const scaleName of ['Ionian (Major)', 'Aeolian (Minor)', 'Dorian']) {
+  for (const id of Object.keys(MOVES)) {
+   const { steps } = buildMove(id, analysis(tonic, scaleName)).example;
+   for (const low of [36, 48, 60]) {
+    const fitted = fitToKeys(steps, low);
+    assert.ok(onKeys(fitted, low), `${id} in ${tonic} ${scaleName} fits ${low}-${low + 24}`);
+    assert.deepEqual(cls(fitted), cls(steps), `${id} keeps its notes`);
+   }
+  }
+ }
+ assert.deepEqual(fitToKeys([[48, 52, 55]]), [[48, 52, 55]], 'already on the keys: unchanged');
+ assert.deepEqual(fitToKeys([[72], [74], [76], [77]]), [[60], [62], [64], [65]], 'a run above the keys moves down whole');
+ assert.deepEqual(fitToKeys([[60, 64, 67]], 36), [[48, 52, 55]], 'and follows the window down');
+ assert.deepEqual(fitToKeys([chordMidi(parseChordName('G7/B'))]), [[59, 62, 65, 67]], 'a slash chord below the keys keeps its bass at the bottom');
+ assert.deepEqual(fitToKeys([[40], [60], [90]]), [[52], [60], [66]], 'too wide to move whole: each note on its own');
+ assert.equal(followKeys(48, 60), 48);
+ assert.equal(followKeys(48, 72), 48, 'the top C is on the keys');
+ assert.equal(followKeys(48, 45), 36, 'octave down on the controller');
+ assert.equal(followKeys(48, 79), 60, 'octave up');
+ assert.equal(followKeys(36, 72), 48, 'and back');
 }
 
 /* ---- What Laya is asked ---- */

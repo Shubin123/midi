@@ -18,7 +18,7 @@ Reply in plain text, two to four short sentences, no Markdown, and never repeat 
 To play an example, add one last line of JSON naming exactly what your reply is about. Use names, never numbers; the app works out the notes. Use one of these forms, filling in the real names:
 {"chords": ["<chord symbol>", "<chord symbol>"]} plays chords in order, one per beat
 {"scale": "<tonic> <scale or mode>"} plays a scale up and back down
-{"notes": ["<note name and octave>"]} plays single notes in order (C4 is middle C)
+{"notes": ["<note name and octave>"]} plays single notes in order (C4 is middle C; the student's 25 keys run from C3 to C5)
 Leave the line out if there is nothing worth playing.`;
 
 // Reasoning models write their thinking inline; only the answer after it is shown. A reply that is still

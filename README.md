@@ -221,6 +221,40 @@ down. Every example plays through the synth (and any plug-in instrument
 following it), lights the keys as they sound, and keeps a ▶ button to hear it
 again; a System 2 example waits if you have started playing again.
 
+Every example fits on a **25-key controller**: two octaves from C to C, MIDI
+48–72 (C3–C5) by default, which is also the on-screen keyboard at its default
+two octaves (each octave count ends on a closing C). The window follows your
+controller's octave buttons: a note played outside it moves it by whole octaves.
+`fitToKeys` moves the whole example by octaves when it fits, so a scale keeps its
+shape, otherwise each chord or note on its own; a chord that still doesn't fit
+keeps its bass at the bottom (G7/B plays as B D F G). Whatever octave a model
+names, or a slash chord's bass below C3, the example stays on your keys.
+
+### Course: lessons from Open Music Theory
+
+The **Course** tab teaches 24 short lessons adapted from
+[Open Music Theory](https://openmusictheory.github.io) (`js/lessons.js`), in
+three units: **Fundamentals** (the keyboard, enharmonic names, half steps, the
+major and minor scales, scale degrees, key signatures, relative keys,
+intervals and their inversions, triads, Roman numerals, seventh chords),
+**Harmony** (tonic, subdominant and dominant functions, the idealized phrase,
+cadences) and **Pop and rock harmony** (the doo-wop, singer/songwriter, Puff,
+lament and Pachelbel progressions, plagal and double-plagal motion, the circle
+of fifths in minor, the 12-bar blues). Each lesson retells one idea from a
+chapter in a few sentences, plays an example on your keys, and gives you a task
+such as *play the A harmonic minor scale* or *play I–vi–IV–V in any major key*,
+with a link to the chapter.
+
+The app checks the task itself from what you play; no model is involved, so it
+works offline and is always right. Chords are read from the keys held down
+together rather than from timing, so a slowly rolled chord counts, and you can
+pause between chords or hold a common tone into the next one. Progressions are
+accepted in any key, and a pass says what you played (*I–vi–IV–V in G*).
+A miss shows a hint once you stop playing. While a lesson is open, phrases are
+marked instead of coached; **End lesson** goes back to coaching. With a model
+connected, **Explain more** asks it to go deeper on the lesson. Finished lessons
+get a tick, kept in the browser.
+
 ### Talk mode
 
 The **🎙 Talk** button next to Ask turns on voice (`js/voice.js`, the browser's
@@ -237,12 +271,12 @@ only reads replies aloud.
 
 ### The panel
 
-The panel has two tabs. **Lesson** is the conversation: a live strip shows the
+The panel has three tabs. **Lesson** is the conversation: a live strip shows the
 note you just played and the chord under your fingers, local analysis and the
 teacher's replies stack below it, each labelled with who answered (System 1 ·
 Laya, or System 2 with how long it thought), and the bottom holds the **Fast /
 Slow** switch (once Laya is loaded), the **Coach each phrase I play** switch and
-the ask box. **Provider** is where answers come from.
+the ask box. **Course** lists the lessons (above). **Provider** is where answers come from.
 The header always says what is connected (for example *Groq · llama-3.3-70b*)
 and links to the Provider tab.
 
@@ -472,12 +506,19 @@ Hugging Face pinned to a revision), ONNX Runtime Web (MIT),
 `@huggingface/tokenizers` (Apache-2.0), WebLLM (Apache-2.0), and Qwen 3.5 under
 its own model licence.
 
+The course's lesson texts are adapted from *Open Music Theory* by Kris Shaffer,
+Bryn Hughes, Brian Moseley and contributors (Hybrid Pedagogy Publishing),
+licensed [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/); the
+adapted texts in `js/lessons.js` are shared under the same license
+(`LICENSES/OpenMusicTheory-CC-BY-SA-4.0.txt`). The Course tab credits it too.
+
 The service worker needs `https://` or `http://localhost`. Tests:
 
 - `node tests/archive.mjs`: archive reading and writing
 - `node tests/formats.mjs`: WAV, AIFF and MIDI reading and writing
 - `node tests/sequencer.mjs`: sequencer scales and pattern transposition
-- `node tests/coach.mjs`: chord and scale names to notes, and every coaching step in every key
+- `node tests/coach.mjs`: chord and scale names to notes, every coaching step in every key, and fitting examples onto 25 keys
+- `node tests/lessons.mjs`: every course lesson's task, played right and wrong
 - `node tests/voice.mjs`: how talk mode reads music notation aloud
 - `node tests/teacher.mjs`: the AI teacher's analysis and API requests
 - `node tests/native-id.mjs`: identification (macOS; uses `clang`, `pkgbuild` and `productbuild`)
