@@ -31,7 +31,7 @@ import { answer as systemOneAnswer, nextTip, isSoundControl } from './system-one
 import { meetRequest } from './requests.js';
 import { readCommand } from './commands.js';
 import { Voice, canListen, canSpeak, ENGINES as VOICE_ENGINES, loadEngine, BROWSER } from './voice.js';
-import { PROVIDERS, GROUPS, providerById, getProviderId, setProviderId, getKey, setKey, clearKey, getModelFor, setModelFor, getBase, setBase, engineFor, listModels, pickModel, fetchOpenRouterModels } from './providers.js';
+import { PROVIDERS, GROUPS, SYSTEM_ONE, NO_SYSTEM_TWO, providerById, getProviderId, setProviderId, getKey, setKey, clearKey, getModelFor, setModelFor, getBase, setBase, engineFor, listModels, pickModel, fetchOpenRouterModels } from './providers.js';
 import { signIn, completeSignIn } from './ai-auth.js';
 import { read, save } from './storage.js';
 
@@ -162,6 +162,7 @@ const STYLE = `
 
 #teacher-panel .tp-provider-view{overflow-y:auto;padding:12px 14px 16px}
 #teacher-panel .tp-intro{margin:0 0 4px;font-size:12px;color:var(--text-muted-color)}
+#teacher-panel .tp-layer-title{margin:16px 0 8px;font-size:12px;font-weight:700;color:var(--accent-color)}
 #teacher-panel .tp-group-title{margin:14px 0 6px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted-color)}
 #teacher-panel .tp-card{border:1px solid var(--border-color);border-radius:8px;margin-bottom:6px;background:color-mix(in srgb,var(--bg-color) 35%,transparent)}
 #teacher-panel .tp-card.selected{border-color:var(--accent-color)}
@@ -378,8 +379,11 @@ export class TeacherBridge {
     <p class="tp-credit">Music theory lessons adapted from <a href="${OMT.url}" target="_blank" rel="noopener">Open Music Theory</a> by Kris Shaffer, Bryn Hughes, Brian Moseley and contributors, licensed <a href="${OMT.licenseUrl}" target="_blank" rel="noopener">${OMT.license}</a>.</p>
    </section>
    <section class="tp-view tp-provider-view" id="tp-view-provider" role="tabpanel" aria-labelledby="tp-tab-provider" hidden>
-    <p class="tp-intro">Choose where the teacher's answers come from. Each option is a separate, direct connection with its own sign-in; one is active at a time.</p>
-    <div class="tp-providers" role="radiogroup" aria-label="Provider"></div>
+    <p class="tp-intro">The teacher works in two layers. System 1 is always Laya, on this device: it answers at once, coaching each phrase, keeping time, teaching the widgets and changing settings. System 2 thinks and explains in its own words: choose it below, on this device or from a provider you sign in to. Each provider is a separate, direct connection with its own sign-in.</p>
+    <h3 class="tp-layer-title">System 1 · fast · always Laya</h3>
+    <div class="tp-system-one"></div>
+    <h3 class="tp-layer-title">System 2 · thinking · your choice</h3>
+    <div class="tp-providers" role="radiogroup" aria-label="System 2"></div>
     <div class="tp-voices"></div>
     <div class="tp-storage"></div>
    </section>`;
@@ -484,14 +488,14 @@ export class TeacherBridge {
   // Always open: requests to play something are met with no model at all (js/requests.js).
   const summary = this.panel.querySelector('.tp-summary-text');
   summary.replaceChildren();
-  if (this._active) {
-   const provider = providerById(this._active.id);
-   const qwen = this._localEngine ? LOCAL_MODELS.find(m => m.id === this._active.model)?.label.split(' —')[0] : null;
-   const model = this._active.id === 'local' ? (qwen ? `Laya + ${qwen}` : 'Laya only') : this._active.model.replace(/^[^/]+\//, '');
-   summary.append(el('b', { textContent: provider.name }), ` · ${model}`);
-  } else if (this.laya) summary.append(el('b', { textContent: 'System 1: Laya' }), ' · on this device');
-  else summary.textContent = 'Not connected — choose a provider';
-  this.panel.querySelector('.tp-change').textContent = this._active || this.laya ? 'Change' : 'Choose';
+  // Both layers: "Laya + Groq · llama-3.3-70b", "Laya + Qwen 3.5 4B", "Laya · alone", or System 2 alone.
+  const system2 = this.teacher.isConfigured && this._active ? (this._active.id === 'local'
+   ? [LOCAL_MODELS.find(m => m.id === this._active.model)?.label.split(' —')[0] || 'Qwen', '']
+   : [providerById(this._active.id).name, ` · ${this._active.model.replace(/^[^/]+\//, '')}`]) : null;
+  if (this.laya) summary.append(el('b', { textContent: 'Laya' }), system2 ? ' + ' : ' · alone');
+  if (system2) summary.append(el('b', { textContent: system2[0] }), system2[1]);
+  if (!this.laya && !system2) summary.textContent = 'Not connected — choose a provider';
+  this.panel.querySelector('.tp-change').textContent = system2 || this.laya ? 'Change' : 'Choose';
   this.panel.querySelector('.question-input').placeholder = this.teacher.isConfigured ? 'Ask about theory or the app…' : this.laya ? 'Ask about a widget, plug-in or lesson…' : 'Ask me to play something…';
   this._renderMode();
  }
@@ -526,8 +530,9 @@ export class TeacherBridge {
  /* ---- Provider tab ---- */
 
  _renderProviders() {
+  this.panel.querySelector('.tp-system-one').replaceChildren(this._layaCard());
   const list = this.panel.querySelector('.tp-providers');
-  list.replaceChildren();
+  list.replaceChildren(this._card({ id: NO_SYSTEM_TWO, name: 'None: Laya alone', how: 'Nothing to sign in to', where: 'Nothing you play or ask leaves this browser', cost: 'Free' }));
   for (const group of GROUPS) {
    const members = PROVIDERS.filter(pr => pr.auth === group.auth);
    if (!members.length) continue;
@@ -537,11 +542,11 @@ export class TeacherBridge {
  }
 
  _card(provider) {
-  const id = provider.id, selected = this._selected === id, active = this._active?.id === id || (id === 'laya' && !!this.laya);
+  const id = provider.id, selected = this._selected === id, active = id === NO_SYSTEM_TWO ? !this.teacher.isConfigured : this._active?.id === id && this.teacher.isConfigured;
   const radio = el('input', { type: 'radio', name: 'tp-provider', value: id, checked: selected });
   const name = el('span', { className: 'tp-card-name' }, provider.name,
    el('span', { className: `tp-badge${/^Free/.test(provider.cost) ? ' free' : ''}`, textContent: provider.cost }));
-  if (active) name.append(el('span', { className: 'tp-badge on', textContent: 'Connected' }));
+  if (active) name.append(el('span', { className: 'tp-badge on', textContent: id === NO_SYSTEM_TWO ? 'In use' : 'Connected' }));
   else if (getKey(id)) name.append(el('span', { className: 'tp-badge saved', textContent: provider.auth === 'openrouter' ? 'Signed in' : 'Key saved' }));
   const head = el('label', { className: 'tp-card-head' }, radio,
    el('span', { className: 'tp-card-text' }, name, el('span', { className: 'tp-card-meta', textContent: `${provider.how} · ${provider.where}` })));
@@ -558,7 +563,7 @@ export class TeacherBridge {
 
  _fillBody(provider, body) {
   const status = el('p', { className: 'tp-card-status', role: 'status' });
-  if (provider.id === 'laya') return this._fillLaya(body, status);
+  if (provider.id === NO_SYSTEM_TWO) return this._fillNone(body);
   if (provider.auth === 'local') return this._fillLocal(body, status);
   const id = provider.id, active = this._active?.id === id;
   const field = (text, node) => el('label', { className: 'tp-field' }, text, node);
@@ -623,6 +628,28 @@ export class TeacherBridge {
   if (select.value !== chosen && select.options.length) select.selectedIndex = 0;
  }
 
+ // System 1, always Laya: its own card above the System 2 choices, open, with its state.
+ _layaCard() {
+  const name = el('span', { className: 'tp-card-name' }, SYSTEM_ONE.name, el('span', { className: 'tp-badge free', textContent: SYSTEM_ONE.cost }),
+   el('span', { className: `tp-badge${this.laya ? ' on' : ''}`, textContent: this.laya ? 'Loaded' : 'Not loaded' }));
+  const body = el('div', { className: 'tp-card-body' }), card = el('div', { className: 'tp-card selected tp-laya' },
+   el('div', { className: 'tp-card-head' }, el('span', { className: 'tp-card-text' }, name, el('span', { className: 'tp-card-meta', textContent: `${SYSTEM_ONE.how} · ${SYSTEM_ONE.where}` }))), body);
+  this._fillLaya(body, el('p', { className: 'tp-card-status', role: 'status' }));
+  return card;
+ }
+ // No System 2: Laya alone. Choosing it disconnects the one in use (keys are kept, Qwen is unloaded).
+ _fillNone(body) {
+  body.append(el('p', { className: 'tp-note', textContent: 'Laya coaches, keeps time, answers questions about the app from its guides and changes settings; the composer plays what you ask for. Nothing explains in its own words.' }));
+  if (this.teacher.isConfigured) body.append(el('div', { className: 'tp-row' }, el('button', { type: 'button', className: 'tp-primary', textContent: 'Use Laya alone', onclick: () => this._systemOneOnly() })));
+ }
+ _systemOneOnly() {
+  if (this._localEngine) { this._localEngine.unload?.(); this._localEngine = null; }
+  this._resetTeacher(); this.teacher.setEngine(null); this._active = null;
+  setProviderId(NO_SYSTEM_TWO); this._selected = NO_SYSTEM_TWO;
+  this._renderProviders(); this._renderState(); this._renderEmpty();
+  this._msg('info', this.laya ? 'Laya alone now (System 1): nothing you play or ask leaves this browser.' : 'No System 2 now. Load Laya in the Provider tab for coaching and answers about the app.');
+ }
+
  // System 1 on its own: Laya coaches each phrase and teaches the widgets and plug-ins, choosing from written
  // guides (js/system-one.js), so it needs no WebGPU and runs on the CPU too.
  _fillLaya(body, status) {
@@ -630,9 +657,9 @@ export class TeacherBridge {
   const bar = el('progress', { max: 1, hidden: true });
   btn.onclick = () => this._loadLaya({ btn, bar, status });
   body.append(
-   el('p', { className: 'tp-note', textContent: 'Laya is a fast decision model. It never writes text: it chooses. The moment you finish a phrase it picks your next step from the coaching menu; ask about a widget or plug-in (or press its 🎓, when 🎓 buttons are on in Settings) and it picks the guide step that answers you and lights up the control; on a plug-in, "Next tip" has it choose which control to try next. Everything it says was written in advance, so it is never wrong about the app.' }),
+   el('p', { className: 'tp-note', textContent: 'Laya is a fast decision model. It never writes text: it chooses. The moment you finish a phrase it picks your next step from the coaching menu; ask about a widget or plug-in (or press its 🎓, when 🎓 buttons are on in Settings) and it picks the guide step that answers you and lights up the control; on a plug-in, "Next tip" has it choose which control to try next. Everything it says was written in advance, so it is never wrong about the app. Whichever System 2 you choose, Laya stays System 1.' }),
    el('div', { className: 'tp-row' }, btn), bar, status,
-   el('p', { className: 'tp-note', textContent: `Runs on the GPU where it can, otherwise the CPU. The first load downloads ${LAYA_MB} MB; after that it loads from the browser cache by itself. Connect a provider (or Qwen) as well to have it explain in its own words.` }));
+   el('p', { className: 'tp-note', textContent: `Runs on the GPU where it can, otherwise the CPU. The first load downloads ${LAYA_MB} MB; after that it loads from the browser cache by itself.` }));
  }
 
  async _loadLaya(ui = null) {
@@ -662,16 +689,16 @@ export class TeacherBridge {
   LOCAL_MODELS.forEach(m => select.append(el('option', { value: m.id, textContent: m.label })));
   select.value = getModelFor('local') || LOCAL_DEFAULT;
   const gpu = webgpuAvailable(), loaded = this._active?.id === 'local';
-  const btn = el('button', { type: 'button', className: 'tp-primary', textContent: loaded ? 'Reload' : gpu ? 'Download and load both' : 'Load Laya only' });
+  const btn = el('button', { type: 'button', className: 'tp-primary', textContent: loaded ? 'Reload' : !gpu ? 'Needs WebGPU' : this.laya ? 'Download and load Qwen' : 'Download and load Qwen (and Laya)', disabled: !gpu });
   const bar = el('progress', { max: 1, hidden: true });
   select.disabled = !gpu;
   btn.onclick = () => this._loadLocal(select.value, { btn, bar, status, select });
   body.append(
-   el('p', { className: 'tp-note', textContent: `Two models work together here. Laya (System 1, ${LAYA_MB} MB) is a fast decision model: the moment you finish a phrase it picks your next step, and the app writes the words and plays the example, so the theory is always right. Qwen (System 2) thinks through explanations and answers your questions. No account, key or cookie, and nothing you play leaves the browser.` }),
+   el('p', { className: 'tp-note', textContent: `Qwen (System 2) thinks through explanations and answers your questions in this browser, while Laya (System 1, ${LAYA_MB} MB) picks your next step the moment you finish a phrase; Laya is loaded with it if it isn't yet. No account, key or cookie, and nothing you play leaves the browser.` }),
    el('label', { className: 'tp-field' }, 'Qwen size', select), el('div', { className: 'tp-row' }, btn), bar, status,
    el('p', { className: 'tp-note', textContent: gpu
-    ? 'The first load downloads both models; later visits load them from the browser cache.'
-    : 'This browser has no WebGPU, so Qwen can\'t run here. Laya still can, on the CPU, for fast coaching. Use desktop Chrome or Edge for both.' }));
+    ? 'The first load downloads the model; later visits load it from the browser cache.'
+    : 'This browser has no WebGPU, so Qwen can\'t run here: choose a provider below for System 2. Laya (System 1) still runs, on the CPU. Use desktop Chrome or Edge for Qwen.' }));
  }
 
  // Loads Laya (System 1) and, where WebGPU allows, Qwen (System 2). A Qwen already loaded at another size is
@@ -702,7 +729,7 @@ export class TeacherBridge {
    if (warning) this._msg('error', warning);
   } catch (err) {
    status.textContent = err.message; status.className = 'tp-card-status bad';
-   btn.textContent = this._active?.id === 'local' ? 'Reload' : 'Download and load both';
+   btn.textContent = this._active?.id === 'local' ? 'Reload' : 'Try again';
    this._setStatus(null);
   } finally {
    this._loading = false; btn.disabled = false; select.disabled = !webgpuAvailable(); bar.hidden = true;
@@ -757,7 +784,7 @@ export class TeacherBridge {
   this._renderProviders(); this._renderState();
   this._msg('info', provider.id === 'local'
    ? `${this.laya && this._localEngine ? 'Laya and Qwen are' : this.laya ? 'Laya is' : 'Qwen is'} ready. Play a phrase and pause${this._localEngine ? ', or ask a question' : ''}.`
-   : `Connected to ${provider.name}. Play a phrase and pause, or ask a question.`);
+   : `Connected to ${provider.name} as System 2. ${this.laya ? `Laya stays System 1: it coaches each phrase at once, and ${provider.name} explains.` : 'Load Laya (System 1) in the Provider tab for instant coaching; until then this model coaches too.'} Play a phrase and pause, or ask a question.`);
   this._showTab('lesson');
   document.activeElement?.blur?.(); // so the computer keyboard plays notes again straight away
  }

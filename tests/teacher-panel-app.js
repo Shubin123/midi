@@ -114,6 +114,44 @@ export async function runTeacherPanel() {
   buttonIn(lastChange(), 'Undo')?.click();
   bridge.teacher.setEngine(null);
  });
+ /* ---- Two layers: System 1 is always Laya, System 2 the student's choice ---- */
+ await check('the Provider tab has Laya as System 1, above a System 2 choice that doesn\'t include it', async expect => {
+  panel().querySelector('#tp-tab-provider').click();
+  const one = panel().querySelector('.tp-system-one'), two = panel().querySelector('.tp-providers');
+  expect(/Laya/.test(one?.textContent || '') && !one.querySelector('input[type=radio]'), 'System 1 is not Laya on its own, or is a choice');
+  const choices = [...two.querySelectorAll('input[type=radio]')].map(r => r.value);
+  expect(!choices.includes('laya'), 'Laya is one of the System 2 choices');
+  for (const id of ['none', 'local', 'openrouter', 'groq', 'gemini', 'custom']) expect(choices.includes(id), `System 2 has no ${id}`);
+  expect(two.getAttribute('aria-label') === 'System 2', 'the choice is not labelled System 2');
+  panel().querySelector('#tp-tab-lesson').click();
+ });
+ await check('Laya with a hosted System 2: Laya coaches each phrase, the hosted model thinks it through, the header names both', async expect => {
+  const thought = [];
+  bridge.laya = { decide: async () => ({ move: 'scale_run', confidence: 0.9, explain: 0, ms: 4 }), pick: async (_, __, o) => ({ choice: Object.keys(o)[0], confidence: 1, ms: 1 }) };
+  bridge.teacher.setEngine({ generate: async messages => { thought.push(messages.at(-1).content); return 'You played the C major scale. Try it in thirds next.'; } });
+  bridge._active = { id: 'groq', model: 'llama-3.3-70b-versatile' };
+  bridge.mode = 'slow'; bridge.autoAnalyze = true;
+  bridge._renderProviders(); bridge._renderState();
+  const summary = panel().querySelector('.tp-summary-text').textContent;
+  expect(summary === 'Laya + Groq · llama-3.3-70b-versatile', `the header says "${summary}"`);
+  for (const midi of [60, 62, 64, 65, 67]) { for (const on of [true, false]) window.dispatchEvent(new CustomEvent('synth:note', { detail: { midi, velocity: 0.7, on, source: 'computer' } })); await wait(40); }
+  await wait(1200);
+  const who = messages().map(m => m.querySelector('.tp-who')?.textContent || '').filter(Boolean);
+  expect(who.some(w => /^System 1 · Laya/.test(w)), `no step from Laya (${who.join(' | ')})`);
+  expect(thought.some(t => /\[PLAYED\]/.test(t)), 'the hosted model was not asked to think the phrase through');
+  expect(who.some(w => /^System 2 · Groq/.test(w)), `no answer from System 2 · Groq (${who.join(' | ')})`);
+  expect(panel().querySelector('.tp-providers .tp-card[data-id="groq"] .tp-badge.on'), 'Groq is not marked connected');
+  expect(/Loaded/.test(panel().querySelector('.tp-system-one').textContent), 'Laya is not marked loaded');
+ });
+ await check('"Use Laya alone" disconnects System 2 and keeps Laya', async expect => {
+  bridge._selected = 'none'; bridge._renderProviders();
+  [...panel().querySelectorAll('.tp-providers .tp-card[data-id="none"] button')].find(b => /Laya alone/.test(b.textContent))?.click();
+  expect(!bridge.teacher.isConfigured && bridge.laya, 'System 2 is still connected, or Laya went');
+  const summary = panel().querySelector('.tp-summary-text').textContent;
+  expect(summary === 'Laya · alone', `the header says "${summary}"`);
+  expect(panel().querySelector('.tp-providers .tp-card[data-id="none"] .tp-badge.on'), 'None is not marked as the choice in use');
+  bridge.laya = null; bridge.mode = 'fast'; bridge._renderProviders(); bridge._renderState();
+ });
  await check('a name with a slash in it is one widget: Import / Export › Audio export format', async expect => {
   const hit = ws.find('Import / Export › Audio export format');
   expect(hit?.widget.title === 'Import / Export' && hit?.control?.label === 'Audio export format', `found ${hit && ws.nameOf(hit)}`);

@@ -532,24 +532,34 @@ the ask box. **Course** lists the lessons (above). **Provider** is where answers
 The header always says what is connected (for example *Groq · llama-3.3-70b*)
 and links to the Provider tab.
 
-### Choosing a provider
+### Choosing a provider: System 1 is Laya, System 2 is your choice
 
-Each provider is a **separate, direct connection** with its own sign-in;
-nothing is routed through anything else (only OpenRouter itself forwards to
-other model makers), and one is active at a time. The Provider tab lists them by
-how you sign in:
+The teacher works in two layers, and the Provider tab lists them that way.
+**System 1 is always Laya**, on this device: it answers at once, coaching each
+phrase, keeping time, teaching the widgets and plug-ins and changing settings.
+**System 2** thinks and explains in its own words, and is chosen from the list
+below it: **None** (Laya alone, nothing leaves the browser), **Qwen** on this
+device, or any hosted provider. The two mix freely: Laya with Groq, Laya with
+Gemini, Laya with Qwen. Whichever System 2 is chosen, Laya keeps coaching (in
+**Slow** mode the System 2 model then thinks each phrase through), and the
+header names both (*Laya + Groq · llama-3.3-70b*). Each hosted provider is a
+**separate, direct connection** with its own sign-in; nothing is routed through
+anything else (only OpenRouter itself forwards to other model makers), and one
+System 2 is active at a time. Without Laya loaded, the System 2 model coaches
+phrases too.
 
-| Group | Provider | Sign-in | Requests go to | Cost |
+| Layer | Provider | Sign-in | Requests go to | Cost |
 | --- | --- | --- | --- | --- |
-| On this device | **System 1: Laya** | None | Nowhere: Laya (291 MB, ONNX Runtime Web) runs in the browser. It coaches each phrase, answers questions about the widgets and plug-ins from their guides, learns plug-ins as they load, and gives tips; it chooses rather than writes, so it is fast and never wrong about the app. Once downloaded it loads by itself on later visits | Free; runs on the GPU or the CPU |
-| | **System 1 + 2: Laya and Qwen** | None | Nowhere: Laya and Qwen 3.5 4B or 2B (System 2, [WebLLM](https://github.com/mlc-ai/web-llm), `js/local-model.js`) run in the browser | Free; downloaded once, then cached; Qwen needs WebGPU (desktop Chrome or Edge) |
-| Sign in | **OpenRouter** | **Sign in with OpenRouter** (OAuth with PKCE, `js/ai-auth.js`), or a pasted OpenRouter key | `openrouter.ai`, which forwards to Google, Meta, OpenAI, Anthropic and others | Free models on a free account; others need credit |
-| Your own API key | **Groq** | Groq key | `api.groq.com` | Free tier |
+| System 1 | **Laya** | None | Nowhere: Laya (291 MB, ONNX Runtime Web) runs in the browser. It coaches each phrase, answers questions about the widgets and plug-ins from their guides, learns plug-ins as they load, and gives tips; it chooses rather than writes, so it is fast and never wrong about the app. Once downloaded it loads by itself on later visits | Free; runs on the GPU or the CPU |
+| System 2 | **None** | None | Nowhere | Free |
+| | **Qwen, on this device** | None | Nowhere: Qwen 3.5 4B or 2B ([WebLLM](https://github.com/mlc-ai/web-llm), `js/local-model.js`) runs in the browser, with Laya loaded beside it if it isn't yet | Free; downloaded once, then cached; needs WebGPU (desktop Chrome or Edge) |
+| | **OpenRouter** | **Sign in with OpenRouter** (OAuth with PKCE, `js/ai-auth.js`), or a pasted OpenRouter key | `openrouter.ai`, which forwards to Google, Meta, OpenAI, Anthropic and others | Free models on a free account; others need credit |
+| | **Groq** | Groq key | `api.groq.com` | Free tier |
 | | **Cerebras** | Cerebras key | `api.cerebras.ai` | Free tier |
 | | **Google Gemini** | Google AI Studio key | `generativelanguage.googleapis.com` | Free tier |
 | | **Mistral** | Mistral key | `api.mistral.ai` | Free tier |
 | | **OpenAI** | OpenAI key | `api.openai.com` | Paid |
-| Advanced | **Custom endpoint** | Base URL and key | Any OpenAI-compatible `/chat/completions` that allows browser requests (LM Studio, Ollama with CORS enabled, a self-hosted gateway...) | Depends on the service |
+| | **Custom endpoint** | Base URL and key | Any OpenAI-compatible `/chat/completions` that allows browser requests (LM Studio, Ollama with CORS enabled, a self-hosted gateway...) | Depends on the service |
 
 **Connect** checks the key by listing the provider's models (a free request;
 nothing is generated), so a wrong key is reported at once and is not saved. The

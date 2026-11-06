@@ -1,5 +1,8 @@
-// The backends the teacher can talk to. Each one is a separate, direct connection: requests go straight from
-// the page to that provider with that provider's own credentials, and only one is active at a time. Every
+// The teacher's two layers. System 1 is always Laya (js/laya.js), on this device: fast, it coaches each phrase,
+// keeps time, teaches the widgets and changes settings. System 2 thinks and explains, and is the student's
+// choice from the list below: Qwen on this device, or a hosted model. Each hosted one is a separate, direct
+// connection: requests go straight from the page to that provider with that provider's own credentials, and
+// one System 2 is active at a time, alongside Laya. Every
 // hosted provider here answers cross-origin requests (CORS), so no server of ours sits in between. Keys and
 // the chosen model are kept in cookies (js/ai-auth.js). The on-device option runs js/local-model.js instead.
 import { getCookie, setCookie, deleteCookie } from './ai-auth.js';
@@ -9,10 +12,8 @@ import { getCookie, setCookie, deleteCookie } from './ai-auth.js';
 // `cost` are the plain-language summary shown in the list. `defaultModel` and `prefer` pick a model once the
 // provider's live model list is known; `models` are fallbacks until then.
 export const PROVIDERS = [
- // On this device: Laya alone (System 1) coaches your playing and teaches the widgets and plug-ins by choosing
- // from written guides; with Qwen (System 2) it also explains in its own words and answers anything.
- { id: 'laya', name: 'System 1: Laya', auth: 'local', how: 'No sign-in · 291 MB', where: 'A fast decision model in this browser: coaches each phrase and teaches the widgets and plug-ins', cost: 'Free' },
- { id: 'local', name: 'System 1 + 2: Laya and Qwen', auth: 'local', how: 'No sign-in · WebGPU', where: 'Laya (fast) and Qwen (thinking) run in this browser', cost: 'Free' },
+ // On this device: Qwen thinks in the browser, with Laya beside it (loaded with it if it isn't yet).
+ { id: 'local', name: 'Qwen, on this device', auth: 'local', how: 'No sign-in · WebGPU', where: 'Qwen 3.5 thinks in this browser; nothing you play leaves it', cost: 'Free' },
  {
   id: 'openrouter', name: 'OpenRouter', auth: 'openrouter', how: 'Sign in, or an OpenRouter key', where: 'openrouter.ai, which forwards to many model makers', cost: 'Free models; others paid',
   base: 'https://openrouter.ai/api/v1', keyUrl: 'https://openrouter.ai/keys', keyHint: 'sk-or-…', defaultModel: 'google/gemma-4-31b-it:free',
@@ -45,7 +46,12 @@ export const PROVIDERS = [
  { id: 'custom', name: 'Custom endpoint', auth: 'custom', how: 'Your base URL and key', where: 'Any OpenAI-compatible API', cost: 'Depends on the service', keyHint: 'API key', defaultModel: '' },
 ];
 
-// The list's sections, in order, keyed by `auth`.
+// System 1: always Laya. Shown above the System 2 list, never one of its choices.
+export const SYSTEM_ONE = { id: 'laya', name: 'Laya', how: 'No sign-in · 291 MB', where: 'A fast decision model in this browser: coaches each phrase, keeps time, teaches the widgets and plug-ins and changes settings', cost: 'Free' };
+// Choosing no System 2: Laya alone, with nothing sent anywhere.
+export const NO_SYSTEM_TWO = 'none';
+
+// The System 2 list's sections, in order, keyed by `auth`.
 export const GROUPS = [
  { auth: 'local', title: 'On this device, no sign-in' },
  { auth: 'openrouter', title: 'Sign in' },
