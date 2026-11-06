@@ -23,7 +23,7 @@ fatView.setUint32(0, 0xcafebabe); fatView.setUint32(4, 1); fatView.setUint32(8, 
 assert.equal(parseMachO(fat).symbols.get('_probe'), 0x300);
 console.log('Mach-O: thin/universal x86_64 and malformed header checks passed.');
 
-const use = (bytes, check) => { const guest = new NativeVst3Guest(uc, bytes); try { return check(guest); } finally { guest.close(); } };
+const use = (bytes, check, options = {}) => { const guest = new NativeVst3Guest(uc, bytes, options); try { return check(guest); } finally { guest.close(); } };
 use(fixture, guest => {
  assert.equal(guest.call(guest.export('_probe')), 42);
  assert.ok(guest.read(guest.slide + 0x1f00, 128).every(byte => byte === 0), 'BSS is zeroed');
@@ -39,6 +39,74 @@ use(fixture, guest => {
 use(nativeFixture({ initializer: true }), guest => { guest.initialize(); assert.equal(guest.initialized, true); });
 use(nativeFixture({ bundleEntry: true }), guest => assert.throws(() => guest.initialize(), /CFBundle/));
 use(nativeFixture({ importName: '_malloc' }), guest => { assert.ok(guest.call(guest.export('_probe')) >= 0x30000000); assert.equal(guest.report().calls._malloc, 1); });
+use(fixture, guest => {
+ const receiver = guest.resolve('_OBJC_CLASS_$_NSObject', 1, 'bind'), selector = guest.allocate(32);
+ guest.write(selector, new TextEncoder().encode('class\0')); guest.setRegister('RDI', receiver); guest.setRegister('RSI', selector);
+ assert.equal(guest.invokeImport({ name: '_objc_msgSend' }), receiver);
+ guest.setRegister('RDI', 0); assert.equal(guest.invokeImport({ name: '_objc_msgSend' }), 0); guest.setRegister('RDI', receiver);
+ guest.write(selector, new TextEncoder().encode('notImplemented\0'));
+ assert.throws(() => guest.invokeImport({ name: '_objc_msgSend' }), error => error.details.kind === 'unsupported-objc' && error.details.className === 'NSObject' && error.details.selector === 'notImplemented');
+});
+use(fixture, guest => {
+ const buffer = guest.allocate(32), filename = guest.allocate(32);
+ guest.write(filename, new TextEncoder().encode('data.bin\0'));
+ guest.write(buffer, new Uint8Array(32).fill(0x77));
+ const invoke = (name, args = []) => {
+  for (const [index, register] of ['RDI', 'RSI', 'RDX'].entries()) guest.setRegister(register, args[index] ?? 0);
+  return guest.invokeImport({ name });
+ };
+ assert.equal(invoke('_getrlimit', [8, buffer]), 0);
+ assert.equal(guest.pointer(buffer), 256); assert.equal(guest.pointer(buffer + 8), 256);
+ assert.ok(guest.read(buffer + 16, 16).every(byte => byte === 0x77));
+ guest.writePointer(buffer, 4); assert.equal(invoke('_setrlimit', [8, buffer]), 0);
+ assert.equal(invoke('_getdtablesize'), 4);
+ const descriptor = invoke('_open', [filename, 0]); assert.equal(descriptor, 3);
+ assert.equal(invoke('_open', [filename, 0]), -1);
+ const error = invoke('___error');
+ assert.equal(new DataView(guest.read(error, 4).buffer).getInt32(0, true), 24);
+ assert.equal(invoke('_read', [descriptor, buffer, 32]), 3); assert.equal(new TextDecoder().decode(guest.read(buffer, 3)), 'abc');
+ assert.equal(invoke('_lseek', [descriptor, -1n, 2]), 2n);
+ assert.equal(invoke('_read', [descriptor, buffer, 32]), 1); assert.equal(guest.read(buffer, 1)[0], 99);
+ assert.equal(invoke('_read', [descriptor, 0, 0]), 0);
+ assert.equal(invoke('_close', [descriptor]), 0); assert.equal(invoke('_close', [descriptor]), -1);
+ assert.equal(new DataView(guest.read(error, 4).buffer).getInt32(0, true), 9);
+ assert.equal(invoke('___error'), error, 'errno storage is stable within one guest');
+ assert.equal(invoke('_write', [1, filename, 8]), 8); assert.equal(guest.report().files.stdout, 'data.bin');
+ assert.equal(invoke('_getrlimit', [8, 0]), -1);
+ assert.equal(new DataView(guest.read(error, 4).buffer).getInt32(0, true), 14);
+ assert.equal(invoke('_open', [0, 0]), -1);
+ assert.equal(new DataView(guest.read(error, 4).buffer).getInt32(0, true), 14);
+ assert.throws(() => invoke('_getrlimit', [3, buffer]), exception => exception.details.kind === 'unsupported-filesystem');
+}, { files: new Map([['/plugin/data.bin', new TextEncoder().encode('abc')]]) });
+use(fixture, guest => {
+ const originalWrite = guest.write;
+ guest.write = () => { throw new WebAssembly.RuntimeError('simulated engine API fault'); };
+ guest.setRegister('RDI', 8); guest.setRegister('RSI', 0x40000000);
+ try {
+  assert.throws(() => guest.invokeImport({ name: '_getrlimit' }), error => error.details.kind === 'emulator-fault');
+  assert.equal(guest.poisoned, true, 'host-import engine faults cannot be mistaken for an ordinary errno');
+ } finally { guest.write = originalWrite; guest.poisoned = false; }
+});
+const clockSamples = [12.5, 12.25, 13, NaN];
+use(fixture, guest => {
+ const info = guest.allocate(16); guest.write(info, new Uint8Array(16).fill(0x77)); guest.setRegister('RDI', info);
+ assert.equal(guest.invokeImport({ name: '_mach_timebase_info' }), 0);
+ const bytes = guest.read(info, 16), view = new DataView(bytes.buffer);
+ assert.equal(view.getUint32(0, true), 1); assert.equal(view.getUint32(4, true), 1); assert.equal(bytes[8], 0x77);
+ for (const expected of [12500000n, 12500000n, 13000000n]) assert.equal(guest.invokeImport({ name: '_mach_absolute_time' }), expected);
+ assert.throws(() => guest.invokeImport({ name: '_mach_absolute_time' }), /Invalid guest monotonic clock/);
+}, { monotonicClock: () => clockSamples.shift() });
+const wallSamples = [1500.25, -0.25];
+use(fixture, guest => {
+ const info = guest.allocate(16); guest.write(info, new Uint8Array(16).fill(0x77)); guest.setRegister('RDI', info); guest.setRegister('RSI', 0);
+ for (const [seconds, microseconds] of [[1n, 500250], [-1n, 999750]]) {
+  assert.equal(guest.invokeImport({ name: '_gettimeofday' }), 0);
+  const bytes = guest.read(info, 16), view = new DataView(bytes.buffer);
+  assert.equal(view.getBigInt64(0, true), seconds); assert.equal(view.getInt32(8, true), microseconds); assert.equal(bytes[12], 0x77);
+ }
+ guest.setRegister('RSI', info);
+ assert.throws(() => guest.invokeImport({ name: '_gettimeofday' }), exception => exception.details.kind === 'unsupported-time');
+}, { wallClock: () => wallSamples.shift() });
 use(nativeFixture({ importName: '_exp2' }), guest => {
  guest.engine.reg_write(uc.X86_REG_XMM0, new Uint8Array(16).fill(0x77));
  for (const [input, expected] of [[0, 1], [3, 8], [-2, 0.25], [0.5, Math.SQRT2], [-Infinity, 0]]) {

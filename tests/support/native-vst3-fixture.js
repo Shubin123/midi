@@ -56,6 +56,16 @@ export function nativeFixture({ code = [0xb8, 42, 0, 0, 0, 0xc3], importName, da
  return bytes;
 }
 
+export function nativeLimitFixture() {
+ const bytes = nativeFixture({ importName: '_getrlimit', initializer: true });
+ const view = new DataView(bytes.buffer);
+ bytes.set([0x48, 0x83, 0xec, 8, 0xbf, 8, 0, 0, 0, 0x48, 0x8d, 0x35], 0x380);
+ view.setInt32(0x38c, 0x1400 - 0x390, true);
+ bytes.set([0xff, 0x15], 0x390); view.setInt32(0x392, 0x1600 - 0x396, true);
+ bytes.set([0x48, 0x83, 0xc4, 8, 0xc3], 0x396);
+ return bytes;
+}
+
 export function nativeMutexFixture() {
  const bytes = nativeFixture({ importName: '_pthread_mutex_lock', initializer: true });
  const view = new DataView(bytes.buffer);

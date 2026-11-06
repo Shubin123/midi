@@ -2,6 +2,7 @@ import { parseMachO, dyldFixups } from './macho-loader.js';
 import { formatGuestPrintf } from './native-vst3-printf.js';
 import { scanGuestIntegers } from './native-vst3-scanf.js';
 import { GuestMutexes } from './native-vst3-mutex.js';
+import { GuestFiles, GuestFileError } from './native-vst3-files.js';
 
 const IMAGE = 0x10000000, HEAP = 0x30000000, HEAP_SIZE = 32 << 20;
 const STACK = 0x40000000, STACK_SIZE = 1 << 20, IMPORTS = 0x50000000, IMPORT_SIZE = 1 << 20;
@@ -13,19 +14,22 @@ const unaryMath = new Map([
  ['_exp', Math.exp], ['_expm1', Math.expm1], ['_log', Math.log], ['_log2', Math.log2], ['_log10', Math.log10], ['_log1p', Math.log1p],
  ['_sqrt', Math.sqrt], ['_cbrt', Math.cbrt], ['_floor', Math.floor], ['_ceil', Math.ceil], ['_trunc', Math.trunc], ['_fabs', Math.abs],
 ]);
+const fileImports = new Set(['___error', '_getrlimit', '_setrlimit', '_getdtablesize', '_open', '_open$NOCANCEL', '_close', '_close$NOCANCEL', '_read', '_read$NOCANCEL', '_write', '_write$NOCANCEL', '_lseek', '_fcntl', '_dup']);
 
 export class NativeExecutionError extends Error {
  constructor(message, details = {}) { super(message); this.name = 'NativeExecutionError'; this.details = details; }
 }
 
 export class NativeVst3Guest {
- constructor(uc, bytes) {
+ constructor(uc, bytes, { files = new Map(), monotonicClock = () => performance.now(), wallClock = () => Date.now() } = {}) {
   this.uc = uc;
   this.image = parseMachO(bytes);
   this.slide = IMAGE - this.image.minimum;
   this.imports = new Map(); this.importNames = new Map(); this.calls = new Map(); this.allocations = new Map(); this.destructors = []; this.uuids = new Map();
   this.heapTop = HEAP; this.initialized = false; this.initializersCompleted = 0; this.factory = 0; this.hooks = [];
   this.mutexes = new GuestMutexes(this);
+  this.files = new GuestFiles(files);
+  this.monotonicClock = monotonicClock; this.wallClock = wallClock; this.lastTick = 0n;
   this.engine = new uc.Unicorn(uc.ARCH_X86, uc.MODE_64);
   try {
    const engine = this.engine;
@@ -137,6 +141,18 @@ export class NativeVst3Guest {
   const args = ['RDI', 'RSI', 'RDX', 'RCX', 'R8', 'R9'].map(name => this.register(name));
   const [destination, source, size] = args;
   this.calls.set(entry.name, (this.calls.get(entry.name) || 0) + 1);
+  if (fileImports.has(entry.name)) {
+   try { return this.invokeFile(entry.name, args); }
+   catch (error) {
+    if (error instanceof WebAssembly.RuntimeError) {
+     this.poisoned = true;
+     throw new NativeExecutionError(`Emulator fault during ${entry.name}: ${error.message}`, { ...entry, kind: 'emulator-fault' });
+    }
+    if (!(error instanceof GuestFileError)) throw new NativeExecutionError(error.message || String(error), { ...entry, kind: 'unsupported-filesystem' });
+    const bytes = new Uint8Array(4); new DataView(bytes.buffer).setInt32(0, error.errno, true); this.write(this.errorPointer(), bytes);
+    return -1;
+   }
+  }
   if (unaryMath.has(entry.name)) return { rax: 0, xmm0: unaryMath.get(entry.name)(this.floatingRegister()) };
   if (entry.name.startsWith('_pthread_mutex')) {
    try {
@@ -149,6 +165,32 @@ export class NativeVst3Guest {
    this.write(address, new Uint8Array(length).fill(byte));
   };
   switch (entry.name) {
+   case '_objc_msgSend': {
+    const selector = this.string(source), className = this.imports.get(destination)?.name.match(/^_OBJC_CLASS_\$_(.+)$/)?.[1];
+    if (selector === 'class' && (className === 'NSObject' || destination === 0)) return destination;
+    throw new NativeExecutionError(`Unsupported Objective-C message: ${className || hex(destination)} ${selector}`, { ...entry, kind: 'unsupported-objc', receiver: hex(destination), className: className || null, selector });
+   }
+   case '_mach_timebase_info': {
+    const bytes = new Uint8Array(8), view = new DataView(bytes.buffer);
+    view.setUint32(0, 1, true); view.setUint32(4, 1, true); this.write(destination, bytes); return 0;
+   }
+   case '_mach_absolute_time': {
+    const milliseconds = this.monotonicClock();
+    if (!Number.isFinite(milliseconds) || milliseconds < 0 || milliseconds > Number.MAX_SAFE_INTEGER / 1000000) throw new NativeExecutionError('Invalid guest monotonic clock');
+    const tick = BigInt(Math.floor(milliseconds * 1000000));
+    if (tick > this.lastTick) this.lastTick = tick;
+    return this.lastTick;
+   }
+   case '_gettimeofday': {
+    if (source) throw new NativeExecutionError('Legacy gettimeofday timezone output is not implemented', { ...entry, kind: 'unsupported-time' });
+    const milliseconds = this.wallClock();
+    if (!Number.isFinite(milliseconds) || Math.abs(milliseconds) > Number.MAX_SAFE_INTEGER / 1000) throw new NativeExecutionError('Invalid guest wall clock');
+    if (destination) {
+     const seconds = Math.floor(milliseconds / 1000), bytes = new Uint8Array(12), view = new DataView(bytes.buffer);
+     view.setBigInt64(0, BigInt(seconds), true); view.setInt32(8, Math.floor((milliseconds - seconds * 1000) * 1000), true); this.write(destination, bytes);
+    }
+    return 0;
+   }
    case '_exp2': return { rax: 0, xmm0: 2 ** this.floatingRegister() };
    case '_pow': {
     const base = this.floatingRegister(), exponent = this.floatingRegister(1);
@@ -238,6 +280,48 @@ export class NativeVst3Guest {
    default: throw new NativeExecutionError(`Unsupported macOS import: ${entry.name}`, { ...entry, kind: 'unsupported-import' });
   }
  }
+ errorPointer() {
+  if (!this.errnoAddress) { this.errnoAddress = this.allocate(4); this.write(this.errnoAddress, new Uint8Array(4)); }
+  return this.errnoAddress;
+ }
+ invokeFile(name, [destination, source, size]) {
+  const memory = operation => {
+   try { return operation(); }
+   catch (error) {
+    const code = Number(String(error).match(/uc_mem_(?:read|write) failed with code (\d+):/)?.[1]);
+    if ([this.uc.ERR_READ_UNMAPPED, this.uc.ERR_WRITE_UNMAPPED, this.uc.ERR_READ_PROT, this.uc.ERR_WRITE_PROT].includes(code) || error instanceof NativeExecutionError && error.message === 'Invalid guest memory read') throw new GuestFileError(14, 'Invalid guest file I/O buffer');
+    throw error;
+   }
+  };
+  switch (name) {
+   case '___error': return this.errorPointer();
+   case '_getdtablesize': return this.files.softLimit;
+   case '_getrlimit': case '_setrlimit': {
+    if (destination !== 8) throw new Error(`Unsupported guest resource limit: ${destination}`);
+    if (name === '_getrlimit') {
+     const bytes = new Uint8Array(16), view = new DataView(bytes.buffer);
+     view.setBigUint64(0, BigInt(this.files.softLimit), true); view.setBigUint64(8, BigInt(this.files.hardLimit), true); memory(() => this.write(source, bytes));
+    } else {
+     const bytes = memory(() => this.read(source, 16)), view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+     this.files.setLimits(view.getBigUint64(0, true), view.getBigUint64(8, true));
+    }
+    return 0;
+   }
+   case '_open': case '_open$NOCANCEL': return this.files.open(memory(() => this.string(destination)), source);
+   case '_close': case '_close$NOCANCEL': return this.files.close(destination);
+   case '_read': case '_read$NOCANCEL': {
+    if (size > HEAP_SIZE) throw new GuestFileError(22, 'Guest read exceeds memory limit');
+    const bytes = this.files.read(destination, size); if (bytes.length) memory(() => this.write(source, bytes)); return bytes.length;
+   }
+   case '_write': case '_write$NOCANCEL': {
+    if (size > HEAP_SIZE) throw new GuestFileError(22, 'Guest write exceeds memory limit');
+    return this.files.write(destination, size ? memory(() => this.read(source, size)) : new Uint8Array());
+   }
+   case '_lseek': return this.files.seek(destination, BigInt.asIntN(64, this.argument64(1)), size);
+   case '_fcntl': return this.files.control(destination, source, size);
+   case '_dup': return this.files.duplicate(destination);
+  }
+ }
  call(address, args = [], { instructionBudget = 2000000, milliseconds = 2000 } = {}) {
   if (!this.engine) throw new NativeExecutionError('Guest is closed');
   if (this.poisoned) throw new NativeExecutionError('The emulator faulted; start a fresh worker');
@@ -305,6 +389,6 @@ export class NativeVst3Guest {
   return { vendor: this.string(info, 64), url: this.string(info + 64, 256), email: this.string(info + 320, 128), classes };
  }
  report() {
-  return { architecture: 'x86_64', libraries: this.image.libraries, imports: this.imports.size, initializerCount: this.image.initializers.reduce((sum, section) => sum + section.size / 8, 0), initializersCompleted: this.initializersCompleted, initialized: this.initialized, playable: false, calls: Object.fromEntries(this.calls) };
+  return { architecture: 'x86_64', libraries: this.image.libraries, imports: this.imports.size, initializerCount: this.image.initializers.reduce((sum, section) => sum + section.size / 8, 0), initializersCompleted: this.initializersCompleted, initialized: this.initialized, playable: false, calls: Object.fromEntries(this.calls), files: this.files.report() };
  }
 }

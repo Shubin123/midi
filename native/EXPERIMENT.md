@@ -67,13 +67,17 @@ In **Chrome**, with the package selected directly from disk:
 4. The patched emulator passes the previous Wasm memory-out-of-bounds crash.
    Integer scanning now parses the actual formatted class IDs. Initialization
    executes 22 `sprintf`, two `strcpy`, 20 `strcat`, and two `sscanf` calls.
-5. Four mutexes are initialized; 109 lock/unlock pairs execute using tracked
+5. Five mutexes are initialized; 109 lock/unlock pairs execute using tracked
    single-threaded ownership/depth, not unconditional-success stubs. Floating
    imports execute 378 `exp2`, 8,237 `pow`, and 15 `tan` calls through the SSE ABI.
-6. **73 of 768 initializers complete.** Startup then stops explicitly at
-   `_getrlimit`. The observed request is resource 8, Darwin `RLIMIT_NOFILE`.
-   A guest file-descriptor/resource environment is not implemented; the runtime
-   does not fabricate the host machine's limits. This remains a startup failure,
+6. Nine `getrlimit`/`setrlimit` attempts run against an actual bounded guest
+   descriptor table. The final descriptor limits remain 256/256; requests to
+   raise the guest's hard limit fail with errno rather than claiming success.
+   Mach timebase/absolute-time and wall-clock queries execute, as does the
+   imported `NSObject` class-identity query.
+7. **77 of 768 initializers complete.** Startup then stops explicitly at
+   `_objc_allocateClassPair`. Dynamic Objective-C classes, their methods and
+   Foundation behavior are not implemented. This remains a startup failure,
    not a playable conversion.
 
 The old published engine faulted at last CPU entry `0x100412c3`. Source
@@ -124,6 +128,27 @@ No licensing checks are patched or suppressed.
   arguments in XMM0/XMM1 and results in XMM0. They provide numerical values, not
   a complete macOS libm floating-exception/errno environment. Single-precision
   and vector math entrypoints remain unsupported.
+- The guest has a 256-slot descriptor table with real soft/hard limit
+  enforcement, independent descriptor flags, shared open-file offsets on dup,
+  64-bit seeking, close/read/write and a small fcntl subset. `RLIMIT_NOFILE`
+  reads and changes this table's limits, never the host machine's limits.
+  Errors return -1 and store Darwin errno values in stable guest-local storage;
+  invalid guest buffers return EFAULT. Other resource categories and unsupported
+  fcntl commands stop explicitly.
+- `NativeVst3Guest` accepts an optional `files` map of read-only byte resources
+  (64 MiB total, at most 4,096 files) for the virtual filesystem. Relative paths start at `/plugin`;
+  no path accesses the real host filesystem. The current file-picker worker
+  does **not** yet mount package resources or external sample/license files.
+  Its filesystem starts empty. Empty stdin and bounded 64 KiB stdout/stderr
+  buffers are modeled; output and descriptor limits are included in reports.
+- Mach absolute-time ticks derive from the browser monotonic clock, with an
+  internally consistent 1/1 nanosecond timebase and nondecreasing results.
+  This conversion does not improve the browser clock's actual resolution.
+  `gettimeofday` uses wall time and the Darwin 64-bit timeval field layout;
+  legacy timezone output remains unsupported.
+- The Objective-C bridge currently handles only `NSObject`'s class-identity
+  query (and that query on nil). Unknown messages fail with receiver/selector
+  details. It is not a functioning Objective-C or Foundation runtime.
 - CPU instruction allowances and per-call elapsed-time checks are backed by
   a separate page-side worker watchdog (30 seconds by default). The watchdog
   can terminate a wedged Wasm emulator; it does not rely on guest cooperation.
@@ -136,6 +161,7 @@ No licensing checks are patched or suppressed.
 node tests/native-vst3.mjs
 node tests/native-vst3-scanf.mjs
 node tests/native-vst3-mutex.mjs
+node tests/native-vst3-files.mjs
 node tests/native-vst3-browser.mjs
 ARCADE_PKG='/absolute/path/to/Arcade_OSX_Install_2.2.0.R18263.pkg' node tests/native-vst3-browser.mjs
 npm test
@@ -149,6 +175,10 @@ package truncation, worker cancellation, watchdog expiry, and recovery with
 a fresh worker. Scanning tests verify 64-bit and narrow stores, canary bytes,
 stack arguments, mismatch/EOF returns, and explicit unsupported formats. Mutex
 tests verify lifecycle errors, static initialization and recursive depth. Browser
-fixtures execute scanning and static-mutex imports from native initializers.
+fixtures execute scanning, static-mutex and descriptor-limit imports from native
+initializers. File tests fill all 256 descriptor slots and check actual limit
+enforcement, lowering limits with live descriptors, shared offsets, readonly
+resources, 64-bit seeks, errno and short/full diagnostic writes. Clock tests
+verify timebase fields, monotonic samples, negative wall timestamps and padding.
 The optional Arcade test separately verifies factory-only
 execution and the **known startup failure**, not audio playback.

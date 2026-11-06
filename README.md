@@ -1570,8 +1570,9 @@ The synth's existing WebAssembly plugin/audio path is unchanged.
 `GetPluginFactory` and VST3 virtual methods and returns Output's two Arcade
 classes. It deliberately skips initialization, and both class IDs are zero.
 Normal startup passes the previous emulator crash, parses the class IDs, and
-executes mutex and math imports. It completes 73 of 768 initializers, then stops
-at unsupported `_getrlimit`. **Arcade does not play audio.**
+executes mutex, math, guest resource-limit and clock imports. It completes 77
+of 768 initializers, then stops at unsupported `_objc_allocateClassPair`.
+**Arcade does not play audio.**
 The report always says `playable: false`; passing the harness tests does not
 certify native plugin playback.
 
