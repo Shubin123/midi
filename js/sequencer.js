@@ -96,8 +96,22 @@ export function createSequencer() {
    const scroll=document.createElement('div');scroll.className='sequence-scroll';const points=document.createElement('div');points.className='automation-points';
    lane.points.forEach((value,i)=>{const col=document.createElement('label');col.className='automation-point';col.textContent=i+1;const slider=document.createElement('input');slider.type='range';slider.min=t.min;slider.max=t.max;slider.step=(t.max-t.min)>100?1:0.001;slider.value=value;slider.setAttribute('aria-label',`${t.label} step ${i+1}`);const number=document.createElement('input');number.type='number';number.min=t.min;number.max=t.max;number.step=slider.step;number.value=value;number.setAttribute('aria-label',`${t.label} step ${i+1} value`);const set=v=>{if(!Number.isFinite(v))return;lane.points[i]=Math.max(t.min,Math.min(t.max,v));slider.value=number.value=lane.points[i];persist();};slider.oninput=()=>set(Number(slider.value));number.onchange=()=>set(Number(number.value));col.append(slider,number);points.append(col);});scroll.append(points);box.append(scroll);host.append(box);
   });
- };renderLanes();
- automation.querySelector('#add-lane').onclick=()=>{const target=select.value;if(lanes.some(l=>l.target===target))return;const initial=target==='tempo'?window.synth.tempo:Number(document.getElementById(target).value);lanes.push({target,enabled:false,mode:'linear',points:Array(16).fill(initial)});if(running)snapshot[target]=initial;renderLanes();persist();};
+  refreshTargets();
+ };
+ // One lane per target: the menu offers the targets without a lane (used ones are marked and can't be picked),
+ // and says so when every target has one, so "+ Add lane" never does nothing.
+ const addButton=automation.querySelector('#add-lane');
+ const refreshTargets=()=>{
+  const used=new Set(lanes.map(l=>l.target));
+  [...select.options].forEach(o=>{o.disabled=used.has(o.value);o.textContent=targets[o.value].label+(o.disabled?' (has a lane)':'');});
+  if(select.selectedOptions[0]?.disabled)select.value=[...select.options].find(o=>!o.disabled)?.value??select.value;
+  const full=used.size===select.options.length;
+  addButton.disabled=full;addButton.textContent=full?'Every target has a lane':'+ Add lane';
+ };
+ renderLanes();
+ automation.querySelector('#add-lane').onclick=()=>{const target=select.value;if(lanes.some(l=>l.target===target))return;const initial=target==='tempo'?window.synth.tempo:Number(document.getElementById(target).value);lanes.push({target,enabled:false,mode:'linear',points:Array(16).fill(initial)});if(running)snapshot[target]=initial;renderLanes();persist();
+  // Show the new lane: it may be below the fold.
+  const added=automation.querySelectorAll('.automation-lane')[lanes.length-1];added?.scrollIntoView({block:'nearest',behavior:'smooth'});added?.classList.add('just-added');setTimeout(()=>added?.classList.remove('just-added'),1600);};
  const position=sequence.querySelector('#seq-position'),play=sequence.querySelector('#seq-play'),bpm=sequence.querySelector('#seq-bpm');
  bpm.onchange=()=>{const v=Math.max(30,Math.min(300,Number(bpm.value)||120));bpm.value=v;window.synth.tempo=v;if(running)snapshot.tempo=v;};
  const tick=()=>{

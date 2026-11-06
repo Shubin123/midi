@@ -1,11 +1,26 @@
-// Talk mode for the teacher: listen with the browser's speech recognition and read replies aloud with its
-// speech synthesis (the Web Speech API). Listening pauses while the teacher speaks, so it doesn't hear itself.
-// Recognition runs on the device where the browser offers that; otherwise the browser's own speech service
-// does it (online, in Chrome), and the panel says which. Voices that run locally are preferred for speaking.
+// Talk mode for the teacher: listen with the browser's speech recognition and read replies aloud, either with
+// the browser's speech synthesis (the Web Speech API) or a neural voice that runs in the page: Pocket TTS,
+// Supertonic or Piper (js/tts-*.js, each downloaded once when first chosen). Listening pauses while the
+// teacher speaks, so it doesn't hear itself. Recognition runs on the device where the browser offers that;
+// otherwise the browser's own speech service does it (online, in Chrome), and the panel says which.
 
 const Recognition = () => globalThis.SpeechRecognition || globalThis.webkitSpeechRecognition;
 export const canListen = () => !!Recognition();
-export const canSpeak = () => typeof speechSynthesis !== 'undefined' && typeof SpeechSynthesisUtterance !== 'undefined';
+const browserSpeaks = () => typeof speechSynthesis !== 'undefined' && typeof SpeechSynthesisUtterance !== 'undefined';
+export const canSpeak = () => browserSpeaks() || typeof AudioContext !== 'undefined';
+
+// The voices on offer. Each neural engine module exports ENGINE ({ name, about, license, voices, defaultVoice }),
+// load(voiceId, onProgress) and synthesize(text, voiceId) → { samples, sampleRate }.
+export const ENGINES = { pocket: './tts-pocket.js', supertonic: './tts-supertonic.js', piper: './tts-piper.js' };
+const modules = {};
+export const loadEngine = id => (modules[id] ||= import(ENGINES[id]).catch(err => { delete modules[id]; throw err; }));
+// A choice is { engine, voice }; engine 'browser' is the Web Speech voice.
+export const BROWSER = { engine: 'browser', voice: '' };
+
+// Reading one sentence at a time lets the first be heard while the rest are made; a short pause between
+// sentences sounds natural (the engines leave none at the edges).
+const SENTENCE_GAP = 0.25;
+export const sentences = text => String(text).match(/[^.!?]+[.!?]+["')\]]*|[^.!?]+$/g)?.map(s => s.trim()).filter(Boolean) || [];
 
 const NUMBER = { 6: 'six', 7: 'seven', 9: 'nine', 11: 'eleven', 13: 'thirteen' };
 const QUALITY = { maj: 'major', M: 'major', min: 'minor', m: 'minor', dim: 'diminished', aug: 'augmented', sus: 'suspended', add: 'add' };
@@ -42,7 +57,11 @@ export class Voice {
  constructor({ onHeard, onInterim, onState, lang = (globalThis.navigator?.language || 'en-US') } = {}) {
   this.onHeard = onHeard; this.onInterim = onInterim; this.onState = onState; this.lang = lang;
   this.active = false; this.speaking = false; this.rec = null; this.local = false;
+  this.choice = BROWSER; this.onProgress = null; this._token = null; this._sources = [];
  }
+
+ // Which voice reads replies. A neural voice that fails to load falls back to the browser's, once.
+ setVoice(choice) { this.choice = choice?.engine ? choice : BROWSER; }
 
  get listens() { return canListen(); }
 
@@ -95,7 +114,9 @@ export class Voice {
  // Reads text aloud, pausing recognition meanwhile. Resolves when it finishes or is cancelled.
  speak(text) {
   const words = sayable(text);
-  if (!canSpeak() || !words) return Promise.resolve();
+  if (!words) return Promise.resolve();
+  if (this.choice.engine !== 'browser') return this._speakNeural(words).catch(err => { this.onState?.('voice-error', err.message); this.choice = BROWSER; return this.speak(text); });
+  if (!browserSpeaks()) return Promise.resolve();
   return new Promise(resolve => {
    const u = new SpeechSynthesisUtterance(words);
    u.lang = this.lang;
@@ -116,10 +137,40 @@ export class Voice {
   });
  }
 
+ // A neural voice: sentence by sentence, the next one made while the current one plays.
+ async _speakNeural(words) {
+  const { engine } = this.choice, mod = await loadEngine(engine), voice = this.choice.voice || mod.ENGINE.defaultVoice;
+  await mod.load(voice, p => this.onProgress?.(p));
+  const token = this._token = {}, ctx = this._ctx ||= new AudioContext();
+  await ctx.resume();
+  this.speaking = true;
+  try { this.rec?.abort(); } catch { /* not running */ }
+  this.onState?.('speaking');
+  const parts = sentences(words);
+  let at = ctx.currentTime + 0.05, next = parts.length ? mod.synthesize(parts[0], voice) : null;
+  for (let i = 0; i < parts.length; i++) {
+   const { samples, sampleRate } = await next;
+   if (this._token !== token) return;
+   next = i + 1 < parts.length ? mod.synthesize(parts[i + 1], voice) : null;
+   const buf = ctx.createBuffer(1, samples.length, sampleRate);
+   buf.copyToChannel(samples, 0);
+   const src = ctx.createBufferSource();
+   src.buffer = buf; src.connect(ctx.destination);
+   at = Math.max(at, ctx.currentTime); src.start(at); at += buf.duration + (i + 1 < parts.length ? SENTENCE_GAP : 0);
+   this._sources.push(src);
+  }
+  await new Promise(resolve => { const wait = () => (this._token !== token || ctx.currentTime >= at ? resolve() : setTimeout(wait, 100)); wait(); });
+  if (this._token !== token) return;
+  this._token = null; this._sources = []; this.speaking = false;
+  if (this.active) { this._listen(); this.onState?.('listening'); }
+ }
+
  // Stops reading aloud (the student started playing, or talk mode ended); listening resumes if still on.
  cancelSpeech() {
-  if (!canSpeak()) return;
-  const u = this._utterance, was = this.speaking;
+  const was = this.speaking;
+  this._token = null; this._sources.forEach(s => { try { s.stop(); } catch { /* already ended */ } }); this._sources = [];
+  if (!browserSpeaks()) { this.speaking = false; if (was && this.active) { this._listen(); this.onState?.('listening'); } return; }
+  const u = this._utterance;
   this._utterance = null; this.speaking = false;
   speechSynthesis.cancel();
   u?.onend?.(); // settles that reply's promise

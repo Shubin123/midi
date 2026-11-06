@@ -27,3 +27,41 @@ body{padding:24px}h1{font-size:1.5rem;letter-spacing:.3px;text-align:left;margin
 #workspace{--cols:4;grid-template-columns:repeat(var(--cols),minmax(0,1fr))}
 @media(max-width:1100px){#workspace{--cols:2}}
 @media(max-width:600px){#workspace{--cols:1}}
+
+/* Dragging a module: it lifts and follows the pointer; outlines mark the liftoff point and the landing spot. */
+.widget.dragging{opacity:.94;outline:2px solid var(--accent-color);position:relative;z-index:60;box-shadow:0 22px 48px #0008;cursor:grabbing}
+.widget.settling{transition:transform .2s ease}
+.drag-marker{position:absolute;z-index:40;box-sizing:border-box;border:2px dashed var(--text-muted-color);border-radius:12px;pointer-events:none;display:flex;justify-content:center;align-items:flex-start;font-size:11px;font-weight:600;letter-spacing:.03em;color:var(--text-color)}
+.drag-marker::before{content:attr(data-label);margin-top:-11px;padding:2px 8px;border-radius:10px;background:var(--secondary-surface-color);border:1px solid var(--border-color)}
+.drag-marker{font-size:0}.drag-marker::before{font-size:11px}
+.drag-marker.landing{border-color:var(--accent-color);border-style:solid;background:color-mix(in srgb,var(--accent-color) 12%,transparent)}
+.drag-marker.landing::before{background:var(--accent-color);color:var(--bg-color);border-color:var(--accent-color)}
+/* Titles stay on one line, however narrow the column: ⠿ Oscillator 2 × ↔ – 🎓 */
+.widget-header .drag-handle{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.widget-header button:not(.drag-handle){padding:5px 4px;flex:none}
+.widget-header{cursor:grab}
+.plugin-window.moving{box-shadow:0 22px 48px #0008}
+/* Falling notes land on the keys: the two sit flush as one panel, edges lined up. */
+#keyboard-module .synthesia-container.active{margin:12px 16px 0;border-bottom:0;border-radius:12px 12px 0 0;box-shadow:none}
+#keyboard-module .synthesia-container.active .synthesia-hit-line{bottom:0}
+#keyboard-module .synthesia-container.active+.keyboard{margin-top:0;padding-top:0;border-radius:0 0 12px 12px}
+#keyboard-module .keyboard{margin-bottom:16px}
+.drag-marker[hidden]{display:none}
+/* The keyboard's side padding, which black keys (positioned against the padding box) allow for. */
+.keyboard{--kb-pad:calc(10px * var(--font-scale-factor));padding-left:var(--kb-pad);padding-right:var(--kb-pad)}
+.automation-lane.just-added{animation:lane-added 1.6s ease}
+@keyframes lane-added{0%,40%{background:color-mix(in srgb,var(--accent-color) 18%,transparent)}100%{background:transparent}}
+#add-lane:disabled{opacity:.55;cursor:default}
+/* Resizing: a grip in the corner of every widget and plug-in window. A widget given a height scrolls inside,
+   with its title bar kept in view. (Workspace widgets only: plug-in windows, also .widget, are fixed.) */
+#workspace>.widget{position:relative}
+.plugin-window>.resize-grip{align-self:flex-end;flex:none}
+.resize-grip{position:sticky;bottom:0;float:right;clear:both;margin:-18px 0 0;width:18px;height:18px;cursor:nwse-resize;touch-action:none;z-index:5;opacity:.75;background:linear-gradient(135deg,transparent 0 45%,var(--text-muted-color) 45% 52%,transparent 52% 62%,var(--text-muted-color) 62% 69%,transparent 69% 79%,var(--text-muted-color) 79% 86%,transparent 86%)}
+.resize-grip:hover,.resize-grip:focus-visible,.resizing .resize-grip{opacity:1}
+.widget.minimized .resize-grip{display:none}
+.widget.sized{overflow:auto}
+.widget.sized>.widget-header{position:sticky;top:0;z-index:4;background:var(--primary-surface-color)}
+.widget.resizing{outline:2px dashed var(--accent-color);outline-offset:2px}
+.plugin-window{resize:none} /* the corner grip resizes it, and remembers the size */
+.widget.sized{display:flex;flex-direction:column} /* a widget given a height keeps its grip in the bottom corner */
+.widget.sized>.resize-grip{margin:auto 0 0;align-self:flex-end;flex:none;float:none}

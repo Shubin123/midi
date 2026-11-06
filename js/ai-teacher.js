@@ -4,6 +4,7 @@
 // arithmetic wrong far more often than names. The engine is injected (js/providers.js, js/local-model.js): any
 // object with `generate(messages, { think }) -> text` and an optional `interrupt()`.
 import { parseChordName, parseScaleName, midiFromName, chordMidi, scaleRunMidi } from './pitch-analyzer.js';
+import { exampleFromProse } from './requests.js';
 
 const MAX_HISTORY = 30; // messages, dropped oldest-first in user/assistant pairs
 const MAX_NOTES = 40;
@@ -19,7 +20,9 @@ To play an example, add one last line of JSON naming exactly what your reply is 
 {"chords": ["<chord symbol>", "<chord symbol>"]} plays chords in order, one per beat
 {"scale": "<tonic> <scale or mode>"} plays a scale up and back down
 {"notes": ["<note name and octave>"]} plays single notes in order (C4 is middle C; the student's 25 keys run from C3 to C5)
-Leave the line out if there is nothing worth playing.`;
+Leave the line out if there is nothing worth playing.
+
+The app is also a synth workspace with widgets (oscillators, envelope, filter, step sequencer, loop recorder, automation, plug-ins, import and export). When the student asks about one, a [WORKSPACE] block lists the widgets and the current settings of the relevant ones; teach from those real names and values. In the same JSON line you can add "show" to point at a control, e.g. {"show": "Filter › Cutoff (Hz)"}, and, only when the student asks you to change something, "set" with the new value, e.g. {"set": {"Filter › Cutoff (Hz)": 800}}. Never claim to press buttons; tell the student which one to press.`;
 
 // Reasoning models write their thinking inline; only the answer after it is shown. A reply that is still
 // inside an unfinished <think> block (it ran out of room) has no answer yet.
@@ -30,7 +33,7 @@ export function stripThinking(text) {
  return s.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 }
 
-const KEYS = ['chords', 'scale', 'notes', 'play'];
+const KEYS = ['chords', 'scale', 'notes', 'play', 'show', 'set'];
 // The last balanced {...} in the reply that parses as JSON and names something to play.
 function findExample(reply) {
  for (let start = reply.lastIndexOf('{'); start >= 0; start = reply.lastIndexOf('{', start - 1)) {
@@ -48,19 +51,50 @@ function findExample(reply) {
    if (obj && typeof obj === 'object' && !Array.isArray(obj) && KEYS.some(k => k in obj)) return { obj, start, end };
   } catch { /* not this one */ }
  }
- return null;
+ return repaired(reply);
 }
+
+// Models often get the line nearly right: curly or single quotes, a trailing comma, a missing closing bracket
+// (it ran out of room). The last object that starts with one of our keys is mended and read.
+const OPENS = new RegExp(`\\{\\s*["“'](${KEYS.join('|')})["”']\\s*:`, 'g');
+function repaired(reply) {
+ const starts = [...reply.matchAll(OPENS)];
+ if (!starts.length) return null;
+ const start = starts.at(-1).index;
+ let text = reply.slice(start).split('\n')[0].replace(/[“”]/g, '"').replace(/'/g, '"').replace(/,\s*([}\]])/g, '$1');
+ const stack = [];
+ let inStr = false, esc = false, end = text.length;
+ for (let i = 0; i < text.length; i++) {
+  const c = text[i];
+  if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
+  if (c === '"') inStr = true;
+  else if (c === '{' || c === '[') stack.push(c === '{' ? '}' : ']');
+  else if (c === '}' || c === ']') { stack.pop(); if (!stack.length) { end = i + 1; break; } }
+ }
+ const closed = text.slice(0, end).replace(/,\s*$/, '') + (inStr ? '"' : '') + [...stack].reverse().join('');
+ try {
+  const obj = JSON.parse(closed);
+  return obj && typeof obj === 'object' && KEYS.some(k => k in obj) ? { obj, start, end: start + reply.slice(start).split('\n')[0].length } : null; // the rest of its line goes
+ } catch { return null; }
+}
+
+// Words that mean the reply suggests playing something.
+const SUGGESTS = /\b(play|try|listen|hear|here (is|are)|sounds? like)\b/i;
 
 const validNote = n => Number.isInteger(n) && n >= 0 && n <= 127;
 
 // Splits a reply into its text and an example: { steps: [[midi, ...], ...], bpm, label }. Chords play one per
 // beat, a scale up and back down, notes in order; names the app does not recognise are skipped, and the old
 // {"play": [60, [60, 64, 67]]} form of MIDI numbers still works. At most 40 notes, tempo held to 30-300 BPM.
+// "show" (a control or list of them) and "set" ({ control: value }) come back as `actions` when present.
 export function parsePlayCommand(raw) {
  const reply = stripThinking(raw);
  const found = findExample(reply);
  const clean = s => s.replace(/```(?:json)?/g, '').split('\n').filter(l => !/^\s*(\[PLAYED\]|Coach:)/.test(l)).join('\n').trim();
- if (!found) return { text: clean(reply), play: null };
+ if (!found) {
+  // No usable JSON line: the example is read from the reply's own words, if it suggests one.
+  return { text: clean(reply), play: SUGGESTS.test(reply) ? exampleFromProse(reply) : null };
+ }
  const { obj } = found, steps = [], labels = [];
  const add = step => { const total = steps.flat().length; if (step.length && total + step.length <= MAX_NOTES) steps.push(step); };
  const chordNames = (Array.isArray(obj.chords) ? obj.chords : []).filter(c => typeof c === 'string' && parseChordName(c));
@@ -74,7 +108,12 @@ export function parsePlayCommand(raw) {
  for (const item of Array.isArray(obj.play) ? obj.play : []) add((Array.isArray(item) ? item : [item]).filter(validNote));
  const bpm = Number.isFinite(obj.bpm) && obj.bpm > 0 ? Math.max(30, Math.min(300, obj.bpm)) : (chordNames.length ? 60 : 120);
  const text = clean(reply.slice(0, found.start) + reply.slice(found.end));
- return { text, play: steps.length ? { steps, bpm, label: labels.join(', ') || `${steps.flat().length} notes` } : null };
+ const show = (Array.isArray(obj.show) ? obj.show : [obj.show]).filter(x => typeof x === 'string' && x.trim()).slice(0, 4);
+ const set = obj.set && typeof obj.set === 'object' && !Array.isArray(obj.set) ? Object.entries(obj.set).filter(([k, v]) => k.trim() && ['string', 'number', 'boolean'].includes(typeof v)).slice(0, 6) : [];
+ const prose = !steps.length && !obj.show && !obj.set && SUGGESTS.test(text) ? exampleFromProse(text) : null;
+ const out = { text, play: steps.length ? { steps, bpm, label: labels.join(', ') || `${steps.flat().length} notes` } : prose };
+ if (show.length || set.length) out.actions = { show, set };
+ return out;
 }
 
 // The [PLAYED] summary the model reads, plus the System 1 coach's suggestion when there is one.
@@ -97,6 +136,8 @@ export class AiTeacher {
  setEngine(engine) { this.engine = engine; }
 
  // opts.think asks a reasoning model to think first (System 2); opts.coach adds the System 1 suggestion.
+ // opts.context is sent with this one message (the workspace as it is now) but not kept in the history.
+ // opts.quick is an answer the app already gave: the model replies only if it is wrong (else onConfirm()).
  analyzePhrase(a, opts = {}) { return this._send(phraseMessage(a, opts.coach), opts); }
  ask(q, opts = {}) { return this._send(q, opts); }
  reset() { this._generation++; this.conversationHistory = []; this.engine?.interrupt?.(); }
@@ -108,7 +149,7 @@ export class AiTeacher {
   return this._queue = this._queue.then(() => generation === this._generation ? this._request(msg, opts) : null);
  }
 
- async _request(msg, { think = false } = {}) {
+ async _request(msg, { think = false, context = '', quick = '', onConfirm = null } = {}) {
   if (!this.engine) { this.onError?.('Set up a model in Settings first.'); return null; }
   this.onStatus?.(think ? 'reasoning' : 'thinking');
   const history = this.conversationHistory, generation = this._generation, started = performance.now();
@@ -116,7 +157,10 @@ export class AiTeacher {
   history.push({ role: 'user', content: msg });
   let reply;
   try {
-   const raw = await this.engine.generate([{ role: 'system', content: SYSTEM_PROMPT }, ...history], { think });
+   // Supervising: the app already gave a quick answer (System 1); the model confirms it or answers itself.
+   const asked = quick ? `${msg}\n\n(The app's quick answer was: "${quick}". If that answers the question correctly, reply with just OK. Otherwise answer the question yourself.)` : msg;
+   const turn = context || quick ? [...history.slice(0, -1), { role: 'user', content: context ? `${context}\n\n${asked}` : asked }] : history;
+   const raw = await this.engine.generate([{ role: 'system', content: SYSTEM_PROMPT }, ...turn], { think });
    if (generation !== this._generation) { history.pop(); return null; } // reset() while generating: discard
    reply = stripThinking(raw);
    if (!reply) throw new Error(/<think>/.test(raw) ? 'The model ran out of room while thinking. Try again, or switch to Fast.' : 'The model returned nothing. Try again, or pick another model.');
@@ -127,11 +171,16 @@ export class AiTeacher {
    if (err.name !== 'AbortError' && generation === this._generation) this.onError?.(err.message || 'The model failed to answer.');
    return null;
   }
+  if (quick && /^\W*(ok|yes|correct)\b/i.test(reply) && reply.length < 60) {
+   history.push({ role: 'assistant', content: quick });
+   this.onStatus?.('ready'); onConfirm?.();
+   return { confirmed: true };
+  }
   history.push({ role: 'assistant', content: reply });
   this.onStatus?.('ready');
-  const { text, play } = parsePlayCommand(reply);
+  const { text, play, actions = null } = parsePlayCommand(reply);
   const seconds = (performance.now() - started) / 1000;
-  this.onResponse?.(text, play, { think, seconds });
-  return { text, playCmd: play, seconds };
+  this.onResponse?.(text, play, { think, seconds, actions });
+  return { text, playCmd: play, seconds, actions };
  }
 }

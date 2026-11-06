@@ -9,7 +9,10 @@ import { getCookie, setCookie, deleteCookie } from './ai-auth.js';
 // `cost` are the plain-language summary shown in the list. `defaultModel` and `prefer` pick a model once the
 // provider's live model list is known; `models` are fallbacks until then.
 export const PROVIDERS = [
- { id: 'local', name: 'On your device', auth: 'local', how: 'No sign-in', where: 'Laya (fast) and Qwen (thinking) run in this browser', cost: 'Free' },
+ // On this device: Laya alone (System 1) coaches your playing and teaches the widgets and plug-ins by choosing
+ // from written guides; with Qwen (System 2) it also explains in its own words and answers anything.
+ { id: 'laya', name: 'System 1: Laya', auth: 'local', how: 'No sign-in · 291 MB', where: 'A fast decision model in this browser: coaches each phrase and teaches the widgets and plug-ins', cost: 'Free' },
+ { id: 'local', name: 'System 1 + 2: Laya and Qwen', auth: 'local', how: 'No sign-in · WebGPU', where: 'Laya (fast) and Qwen (thinking) run in this browser', cost: 'Free' },
  {
   id: 'openrouter', name: 'OpenRouter', auth: 'openrouter', how: 'Sign in, or an OpenRouter key', where: 'openrouter.ai, which forwards to many model makers', cost: 'Free models; others paid',
   base: 'https://openrouter.ai/api/v1', keyUrl: 'https://openrouter.ai/keys', keyHint: 'sk-or-…', defaultModel: 'google/gemma-4-31b-it:free',
@@ -44,7 +47,7 @@ export const PROVIDERS = [
 
 // The list's sections, in order, keyed by `auth`.
 export const GROUPS = [
- { auth: 'local', title: 'No sign-in' },
+ { auth: 'local', title: 'On this device, no sign-in' },
  { auth: 'openrouter', title: 'Sign in' },
  { auth: 'key', title: 'Your own API key' },
  { auth: 'custom', title: 'Advanced' },

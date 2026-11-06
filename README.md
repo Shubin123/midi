@@ -102,6 +102,8 @@ stuck note leaves an oscillator droning.
 
 The workspace adds a 16-step polyphonic sequencer and automation lanes for tempo
 (30–300 BPM), filter cutoff, resonance, master volume, and oscillator detune.
+Each target has one lane: the target menu offers the ones without a lane yet
+(those with one are marked), and **+ Add lane** says when every target has one.
 Enable each lane to hear it; choose linear interpolation or held step values.
 Use Ramp up and Flatten to edit a whole lane, or adjust individual step values.
 Tempo automation changes sequencer speed as it plays. Stop restores manual values.
@@ -118,8 +120,23 @@ Playback stops when the page is hidden to avoid delayed notes on returning.
 The original loop recorder still uses recorded event durations; tempo automation
 does not time-stretch those recordings.
 
-Drag a module by its header with a mouse or finger. Focus its header and use
-arrow keys to reorder with the keyboard. The **–** button (or a double-click on
+Drag a module by its header with a mouse or finger: it lifts and follows the
+pointer, a dashed outline marks the liftoff point, and a highlighted outline
+shows where it will land as the other modules make room; Escape puts it back.
+Plug-in windows show their liftoff point the same way while they move.
+
+Every widget and plug-in window has a **resize grip** in its bottom-right corner.
+A widget's width snaps to whole columns (one to four) and its height is free: a
+widget made shorter than its content scrolls inside, keeping its title bar in
+view. Plug-in windows take any size from 260 × 160 up to the window, and stay
+clear of the AI teacher's panel when it is open. Double-click a grip to go back
+to the natural size; with a grip focused, the arrow keys resize (a column or
+40 px at a time, four times that with Shift). Sizes are saved with the layout,
+and **Reset layout** clears them. The AI teacher's panel is resized by dragging
+its left edge (300–720 px, kept; double-click resets). Every
+header has the same buttons in the same order: **×** hide, **↔** width, **–**
+minimise, then **🎓** (the teacher's guide to that widget). Focus a header and
+use arrow keys to reorder with the keyboard. The **–** button (or a double-click on
 the title) minimises a module to its title bar, one column wide; **+** expands
 it. The width button toggles a wide module. Modules are packed like a masonry
 wall: in order, each goes to the column that currently ends highest, so short
@@ -230,9 +247,85 @@ shape, otherwise each chord or note on its own; a chord that still doesn't fit
 keeps its bass at the bottom (G7/B plays as B D F G). Whatever octave a model
 names, or a slash chord's bass below C3, the example stays on your keys.
 
+### System 1 first, System 2 as fallback
+
+Laya (System 1) answers in a third of a second and is never wrong about the app,
+because it only chooses among things written in advance; a language model
+(System 2) can say anything, but takes 7–11 s on the device and sometimes says
+it wrong. So the teacher uses System 1 wherever it can:
+
+- **Requests to play something** (`js/requests.js`) are met without a model:
+  the key ("a g# lick", "in D minor"), chord names, Roman numerals ("ii–V–I",
+  "i–♭VII–♭VI–V"), scales, mood (sad, bluesy, jazzy, epic…) and texture ("only
+  chords", "a lick") are read from the words and the example is built exactly,
+  as the lessons' are, and plays at once. "Again", "longer", "shorter",
+  "faster", "slower", "higher" and "lower" change the last example. Laya picks
+  a progression only when the words leave it open ("something dreamy").
+- **Questions about the app and its plug-ins** go to Laya, which finds the
+  widget and the step of its guide that answers them (words in common narrow
+  the choice first, so plain questions need no model at all), lights up the
+  control, and offers **Ask Qwen** (or the connected provider) for more.
+- **Plug-ins are learned as they load** (`js/plugin-profile.js`): what kind of
+  plug-in it is and what each control does, read from the control names, with
+  Laya settling in one call (about 0.5 s) what the names don't say. The result
+  is remembered per plug-in and becomes its guide, its **Next tip**s, and what
+  System 2 is told about it.
+- **System 2** composes what System 1 can't, answers anything else, and in
+  **Slow** mode checks Laya's answers (it replies only to correct one) and
+  explains the examples System 1 played.
+
+This split comes from testing both on the same requests in Chrome, with Laya
+and Qwen 3.5 4B (fast) running on an M-series GPU:
+
+| Requests | Laya alone | Qwen 3.5 4B |
+| --- | --- | --- |
+| Questions about widgets, plug-ins and theory (11) | 10 right in each of two runs, 1–481 ms | 8 and 10 right, 5–10 s; asked to check Laya's answer, it confirmed it once in 22 tries, and in one run "corrected" three right answers into wrong ones |
+| Composing ("only play chords play a g# lick", "the same but longer", "a sad progression in D minor", "a ii–V–I in C") | none (it can't compose) | 1 of 4 with a playable, correct example, in both runs |
+| The same four through `js/requests.js` | 4 of 4, at once | |
+
+Laya's one miss ("how do I get my pattern into my DAW?" went to the sequencer)
+was fixed afterwards in the guide's words.
+
+Models sometimes leave out the line that names what to play, or get it nearly
+right. The teacher mends near-misses (curly or single quotes, a trailing comma,
+a line cut off) and, when there is no usable line but the reply suggests
+playing something, reads the example from the reply's own words: chord symbols
+in a row, notes spelled out ("D-F-A"), or a scale by name. Controls named in a
+"show" that don't exist fall back to their widget.
+
+### The teacher and the workspace
+
+The teacher can see and use every widget and plug-in window (`js/workspace.js`):
+it reads them from the page, so a new widget or a plug-in loaded later is
+covered without being registered anywhere. Each widget's **🎓** button opens its
+guide (`js/workspace-guide.js`): what it is for, and how to use it step by step,
+each step with a **Show** button that brings the control into view (unhiding,
+expanding or opening its window) and makes it pulse. When a question is about
+the app, the model is sent a **[WORKSPACE]** summary: every widget in a line,
+and the controls of the ones the question is about, with their current values
+and ranges. Its reply can point at a control (`{"show": "Filter › Cutoff
+(Hz)"}`) and, when the student asks for a change, set one (`{"set": {"Filter ›
+Cutoff (Hz)": 800}}`); every change is listed with an **Undo**. Buttons are
+never pressed for the student, and nothing outside the widgets can be changed.
+
+### Conversations are kept
+
+The conversation (messages, coaching steps, lessons, guides, changes, and the
+model's own memory of it) is saved in the browser (`js/conversations.js`), so a
+reload carries on where you were, an open lesson included. **New** starts a
+fresh conversation and keeps the last one in **History**, from which it can be
+reopened and continued; the latest 12 are kept. The Provider tab's **Saved in
+this browser** section clears saved conversations, and deletes the downloaded
+models (Laya, Qwen and the neural voices), which download again when next
+loaded.
+
 ### Course: lessons from Open Music Theory
 
-The **Course** tab teaches 24 short lessons adapted from
+The **Course** tab starts with 14 lessons on **using the workspace** (widgets,
+oscillators, the envelope, the filter, tempo, the sequencer, the loop recorder,
+automation, effect and instrument plug-ins, Air, the oscilloscope and export),
+each checked from the workspace itself as you work: a slider moved below a
+value, a plug-in loaded, a loop recorded. Then come 24 short lessons adapted from
 [Open Music Theory](https://openmusictheory.github.io) (`js/lessons.js`), in
 three units: **Fundamentals** (the keyboard, enharmonic names, half steps, the
 major and minor scales, scale degrees, key signatures, relative keys,
@@ -265,9 +358,28 @@ and playing a note interrupts it, since that is your turn. Chord symbols are
 spoken as words ("D minor seven, then G seven"). Recognition runs on the device
 where the browser offers that (newer Chrome installs an on-device speech pack
 the first time); otherwise the browser's own speech service does it, which in
-Chrome is online, and the panel says which. Voices that run on the device are
-preferred for speaking. Firefox has no speech recognition, so there talk mode
-only reads replies aloud.
+Chrome is online, and the panel says which. Firefox has no speech recognition,
+so there talk mode only reads replies aloud.
+
+**The teacher's voice** is chosen in the Provider tab, with a **Test voice**
+button. Besides the browser's own voice, three neural voice engines run in the
+page, each downloaded once when first used and kept in the browser
+(`js/tts-*.js`); replies are read a sentence at a time, the next one made while
+the current one plays, so speech starts quickly:
+
+| Engine | Voices | Download | Speed here (M4, Chrome) | Licences |
+| --- | --- | --- | --- | --- |
+| **Pocket TTS** (Kyutai, via [pocket-tts-js](https://github.com/vlapky/pocket-tts-js)) | 21 English: 10 female, 11 male | about 134 MB | 1.6–2× faster than real time, one CPU thread | code MIT; weights © Kyutai, CC BY 4.0; voices CC BY 4.0 or CC0, two non-commercial (marked) |
+| **Supertonic 3** (Supertone) | 10: F1–F5, M1–M5 | about 400 MB | 15× real time on WebGPU; 2× on the CPU | sample code MIT; model OpenRAIL-M (use restrictions) |
+| **Piper** (Rhasspy) | 10 English: 6 female, 4 male | about 73 MB | about 7× real time on the CPU | MIT; espeak-ng GPL-3.0; each voice its data's licence (Cori and Kristin public domain; four marked non-commercial) |
+
+The default is **Pocket TTS · Anna**. Every engine's female voices were scored
+on the same three coaching lines with DNSMOS (Microsoft's speech-quality model):
+Anna tied for the top with Piper's Amy (3.44 overall), ahead of Supertonic's
+best (F1, 3.41) and Piper's Cori (3.37). Among the leaders Anna has a clear
+licence (Amy's is unstated), a moderate download, and runs on the CPU, leaving
+the GPU to Laya and Qwen. Supertonic is the fastest on a GPU; Piper the
+smallest. If a voice can't load, the browser's voice reads replies instead.
 
 ### The panel
 
@@ -289,7 +401,8 @@ how you sign in:
 
 | Group | Provider | Sign-in | Requests go to | Cost |
 | --- | --- | --- | --- | --- |
-| No sign-in | **On your device** | None | Nowhere: Laya (System 1, 291 MB, ONNX Runtime Web) and Qwen 3.5 4B or 2B (System 2, [WebLLM](https://github.com/mlc-ai/web-llm), `js/local-model.js`) run in the browser | Free; downloaded once, then cached; Qwen needs WebGPU (desktop Chrome or Edge), Laya also runs on the CPU |
+| On this device | **System 1: Laya** | None | Nowhere: Laya (291 MB, ONNX Runtime Web) runs in the browser. It coaches each phrase, answers questions about the widgets and plug-ins from their guides, learns plug-ins as they load, and gives tips; it chooses rather than writes, so it is fast and never wrong about the app. Once downloaded it loads by itself on later visits | Free; runs on the GPU or the CPU |
+| | **System 1 + 2: Laya and Qwen** | None | Nowhere: Laya and Qwen 3.5 4B or 2B (System 2, [WebLLM](https://github.com/mlc-ai/web-llm), `js/local-model.js`) run in the browser | Free; downloaded once, then cached; Qwen needs WebGPU (desktop Chrome or Edge) |
 | Sign in | **OpenRouter** | **Sign in with OpenRouter** (OAuth with PKCE, `js/ai-auth.js`), or a pasted OpenRouter key | `openrouter.ai`, which forwards to Google, Meta, OpenAI, Anthropic and others | Free models on a free account; others need credit |
 | Your own API key | **Groq** | Groq key | `api.groq.com` | Free tier |
 | | **Cerebras** | Cerebras key | `api.cerebras.ai` | Free tier |
@@ -506,6 +619,12 @@ Hugging Face pinned to a revision), ONNX Runtime Web (MIT),
 `@huggingface/tokenizers` (Apache-2.0), WebLLM (Apache-2.0), and Qwen 3.5 under
 its own model licence.
 
+The neural voices load at runtime and are not bundled: Pocket TTS model weights
+and voices © Kyutai (CC BY 4.0, some voices CC0, two marked non-commercial),
+run through pocket-tts-js (MIT); Supertonic 3 by Supertone (sample code MIT,
+weights OpenRAIL-M); Piper voices from rhasspy/piper-voices (MIT, each voice
+under its training data's licence) with espeak-ng (GPL-3.0) for phonemes.
+
 The course's lesson texts are adapted from *Open Music Theory* by Kris Shaffer,
 Bryn Hughes, Brian Moseley and contributors (Hybrid Pedagogy Publishing),
 licensed [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/); the
@@ -519,6 +638,8 @@ The service worker needs `https://` or `http://localhost`. Tests:
 - `node tests/sequencer.mjs`: sequencer scales and pattern transposition
 - `node tests/coach.mjs`: chord and scale names to notes, every coaching step in every key, and fitting examples onto 25 keys
 - `node tests/lessons.mjs`: every course lesson's task, played right and wrong
+- `node tests/workspace.mjs`: widget guides, workspace lessons, System 1's answers and tips, plug-in learning, System 2 supervising, saved conversations, clearing downloaded models
+- `node tests/requests.mjs`: requests to play something met by System 1, and System 2's examples read reliably
 - `node tests/voice.mjs`: how talk mode reads music notation aloud
 - `node tests/teacher.mjs`: the AI teacher's analysis and API requests
 - `node tests/native-id.mjs`: identification (macOS; uses `clang`, `pkgbuild` and `productbuild`)

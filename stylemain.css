@@ -783,3 +783,7 @@ canvas#visualizerCanvas {
                 50% { transform: scale(1.8, 1.5); opacity: 0.6; }
                 100% { transform: scale(2.5, 0.5); opacity: 0; }
             }
+/* Piano-roll lanes over the keys: a faint line at each white key's edge, black-key lanes shaded. */
+.synthesia-grid-line.lane{top:0;height:100%;background:none;box-sizing:border-box;border-left:1px solid color-mix(in srgb,var(--border-color) 30%,transparent)}
+.synthesia-grid-line.lane.black{border:0;z-index:1;background:color-mix(in srgb,var(--primary-surface-color) 55%,#000)}
+.falling-note{z-index:2} /* above the piano-roll lanes, even when they are redrawn mid-fall */

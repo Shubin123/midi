@@ -86,4 +86,20 @@ export class LayaCoach {
   const { move, explain, level } = res.answers;
   return { move: options.includes(move.choice) ? move.choice : fallbackMove(history, analysis), confidence: move.confidence, explain: explain.noul, level: level.score, ms: Math.round(res.latency_ms), laya: res };
  }
+
+ // Any set of questions about one situation, answered in a single pass: { answers, ms }. Used to learn what
+ // a plug-in does (js/plugin-profile.js).
+ async ask(situation, questions) {
+  const res = await this.laya.systemOne(situation, questions);
+  return { answers: res.answers, ms: Math.round(res.latency_ms) };
+ }
+ // One multiple-choice decision: `options` maps ids to plain-English descriptions. Returns { choice,
+ // confidence, ms }; the choice is always one of the ids. Used to teach the workspace (js/system-one.js).
+ async pick(situation, instructions, options) {
+  const ids = Object.keys(options);
+  if (ids.length < 2) return { choice: ids[0], confidence: 1, ms: 0 }; // nothing to choose (and the model needs two)
+  const { answers, ms } = await this.ask(situation, { pick: { type: 'choice', instructions, criteria: options } });
+  const { choice, confidence } = answers.pick;
+  return { choice: choice in options ? choice : Object.keys(options)[0], confidence, ms };
+ }
 }

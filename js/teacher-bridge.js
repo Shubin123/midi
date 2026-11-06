@@ -8,7 +8,10 @@
 // step; Slow mode also has the System 2 model think each phrase through. Suggested notes and chords play
 // through the synth and light up the keyboard. The Talk button turns on voice: speak a question and hear the
 // teacher answer (js/voice.js). The Course tab teaches lessons adapted from Open Music Theory (js/lessons.js):
-// each one explains an idea, plays an example and checks a task from what you play. The panel only needs the synth's `synth:note`
+// each one explains an idea, plays an example and checks a task from what you play, and a first unit teaches
+// the workspace itself. Every widget and plug-in window gets a 🎓 button that opens its guide, and the model
+// sees the widgets and their settings (js/workspace.js) so it can point at controls and change them when
+// asked. Conversations are kept in the browser (js/conversations.js). The panel only needs the synth's `synth:note`
 // events and `window.synth`, so loading this module is the whole integration.
 import { PhraseTracker, NOTE_NAMES, detectChord, pitchClassName, fitToKeys, followKeys, KEYS_LOW } from './pitch-analyzer.js';
 import { AiTeacher } from './ai-teacher.js';
@@ -16,8 +19,15 @@ import { el } from './plugin-ui.js';
 import { LocalEngine, MODELS as LOCAL_MODELS, DEFAULT_MODEL as LOCAL_DEFAULT, webgpuAvailable } from './local-model.js';
 import { LayaCoach, LAYA_MB } from './laya.js';
 import { buildMove, describePlayed } from './coach.js';
-import { LESSONS, UNITS, OMT, Attempt, nextLesson, explainPrompt } from './lessons.js';
-import { Voice, canListen, canSpeak } from './voice.js';
+import { LESSONS, UNITS, OMT, Attempt, explainPrompt } from './lessons.js';
+import { WORKSPACE_UNIT, WORKSPACE_LESSONS, guideFor, KEYWORDS, profiles } from './workspace-guide.js';
+import { learnPlugin, cachedProfile, keepProfile, summarize, KINDS } from './plugin-profile.js';
+import * as ws from './workspace.js';
+import { Conversations, describeConversation } from './conversations.js';
+import { modelCacheInfo, clearModelCache, formatBytes } from './model-cache.js';
+import { answer as systemOneAnswer, nextTip, isSoundControl } from './system-one.js';
+import { meetRequest } from './requests.js';
+import { Voice, canListen, canSpeak, ENGINES as VOICE_ENGINES, loadEngine, BROWSER } from './voice.js';
 import { PROVIDERS, GROUPS, providerById, getProviderId, setProviderId, getKey, setKey, clearKey, getModelFor, setModelFor, getBase, setBase, engineFor, listModels, pickModel, fetchOpenRouterModels } from './providers.js';
 import { signIn, completeSignIn } from './ai-auth.js';
 import { read, save } from './storage.js';
@@ -27,11 +37,30 @@ const PLAYED = /^(midi|computer|mouse|touch)/;
 const toNote = midi => NOTE_NAMES[midi % 12] + Math.floor(midi / 12); // the synth calls MIDI 60 "C5"
 const MAX_MESSAGES = 200;
 const host = url => url.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+// The course: the workspace first, then music theory from Open Music Theory.
+const COURSE = [...WORKSPACE_LESSONS, ...LESSONS], COURSE_UNITS = [WORKSPACE_UNIT, ...UNITS];
+const courseLesson = id => COURSE.find(l => l.id === id) || null;
+const nextInCourse = id => COURSE[COURSE.findIndex(l => l.id === id) + 1] || null;
+const isWorkspace = l => l?.unit === WORKSPACE_UNIT;
+// A phrase analysis cut down to what phraseMessage() reads, for keeping in a saved conversation.
+const compact = a => ({ noteOns: a.noteOns.slice(0, 48).map(n => ({ note: n.note })), noteCount: a.noteCount, durationMs: a.durationMs, pitchClasses: a.pitchClasses, scales: a.scales.slice(0, 1).map(({ tonicName, scaleName, score }) => ({ tonicName, scaleName, score })), chords: a.chords.map(c => ({ best: { chordName: c.best.chordName } })) });
+// Questions that are about the app rather than the music get the workspace described to the model.
+const ABOUT_APP = /widget|plug-?in|effect|knob|slider|button|setting|sound|patch|how do i|where (is|do)|what does|turn (on|off)|change|set /i;
+// The voice talk mode starts with: the best female voice of the three engines. Scored on the same coaching
+// lines with DNSMOS, Pocket TTS's Anna tied for the top (3.44, with Piper's Amy; Supertonic's F1 3.41), and
+// she is CC BY 4.0, a 134 MB download, and runs on one CPU thread, leaving the GPU to Laya and Qwen.
+const DEFAULT_VOICE = { engine: 'pocket', voice: 'anna' };
+// Requests System 1 can't meet, since it only chooses from what is written: composing or playing something
+// particular, or changing the last example. With System 2 connected these go straight to it.
+const COMPOSE = /\b(play|make|write|compose|improvise|give me|create|show me)\b[^.?!]*\b(lick|riff|melody|progression|chords?|song|tune|groove|bass ?line|arpeggio|scale|example|it|that|this|something)\b|\b(longer|shorter|faster|slower|again|same|another|instead|variation)\b/i;
+
 
 const STYLE = `
 :root{--teacher-width:min(360px,100vw)}
 #teacher-panel{position:fixed;right:0;top:0;bottom:0;width:var(--teacher-width);box-sizing:border-box;display:flex;flex-direction:column;z-index:10000;background:var(--primary-surface-color);color:var(--text-color);border-left:1px solid var(--border-color);box-shadow:-8px 0 30px #0005;font-size:13px;line-height:1.45;transition:transform .2s,visibility .2s}
 #teacher-panel.collapsed{transform:translateX(100%);visibility:hidden}
+#teacher-panel .tp-resize{position:absolute;left:-5px;top:0;bottom:0;width:10px;cursor:ew-resize;z-index:3;touch-action:none}
+#teacher-panel .tp-resize:hover,#teacher-panel .tp-resize:focus-visible,#teacher-panel .tp-resize.dragging{background:linear-gradient(to right,transparent 4px,var(--accent-color) 4px 6px,transparent 6px);outline:none}
 #teacher-panel *{box-sizing:border-box}
 #teacher-panel button{font:inherit;font-size:12px;border:1px solid var(--border-color);border-radius:6px;background:var(--secondary-surface-color);color:var(--text-color);padding:6px 10px;cursor:pointer}
 #teacher-panel button:disabled{opacity:.5;cursor:default}
@@ -112,6 +141,20 @@ const STYLE = `
 #teacher-panel .tp-lesson-n{flex:none;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;border:1px solid var(--border-color);color:var(--text-muted-color)}
 #teacher-panel .tp-lesson-item.done .tp-lesson-n{background:#6bcb77;border-color:#6bcb77;color:#0b1a10}
 #teacher-panel .tp-credit{margin:14px 0 0;font-size:11px;color:var(--text-muted-color)}
+#teacher-panel .teacher-msg.guide{border-left-color:#f4a261;white-space:normal}
+#teacher-panel .teacher-msg.guide strong{display:block;margin-bottom:4px;color:var(--text-color)}
+#teacher-panel .teacher-msg.guide p{margin:0 0 6px}
+#teacher-panel .tp-steps{margin:0 0 6px;padding-left:18px}
+#teacher-panel .tp-steps li{margin-bottom:4px}
+#teacher-panel .teacher-msg .tp-steps button{display:inline-block;margin:0 0 0 6px;padding:1px 7px;font-size:11px}
+#teacher-panel .teacher-msg.s1{border-left-color:#f4a261;white-space:normal}
+#teacher-panel .teacher-msg.change{font-size:12px;border-left-color:var(--accent-color);white-space:normal}
+#teacher-panel .tp-history{width:auto;max-width:150px;font-size:11px;padding:4px 6px}
+#teacher-panel .tp-storage{margin-top:16px;border-top:1px solid var(--border-color);padding-top:4px;display:flex;flex-direction:column;gap:6px}
+#teacher-panel .tp-storage .tp-row{justify-content:space-between}
+.widget-header .teach-btn{font-size:13px}
+.teach-highlight{outline:3px solid var(--accent-color)!important;outline-offset:3px;border-radius:6px;animation:teach-pulse 1s ease-in-out 3}
+@keyframes teach-pulse{50%{outline-color:transparent}}
 
 #teacher-panel .tp-provider-view{overflow-y:auto;padding:12px 14px 16px}
 #teacher-panel .tp-intro{margin:0 0 4px;font-size:12px;color:var(--text-muted-color)}
@@ -140,8 +183,10 @@ const STYLE = `
 #teacher-panel details[open] summary{margin-bottom:6px}
 #teacher-panel progress{width:100%;height:6px}
 
-.teacher-toggle{position:fixed;top:50%;right:min(var(--teacher-width),calc(100vw - 26px));transform:translateY(-50%);z-index:10001;width:26px;height:56px;padding:0;border:1px solid var(--border-color);border-right:0;border-radius:8px 0 0 8px;background:var(--primary-surface-color);color:var(--text-color);cursor:pointer;transition:right .2s}
-html:not(.teacher-open) .teacher-toggle{right:0}
+.teacher-toggle{position:fixed;top:50%;right:min(calc(var(--teacher-width) + 10px),calc(100vw - 36px));transform:translateY(-50%);z-index:10001;width:26px;height:56px;padding:0;border:1px solid var(--border-color);border-radius:8px;box-shadow:0 4px 14px #0005;background:var(--primary-surface-color);color:var(--text-color);cursor:pointer;transition:right .2s}
+html:not(.teacher-open) .teacher-toggle{right:10px} /* it floats clear of the edge, and of the panel when open */
+body{padding-right:56px} /* a gutter for the pull tab (10 px from the edge, 26 px wide, 20 px clear of the widgets) */
+@media(max-width:600px){body{padding-right:46px}}
 #keyboard .teacher-hint{box-shadow:inset 0 -14px 0 var(--accent-color)}
 @media(min-width:900px){
  html.teacher-open body{margin-right:var(--teacher-width)}
@@ -167,11 +212,17 @@ export class TeacherBridge {
   this.voice = null; this.talking = false;
   this.lesson = null; this.attempt = new Attempt(); // the course lesson in progress, and what was played for it
   this.courseDone = new Set(read('teacher-course-v1', []));
+  this.convo = new Conversations();
+  this.voiceChoice = read('teacher-voice-v1', DEFAULT_VOICE); // who reads replies aloud in talk mode
+  window.addEventListener('pagehide', () => this.convo.save(true));
  }
 
  hook() {
   this._createPanel(); this._listen(); this._setupCallbacks();
-  this._autoActivate();
+  this._autoActivate(); this._loadConversation();
+  // Laya, once chosen and downloaded, loads by itself on later visits: it is quick from the cache and is what
+  // coaches and teaches the widgets. Qwen is never loaded automatically (it needs gigabytes of GPU memory).
+  if (read('teacher-laya-auto-v1', false)) modelCacheInfo().then(i => { if (i.laya) this._loadLaya(); }).catch(() => {});
   this._renderProviders(); this._renderState(); this._renderEmpty();
   // Finish an OpenRouter sign-in if we came back from one; that connects it straight away.
   completeSignIn().then(key => {
@@ -232,7 +283,8 @@ export class TeacherBridge {
   this._coachHistory.push(d.move);
   const move = buildMove(d.move, a), slow = this.mode === 'slow' && this.teacher.isConfigured;
   this._setStatus(null);
-  this._coachMsg(a, move, d, slow);
+  this._add({ kind: 'coach', who: `System 1 · Laya, ${d.ms} ms`, text: `${describePlayed(a)} ${move.say}`, example: move.example,
+   why: slow ? null : { a: compact(a), coach: `${describePlayed(a)} Next step: ${move.say}`, suggested: d.explain >= 0.5 } });
   const at = performance.now();
   this._say(`${describePlayed(a)} ${move.say}`).then(() => { if (this._lastNoteAt <= at) this._playSteps(move.example.steps, move.example.bpm); });
   if (slow) this._queue(a, { think: true, coach: `${describePlayed(a)} Next step: ${move.say}` });
@@ -254,10 +306,11 @@ export class TeacherBridge {
  _setupCallbacks() {
   this.teacher.onResponse = (text, play, info = {}) => {
    this._msg('teacher', text, play, info);
+   if (info.actions) this._act(info.actions);
    // Play the example (after reading the reply aloud in talk mode), unless the student has started playing
    // again since asking.
-   const asked = this._askedAt;
-   this._say(text).then(() => { if (play && this._lastNoteAt <= asked) this._playSteps(play.steps, play.bpm); });
+   const asked = this._askedAt, quiet = this._quietNext; this._quietNext = false;
+   this._say(text).then(() => { if (play && !quiet && this._lastNoteAt <= asked) this._playSteps(play.steps, play.bpm, play.label); });
   };
   this.teacher.onError = m => this._msg('error', m);
   this.teacher.onStatus = s => this._setStatus(s === 'ready' ? null : s);
@@ -265,7 +318,8 @@ export class TeacherBridge {
 
  // Plays a suggestion through the synth (and any plug-in instrument following it), moved onto the student's
  // 25 keys. Each step is one beat; a step with several notes is struck together as a chord.
- _playSteps(steps, bpm) {
+ _playSteps(steps, bpm, label = 'the example') {
+  this._lastExample = { steps, bpm, label }; // what "again", "longer" or "faster" refer to
   const synth = window.synth;
   if (!synth) return;
   this._stopPlayback(); synth.ensureAudio();
@@ -291,6 +345,7 @@ export class TeacherBridge {
   const p = document.createElement('aside'); p.id = 'teacher-panel';
   p.setAttribute('aria-label', 'AI music theory teacher');
   p.innerHTML = `
+   <div class="tp-resize" role="separator" aria-orientation="vertical" aria-label="Teacher panel width: drag, or use the arrow keys" tabindex="0" title="Drag to resize the panel. Double-click to reset."></div>
    <header class="tp-head">
     <div class="tp-title-row"><h2>AI Teacher</h2><span class="tp-status">Not connected</span></div>
     <button type="button" class="tp-summary" title="Change provider"><span class="tp-summary-text"></span><span class="tp-change">Change</span></button>
@@ -306,19 +361,21 @@ export class TeacherBridge {
     <div class="tp-messages" role="log" aria-live="polite"></div>
     <div class="tp-foot">
      <div class="tp-mode" hidden><span class="tp-seg" role="radiogroup" aria-label="Teaching speed"><button type="button" role="radio" data-mode="fast">Fast</button><button type="button" role="radio" data-mode="slow">Slow</button></span><span class="tp-mode-note"></span></div>
-     <div class="tp-foot-row"><label><input type="checkbox" class="auto-check"/>Coach each phrase I play</label><button type="button" class="clear-btn">Clear</button></div>
+     <div class="tp-foot-row"><label><input type="checkbox" class="auto-check"/>Coach each phrase I play</label><span class="tp-row"><select class="tp-history" aria-label="Conversation history"></select><button type="button" class="clear-btn" title="Start a new conversation; this one stays in the history">New</button></span></div>
      <form class="tp-ask"><input type="text" class="question-input" placeholder="Ask about theory…" aria-label="Ask the teacher"/><button type="button" class="tp-talk" aria-pressed="false" title="Talk mode: speak to the teacher and hear it answer">🎙 Talk</button><button type="submit" class="tp-primary tp-ask-btn">Ask</button></form>
      <p class="tp-talk-note" role="status" hidden></p>
     </div>
    </section>
    <section class="tp-view tp-course-view" id="tp-view-course" role="tabpanel" aria-labelledby="tp-tab-course" hidden>
-    <p class="tp-intro">Short lessons from Open Music Theory, played on your keys. Each one explains an idea, plays an example, and gives you something to play: the teacher listens and tells you when you have it.</p>
+    <p class="tp-intro">Short lessons, first on using this workspace, then music theory from Open Music Theory played on your keys. Each one explains an idea and gives you something to do or play: the teacher watches and tells you when you have it. Every widget also has a 🎓 button with its guide.</p>
     <div class="tp-course"></div>
-    <p class="tp-credit">Adapted from <a href="${OMT.url}" target="_blank" rel="noopener">Open Music Theory</a> by Kris Shaffer, Bryn Hughes, Brian Moseley and contributors, licensed <a href="${OMT.licenseUrl}" target="_blank" rel="noopener">${OMT.license}</a>.</p>
+    <p class="tp-credit">Music theory lessons adapted from <a href="${OMT.url}" target="_blank" rel="noopener">Open Music Theory</a> by Kris Shaffer, Bryn Hughes, Brian Moseley and contributors, licensed <a href="${OMT.licenseUrl}" target="_blank" rel="noopener">${OMT.license}</a>.</p>
    </section>
    <section class="tp-view tp-provider-view" id="tp-view-provider" role="tabpanel" aria-labelledby="tp-tab-provider" hidden>
     <p class="tp-intro">Choose where the teacher's answers come from. Each option is a separate, direct connection with its own sign-in; one is active at a time.</p>
     <div class="tp-providers" role="radiogroup" aria-label="Provider"></div>
+    <div class="tp-voices"></div>
+    <div class="tp-storage"></div>
    </section>`;
   document.body.append(p); this.panel = p;
 
@@ -333,24 +390,44 @@ export class TeacherBridge {
   const auto = p.querySelector('.auto-check');
   auto.checked = this.autoAnalyze;
   auto.onchange = () => { this.autoAnalyze = auto.checked; save('teacher-auto-v1', this.autoAnalyze); };
-  p.querySelector('.clear-btn').onclick = () => {
-   p.querySelector('.tp-messages').replaceChildren();
-   this.teacher.reset(); this.tracker.reset(); this._phraseQueue = []; this._coachHistory = []; this._stopPlayback(); this.voice?.cancelSpeech();
-   this._endLesson(); this._renderEmpty();
-  };
+  p.querySelector('.clear-btn').onclick = () => { this.convo.startNew(); this._loadConversation(); };
+  p.querySelector('.tp-history').onchange = e => { if (e.target.value && this.convo.open(e.target.value)) this._loadConversation(); };
   p.querySelectorAll('.tp-seg button').forEach(b => { b.onclick = () => { this.mode = b.dataset.mode; save('teacher-mode-v1', this.mode); this._renderMode(); }; });
   p.querySelector('.tp-ask').onsubmit = e => { e.preventDefault(); this._ask(); };
   p.querySelector('.tp-talk').onclick = () => this._toggleTalk();
-  p.querySelector('.tp-lesson-hear').onclick = () => this.lesson && this._playSteps(this.lesson.example.steps, this.lesson.example.bpm);
+  this._panelResize(p.querySelector('.tp-resize'));
   p.querySelector('.tp-lesson-end').onclick = () => this._endLesson();
+  p.querySelector('.tp-lesson-hear').onclick = () => { const l = this.lesson; if (!l) return; if (l.example) this._playSteps(l.example.steps, l.example.bpm); else this._showTargets(l.show); };
   this._renderCourse();
+  this._teachButtons();
   if (!canListen() && !canSpeak()) { const t = p.querySelector('.tp-talk'); t.disabled = true; t.title = 'This browser can\'t listen or speak.'; }
   this._showTab('lesson');
+ }
+
+ // The panel's width, dragged from its left edge (300–720 px, never more than the window leaves), and kept.
+ _panelResize(edge) {
+  const setWidth = (w, keep = true) => {
+   if (!w) { document.documentElement.style.removeProperty('--teacher-width'); if (keep) save('teacher-width-v1', 0); }
+   else {
+    const width = Math.round(Math.max(300, Math.min(720, innerWidth - 240, w)));
+    document.documentElement.style.setProperty('--teacher-width', `${width}px`);
+    if (keep) save('teacher-width-v1', width);
+   }
+   window.dispatchEvent(new Event('resize'));
+  };
+  const saved = read('teacher-width-v1', 0);
+  if (saved) setWidth(saved, false);
+  const move = e => setWidth(innerWidth - e.clientX);
+  const up = () => { edge.classList.remove('dragging'); removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', up); };
+  edge.onpointerdown = e => { if (e.button !== 0) return; e.preventDefault(); edge.classList.add('dragging'); addEventListener('pointermove', move); addEventListener('pointerup', up); addEventListener('pointercancel', up); };
+  edge.ondblclick = () => setWidth(0);
+  edge.onkeydown = e => { const d = { ArrowLeft: 20, ArrowRight: -20 }[e.key]; if (!d) return; e.preventDefault(); setWidth(this.panel.getBoundingClientRect().width + d * (e.shiftKey ? 4 : 1)); };
  }
 
  _showTab(tab) {
   this.panel.querySelectorAll('.tp-tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === tab));
   this.panel.querySelectorAll('.tp-view').forEach(v => { v.hidden = v.id !== `tp-view-${tab}`; });
+  if (tab === 'provider') { this._renderVoices(); this._renderStorage(); }
  }
 
  _setOpen(open, persist = true) {
@@ -376,9 +453,7 @@ export class TeacherBridge {
  }
  _renderState() {
   this._setStatus(null);
-  const ready = this.teacher.isConfigured;
-  this.panel.querySelector('.question-input').disabled = !ready;
-  this.panel.querySelector('.tp-ask-btn').disabled = !ready;
+  // Always open: requests to play something are met with no model at all (js/requests.js).
   const summary = this.panel.querySelector('.tp-summary-text');
   summary.replaceChildren();
   if (this._active) {
@@ -386,9 +461,10 @@ export class TeacherBridge {
    const qwen = this._localEngine ? LOCAL_MODELS.find(m => m.id === this._active.model)?.label.split(' —')[0] : null;
    const model = this._active.id === 'local' ? (qwen ? `Laya + ${qwen}` : 'Laya only') : this._active.model.replace(/^[^/]+\//, '');
    summary.append(el('b', { textContent: provider.name }), ` · ${model}`);
-  } else summary.textContent = 'Not connected — choose a provider';
-  this.panel.querySelector('.tp-change').textContent = this._active ? 'Change' : 'Choose';
-  this.panel.querySelector('.question-input').placeholder = ready ? 'Ask about theory…' : this.laya ? 'Load Qwen (or connect a provider) to ask questions' : 'Ask about theory…';
+  } else if (this.laya) summary.append(el('b', { textContent: 'System 1: Laya' }), ' · on this device');
+  else summary.textContent = 'Not connected — choose a provider';
+  this.panel.querySelector('.tp-change').textContent = this._active || this.laya ? 'Change' : 'Choose';
+  this.panel.querySelector('.question-input').placeholder = this.teacher.isConfigured ? 'Ask about theory or the app…' : this.laya ? 'Ask about a widget, plug-in or lesson…' : 'Ask me to play something…';
   this._renderMode();
  }
  // The Fast/Slow switch appears once Laya (System 1) is loaded; Slow needs a System 2 model as well.
@@ -405,7 +481,7 @@ export class TeacherBridge {
   box.querySelector('.tp-empty')?.remove();
   if (box.querySelector('.teacher-msg')) return;
   const empty = el('div', { className: 'tp-empty' });
-  if (this.laya) empty.append(`Play a phrase and pause for a moment: Laya names it and gives you the next step with an example to hear.${this.teacher.isConfigured ? ' Switch to Slow, or ask a question below, for a fuller explanation.' : ''}`);
+  if (this.laya) empty.append(`Play a phrase and pause for a moment: Laya names it and gives you the next step with an example to hear. Ask about any widget or plug-in, or press 🎓 on one, and Laya shows you how it works.${this.teacher.isConfigured ? ' Switch to Slow, or ask a question below, for a fuller explanation.' : ''}`);
   else if (this.teacher.isConfigured) empty.append('Play a phrase and pause for a moment: the teacher names it, explains it and plays a suggestion. Or ask a question below.');
   else {
    const go = el('button', { type: 'button', className: 'tp-primary', textContent: 'Choose a provider' });
@@ -429,7 +505,7 @@ export class TeacherBridge {
  }
 
  _card(provider) {
-  const id = provider.id, selected = this._selected === id, active = this._active?.id === id;
+  const id = provider.id, selected = this._selected === id, active = this._active?.id === id || (id === 'laya' && !!this.laya);
   const radio = el('input', { type: 'radio', name: 'tp-provider', value: id, checked: selected });
   const name = el('span', { className: 'tp-card-name' }, provider.name,
    el('span', { className: `tp-badge${/^Free/.test(provider.cost) ? ' free' : ''}`, textContent: provider.cost }));
@@ -450,6 +526,7 @@ export class TeacherBridge {
 
  _fillBody(provider, body) {
   const status = el('p', { className: 'tp-card-status', role: 'status' });
+  if (provider.id === 'laya') return this._fillLaya(body, status);
   if (provider.auth === 'local') return this._fillLocal(body, status);
   const id = provider.id, active = this._active?.id === id;
   const field = (text, node) => el('label', { className: 'tp-field' }, text, node);
@@ -514,6 +591,40 @@ export class TeacherBridge {
   if (select.value !== chosen && select.options.length) select.selectedIndex = 0;
  }
 
+ // System 1 on its own: Laya coaches each phrase and teaches the widgets and plug-ins, choosing from written
+ // guides (js/system-one.js), so it needs no WebGPU and runs on the CPU too.
+ _fillLaya(body, status) {
+  const btn = el('button', { type: 'button', className: 'tp-primary', textContent: this.laya ? 'Loaded' : `Download and load Laya (${LAYA_MB} MB)`, disabled: !!this.laya });
+  const bar = el('progress', { max: 1, hidden: true });
+  btn.onclick = () => this._loadLaya({ btn, bar, status });
+  body.append(
+   el('p', { className: 'tp-note', textContent: 'Laya is a fast decision model. It never writes text: it chooses. The moment you finish a phrase it picks your next step from the coaching menu; ask about a widget or plug-in (or press 🎓 on one) and it picks the guide step that answers you and lights up the control; on a plug-in, "Next tip" has it choose which control to try next. Everything it says was written in advance, so it is never wrong about the app.' }),
+   el('div', { className: 'tp-row' }, btn), bar, status,
+   el('p', { className: 'tp-note', textContent: `Runs on the GPU where it can, otherwise the CPU. The first load downloads ${LAYA_MB} MB; after that it loads from the browser cache by itself. Connect a provider (or Qwen) as well to have it explain in its own words.` }));
+ }
+
+ async _loadLaya(ui = null) {
+  if (this.laya || this._layaLoading) return;
+  this._layaLoading = true;
+  if (ui) { ui.btn.disabled = true; ui.btn.textContent = 'Loading…'; ui.bar.hidden = false; ui.bar.removeAttribute('value'); }
+  this._setStatus('loading');
+  const show = prog => { if (!ui) return; ui.status.className = 'tp-card-status'; ui.status.textContent = prog.text || 'Loading…'; if (typeof prog.progress === 'number') ui.bar.value = prog.progress; };
+  try {
+   this.laya = await LayaCoach.load(show);
+   save('teacher-laya-auto-v1', true);
+   this._renderProviders(); this._renderState(); this._renderEmpty();
+   if (ui) {
+    this._msg('info', `Laya is ready (System 1). Play a phrase and pause for your next step; ask about any widget or plug-in, or press 🎓 on one, and Laya shows you the control.`);
+    this._showTab('lesson');
+   }
+  } catch (err) {
+   if (ui) { ui.status.textContent = err.message; ui.status.className = 'tp-card-status bad'; ui.btn.disabled = false; ui.btn.textContent = 'Try again'; }
+  } finally {
+   this._layaLoading = false; this._setStatus(null);
+   if (ui) ui.bar.hidden = true;
+  }
+ }
+
  _fillLocal(body, status) {
   const select = el('select');
   LOCAL_MODELS.forEach(m => select.append(el('option', { value: m.id, textContent: m.label })));
@@ -543,7 +654,7 @@ export class TeacherBridge {
   let warning = '';
   try {
    if (!this.laya) {
-    try { this.laya = await LayaCoach.load(show); }
+    try { this.laya = await LayaCoach.load(show); save('teacher-laya-auto-v1', true); }
     catch (err) { if (!webgpuAvailable()) throw err; warning = `Laya couldn't load (${err.message}), so fast coaching is off; Qwen works on its own.`; }
    }
    let engine = null;
@@ -552,7 +663,7 @@ export class TeacherBridge {
     engine = await LocalEngine.load(modelId, prog => show({ ...prog, text: `Qwen: ${prog.text || 'loading…'}` }));
    }
    this._localEngine = engine;
-   this.teacher.reset(); this.teacher.setEngine(engine);
+   this._resetTeacher(); this.teacher.setEngine(engine);
    this._active = { id: 'local', model: modelId };
    setProviderId('local'); setModelFor('local', modelId);
    this._connected(providerById('local'));
@@ -603,7 +714,7 @@ export class TeacherBridge {
   // A hosted System 2 replaces the on-device Qwen, which is unloaded to free GPU memory; Laya stays loaded
   // and keeps coaching as System 1.
   if (this._localEngine) { this._localEngine.unload?.(); this._localEngine = null; }
-  this.teacher.reset(); this.teacher.setEngine(engine);
+  this._resetTeacher(); this.teacher.setEngine(engine);
   this._active = { id: provider.id, model };
   if (quiet) { this._renderState(); return; }
   this._selected = provider.id;
@@ -621,7 +732,7 @@ export class TeacherBridge {
 
  _forget(provider) {
   clearKey(provider.id);
-  if (this._active?.id === provider.id) { this.teacher.reset(); this.teacher.setEngine(null); this._active = null; }
+  if (this._active?.id === provider.id) { this._resetTeacher(); this.teacher.setEngine(null); this._active = null; }
   this._renderProviders(); this._renderState(); this._renderEmpty();
  }
 
@@ -639,65 +750,298 @@ export class TeacherBridge {
  }
 
  _showLocal(a) {
-  const d = el('div', { className: 'teacher-msg local' });
-  const s = a.scales[0];
-  d.append(el('strong', { textContent: s ? `${s.tonicName} ${s.scaleName}` : `${a.noteCount} notes` }));
-  if (a.chords.length) d.append(`Chords: ${a.chords.map(c => c.best.chordName).join(' → ')}`);
-  d.append(el('span', { className: 'tp-dim', textContent: `${a.noteCount} notes${s ? ` · ${(s.score * 100).toFixed(0)}% match` : ''} · pitch classes ${a.pitchClasses.join(' ')}` }));
-  this._append(d);
+  const best = a.scales[0];
+  this._add({ kind: 'local', title: best ? `${best.tonicName} ${best.scaleName}` : `${a.noteCount} notes`, chords: a.chords.map(c => c.best.chordName).join(' → '),
+   detail: `${a.noteCount} notes${best ? ` · ${(best.score * 100).toFixed(0)}% match` : ''} · pitch classes ${a.pitchClasses.join(' ')}` });
  }
 
  _msg(type, text, play = null, info = {}) {
-  const d = el('div', { className: `teacher-msg ${type}` });
-  if (type === 'teacher') {
-   const who = this._active?.id === 'local' ? 'Qwen' : providerById(this._active?.id)?.name || 'Teacher';
-   d.append(el('span', { className: 'tp-who', textContent: info.think ? `System 2 · ${who}, thought for ${info.seconds.toFixed(1)} s` : `${this.laya ? 'System 2 · ' : ''}${who}` }));
-  }
-  d.append(text);
-  if (play) {
-   const again = el('button', { type: 'button', textContent: `▶ ${play.label}` });
-   again.onclick = () => this._playSteps(play.steps, play.bpm);
-   d.append(el('div', { className: 'tp-msg-actions' }, again));
-  }
-  this._append(d);
+  const who = type !== 'teacher' ? '' : info.think ? `System 2 · ${this._who()}, thought for ${info.seconds.toFixed(1)} s` : `${this.laya ? 'System 2 · ' : ''}${this._who()}`;
+  this._add({ kind: 'msg', type, text, play, who }, type === 'user' ? text : '');
  }
+ _who() { return this._active?.id === 'local' ? 'Qwen' : providerById(this._active?.id)?.name || 'Teacher'; }
 
- // Laya's step: what was played, the next step and its example, and (in Fast mode) a way to ask System 2
- // why. Laya also judges whether an explanation would help; when it thinks so, that button is highlighted.
- _coachMsg(a, move, d, slow) {
-  const box = el('div', { className: 'teacher-msg coach' }, el('span', { className: 'tp-who', textContent: `System 1 · Laya, ${d.ms} ms` }), `${describePlayed(a)} ${move.say}`);
-  const hear = el('button', { type: 'button', textContent: '▶ Hear it' });
-  hear.onclick = () => this._playSteps(move.example.steps, move.example.bpm);
-  const actions = el('div', { className: 'tp-msg-actions' }, hear);
-  if (!slow && this.teacher.isConfigured) {
-   const why = el('button', { type: 'button', className: d.explain >= 0.5 ? 'tp-primary' : '', textContent: d.explain >= 0.5 ? 'Explain why (suggested)' : 'Explain why' });
-   why.onclick = () => { why.disabled = true; this._queue(a, { think: true, coach: `${describePlayed(a)} Next step: ${move.say}` }); };
-   actions.append(why);
+ // Everything in the conversation is an entry: drawn now, saved with the conversation, and drawn the same way
+ // when it is reopened, buttons included.
+ _add(entry, title = '') { this.convo.add(entry, title); const node = this._render(entry); this._append(node); return node; }
+
+ _render(e) {
+  const button = (text, onclick, primary = false) => el('button', { type: 'button', textContent: text, className: primary ? 'tp-primary' : '', onclick });
+  const actions = (...buttons) => el('div', { className: 'tp-msg-actions' }, ...buttons.filter(Boolean));
+  if (e.kind === 'local') {
+   const d = el('div', { className: 'teacher-msg local' }, el('strong', { textContent: e.title }));
+   if (e.chords) d.append(`Chords: ${e.chords}`);
+   d.append(el('span', { className: 'tp-dim', textContent: e.detail }));
+   return d;
   }
-  box.append(actions);
-  this._append(box);
+  if (e.kind === 'msg') {
+   const d = el('div', { className: `teacher-msg ${e.type}` });
+   if (e.who) d.append(el('span', { className: 'tp-who', textContent: e.who }));
+   d.append(e.text);
+   if (e.play) d.append(actions(button(`▶ ${e.play.label}`, () => this._playSteps(e.play.steps, e.play.bpm, e.play.label))));
+   return d;
+  }
+  // Laya's step, and (in Fast mode) a way to ask System 2 why; highlighted when Laya judged it would help.
+  if (e.kind === 'coach') {
+   const d = el('div', { className: 'teacher-msg coach' }, el('span', { className: 'tp-who', textContent: e.who }), e.text);
+   const why = e.why && this.teacher.isConfigured && button(e.why.suggested ? 'Explain why (suggested)' : 'Explain why', () => { why.disabled = true; this._queue(e.why.a, { think: true, coach: e.why.coach }); }, e.why.suggested);
+   d.append(actions(button('▶ Hear it', () => this._playSteps(e.example.steps, e.example.bpm)), why));
+   return d;
+  }
+  if (e.kind === 'lesson') return this._lessonCard(courseLesson(e.id));
+  if (e.kind === 'passed') {
+   const next = courseLesson(e.next);
+   const go = next && button(`Next: ${next.title}`, () => { go.disabled = true; this._startLesson(next); }, true);
+   return el('div', { className: 'teacher-msg info passed' }, `✓ ${e.text}`, next ? actions(go) : '');
+  }
+  if (e.kind === 'guide') return this._guideCard(e);
+  // System 1's answer or tip: written words Laya chose, with the control to look at.
+  if (e.kind === 's1') {
+   const lesson = courseLesson(e.lesson);
+   return el('div', { className: 'teacher-msg s1' }, el('span', { className: 'tp-who', textContent: e.who }), e.text,
+    actions(e.play && button(`▶ ${e.play.label}`, () => this._playSteps(e.play.steps, e.play.bpm, e.play.label)), e.show && button('Show', () => ws.show(e.show)), e.guide && button('Full guide', () => { const w = ws.widgets().find(x => x.title === e.guide.title && x.plugin === e.guide.plugin); if (w) this._teachWidget(w); }),
+     lesson && button(`Lesson: ${lesson.title}`, () => this._startLesson(lesson), true),
+     e.q && this.teacher.isConfigured && button(`Ask ${this._who()}`, () => { this._msg('user', e.q); this._toSystem2(e.q); })));
+  }
+  if (e.kind === 'change') {
+   const undo = button('Undo', () => { if (ws.restore(e.name, e.raw)) { undo.disabled = true; undo.textContent = 'Undone'; } });
+   return el('div', { className: 'teacher-msg change' }, `Changed ${e.name} from ${e.fromText} to ${e.to}.`, actions(button('Show', () => ws.show(e.name)), undo));
+  }
+  return el('div', { className: 'teacher-msg info' }, e.text || '');
  }
 
  _append(node) {
   const c = this.panel?.querySelector('.tp-messages');
-  if (!c) return;
+  if (!c || !node) return;
   c.querySelector('.tp-empty')?.remove();
   c.append(node);
   while (c.querySelectorAll('.teacher-msg').length > MAX_MESSAGES) c.querySelector('.teacher-msg').remove();
   c.scrollTop = c.scrollHeight;
  }
 
+ // Shows the current conversation: its entries, the model's memory of it, and a lesson left open.
+ _loadConversation() {
+  const c = this.convo.current, box = this.panel.querySelector('.tp-messages');
+  this._resetTeacher();
+  this.tracker.reset(); this._phraseQueue = []; this._coachHistory = []; this._stopPlayback(); this.voice?.cancelSpeech();
+  this._endLesson(false);
+  box.replaceChildren();
+  c.entries.forEach(e => this._append(this._render(e)));
+  const open = courseLesson(c.lesson);
+  if (open) this._resumeLesson(open);
+  this._renderHistory(); this._renderEmpty();
+ }
+ // Stops whatever the model is doing; its memory stays the saved conversation's, so a new provider carries on.
+ _resetTeacher() { this.teacher.reset(); this.teacher.conversationHistory = this.convo.current.history; }
+ _renderHistory() {
+  const sel = this.panel.querySelector('.tp-history');
+  sel.replaceChildren(el('option', { value: '', textContent: this.convo.past.length ? 'History…' : 'No history' }), ...this.convo.past.map(c => el('option', { value: c.id, textContent: describeConversation(c) })));
+  sel.disabled = !this.convo.past.length;
+ }
+
  _ask() {
   const i = this.panel?.querySelector('.question-input');
   const q = i?.value.trim();
   if (!q) return;
-  if (!this.teacher.isConfigured) { this._showTab('provider'); return; }
   i.value = '';
-  this._question(q);
+  this._route(q);
  }
- _question(q) {
+ // System 1 first: Laya answers questions about the workspace, its plug-ins and the course from the written
+ // guides in well under a second. A request to compose or play something particular, or one Laya is unsure
+ // about, goes to System 2 when one is connected.
+ // Tested on real requests (Laya against Qwen 3.5 4B): Laya found the right control in a third of a second
+ // where the guide's words could steer it, but it cannot compose and is unsure on its own, so System 2
+ // supervises. Laya answers at once; System 2, when connected, checks that answer in the background and
+ // only speaks up to correct it. A request to compose or play something particular goes to System 2.
+ // A request to play something is met first by System 1's composer (js/requests.js), which reads the key,
+ // chords and mood from the words and plays an exact example at once; in Slow mode System 2 then explains it.
+ // Anything else that composes goes to System 2; questions about the app go to Laya.
+ async _route(q) {
+  const req = await meetRequest(q, { last: this._lastExample, pick: this.laya ? (...a) => this.laya.pick(...a) : null }).catch(() => null);
+  if (req) return this._playRequest(q, req);
+  const compose = COMPOSE.test(q);
+  if (compose && this.teacher.isConfigured) return this._question(q, [], { compose });
+  if (this.laya) return this._systemOneAsk(q, compose);
+  if (this.teacher.isConfigured) return this._question(q);
+  this._msg('user', q);
+  this._msg('info', 'I can play what you ask for right now ("play a ii–V–I in G", "a sad progression in D minor"). To answer questions, load Laya (System 1) or connect a provider in the Provider tab.');
+  this._showTab('provider');
+ }
+ _playRequest(q, req) {
+  this._msg('user', q);
+  const play = { steps: req.steps, bpm: req.bpm, label: req.label };
+  this._add({ kind: 's1', who: 'System 1 · played at once', text: req.say, play, q });
+  const at = performance.now();
+  this._say(req.say).then(() => { if (this._lastNoteAt <= at) this._playSteps(play.steps, play.bpm, play.label); });
+  // Slow mode: System 2 explains what was played; its own example, if any, is offered rather than played.
+  if (this.mode === 'slow' && this.teacher.isConfigured) { this._quietNext = true; this._toSystem2(q, [], { compose: true, quick: '', note: req.say }); }
+ }
+ _question(q, focus = [], opts = {}) { this._msg('user', q); this._toSystem2(q, focus, opts); }
+ _toSystem2(q, focus = [], { compose = false, quick = '', onConfirm = null, note = '' } = {}) {
   this._askedAt = performance.now();
-  this._msg('user', q); this.teacher.ask(q, { think: this.mode === 'slow' });
+  const context = [this._workspaceContext(q, focus, compose), note && `[ALREADY PLAYED] The app has just played this for the student: ${note} Explain in two or three sentences what it is and why it fits the request.`].filter(Boolean).join('\n\n');
+  this.teacher.ask(q, { think: this.mode === 'slow', context, quick, onConfirm });
+ }
+ // Words that find each widget and plug-in: the written ones, and for a plug-in what was learned about it.
+ _keywords() { return { ...KEYWORDS, ...Object.fromEntries([...profiles].map(([title, p]) => [title, [...KINDS[p.kind].words, ...Object.keys(p.roles)]])) }; }
+ // The workspace as the model should see it for this question: every widget in a line, and the settings of
+ // the ones the question (or an open workspace lesson) is about.
+ // A request about the music only gets it when it names a widget: the workspace distracted Qwen from playing.
+ _workspaceContext(q, focus = [], musicOnly = false) {
+  const ids = [...new Set([...focus, ...(isWorkspace(this.lesson) ? ws.widgets().filter(w => w.title === this.lesson.widget).map(w => w.id) : []), ...ws.relevant(q, this._keywords())])];
+  if (!ids.length && (musicOnly || !ABOUT_APP.test(q))) return '';
+  const learned = ws.widgets().filter(w => w.plugin && ids.includes(w.id) && profiles.has(w.title)).map(w => `What ${w.title} does: ${summarize(profiles.get(w.title))}`);
+  return `[WORKSPACE]\n${ws.describe(ids)}${learned.length ? `\n${learned.join('\n')}` : ''}`;
+ }
+
+ // A reply's "show" points at controls one after another; "set" changes them, each with an Undo.
+ _act({ show = [], set = [] }) {
+  show.forEach((name, i) => setTimeout(() => ws.show(name), 600 + i * 1500));
+  for (const [name, value] of set) {
+   try {
+    const hit = ws.find(name), fromText = hit?.control ? ws.valueOf(hit.control) : '';
+    const r = ws.set(hit || name, value);
+    this._add({ kind: 'change', name: r.name, raw: r.from, fromText, to: r.to });
+   } catch (err) { this._msg('info', `The teacher tried to change ${name}, but: ${err.message}`); }
+  }
+ }
+
+ /* ---- Widget guides ---- */
+
+ // A 🎓 button in the title bar of every widget and plug-in window, including ones added later.
+ _teachButtons() {
+  const add = () => document.querySelectorAll('.widget-header:not([data-teach])').forEach(h => {
+   h.dataset.teach = '1';
+   const box = h.closest('.widget');
+   const btn = el('button', { type: 'button', className: 'teach-btn', textContent: '🎓', title: 'Teach me this widget' });
+   btn.setAttribute('aria-label', 'Teach me this widget');
+   btn.onclick = () => { const w = ws.widgets().find(x => x.el === box); if (w) this._teachWidget(w); };
+   h.append(btn); // after close, width and minimise
+  });
+  add();
+  window.addEventListener('load', () => setTimeout(add, 0));
+  // Plug-in windows live in a layer the plug-in host creates on first use.
+  const watch = layer => new MutationObserver(add).observe(layer, { childList: true });
+  const layer = document.querySelector('.plugin-windows');
+  if (layer) watch(layer);
+  else new MutationObserver((_, obs) => { const l = document.querySelector('.plugin-windows'); if (l) { obs.disconnect(); watch(l); add(); } }).observe(document.body, { childList: true });
+  // With Laya loaded, a plug-in the student adds gets its guide and a first tip straight away. The host's
+  // status line says "Loaded …" only for plug-ins added now, not for ones restored from the last visit.
+  const hostStatus = () => document.querySelector('#plugin-host-module [role=status]');
+  const watchHost = node => new MutationObserver(() => {
+   if (!this.laya || !/^Loaded /.test(node.textContent)) return;
+   setTimeout(() => {
+    const w = ws.widgets().filter(x => x.plugin).at(-1);
+    if (w) { this._setOpen(true); this._showTab('lesson'); this._meetPlugin(w); }
+   }, 300);
+  }).observe(node, { childList: true, characterData: true, subtree: true });
+  if (hostStatus()) watchHost(hostStatus()); else window.addEventListener('load', () => { const n = hostStatus(); if (n) watchHost(n); });
+ }
+
+ async _teachWidget(w) {
+  if (w.plugin) await this._learn(w);
+  this._setOpen(true); this._showTab('lesson');
+  this._add({ kind: 'guide', title: w.title, plugin: w.plugin }, `${w.title} guide`);
+  ws.show({ widget: w, control: null });
+ }
+
+ // A widget's guide: what it is for and how to use it, each step with a Show button; its lesson if the course
+ // has one; and, with a model connected, a question about it that comes with the widget's live settings.
+ _guideCard(e) {
+  const w = ws.widgets().find(x => x.title === e.title && x.plugin === e.plugin);
+  const g = w ? guideFor(w) : null;
+  const d = el('div', { className: 'teacher-msg guide' }, el('span', { className: 'tp-who', textContent: e.plugin ? 'Plug-in guide' : 'Widget guide' }), el('strong', { textContent: e.title }));
+  if (!w) { d.append(el('p', { textContent: 'This widget is not in the workspace any more.' })); return d; }
+  if (g) {
+   d.append(el('p', { textContent: g.what }));
+   d.append(el('ol', { className: 'tp-steps' }, ...g.how.map(([text, target]) => el('li', {}, text, target && ws.find(target) ? el('button', { type: 'button', textContent: 'Show', onclick: () => ws.show(target) }) : ''))));
+  }
+  if (e.plugin) {
+   const params = ws.controls(w).filter(c => c.kind === 'number').map(c => c.label);
+   if (params.length) d.append(el('p', { textContent: `Its controls: ${params.join(', ')}.` }));
+  }
+  const lesson = WORKSPACE_LESSONS.find(l => l.widget === e.title);
+  const row = el('div', { className: 'tp-msg-actions' });
+  if (this.laya) row.append(el('button', { type: 'button', className: 'tp-primary', textContent: 'Next tip', onclick: () => this._nextTip(e.title, e.plugin) }));
+  if (lesson) row.append(el('button', { type: 'button', textContent: `${this.courseDone.has(lesson.id) ? '✓ ' : ''}Lesson: ${lesson.title}`, onclick: () => this._startLesson(lesson) }));
+  if (this.teacher.isConfigured) row.append(el('button', { type: 'button', textContent: 'Ask the teacher', onclick: () => this._question(`How do I use the ${e.title} ${e.plugin ? 'plug-in' : 'widget'}, and what would you try first with the settings it has now?`, [w.id]) }));
+  if (row.childNodes.length) d.append(row);
+  return d;
+ }
+
+
+ /* ---- Learning plug-ins ---- */
+
+ // What a plug-in can do, learned once and remembered: its kind and what each control does, read from the
+ // names, with Laya (when loaded) settling what the names don't say. A profile made from names alone is
+ // learned again by Laya once it is loaded, if anything was left unexplained.
+ async _learn(w) {
+  const params = ws.controls(w).filter(c => (c.kind === 'number' || c.kind === 'select') && isSoundControl(c)).map(c => ({ label: c.label, min: c.el.min ?? '', max: c.el.max ?? '' }));
+  let p = cachedProfile(w.title, params);
+  const vague = p && !p.byLaya && (p.kind === 'other' || Object.values(p.roles).includes('other'));
+  if (!p || (vague && this.laya)) {
+   p = await learnPlugin(w.title, params, { instrument: /Instrument/.test(w.el.textContent), laya: this.laya }).catch(() => learnPlugin(w.title, params, { instrument: /Instrument/.test(w.el.textContent) }));
+   keepProfile(p, params);
+  }
+  profiles.set(w.title, p);
+  return p;
+ }
+ _learnAll() { return Promise.all(ws.widgets().filter(w => w.plugin && !profiles.has(w.title)).map(w => this._learn(w))); }
+
+ // A plug-in the student has just added: Laya learns it, says what it found, and gives the first tip.
+ async _meetPlugin(w) {
+  const p = await this._learn(w);
+  const text = p.byLaya ? `Laya learned ${w.title} in ${p.ms} ms: it is ${KINDS[p.kind].says}.` : `${w.title} is ${KINDS[p.kind].says}.`;
+  this._add({ kind: 's1', who: 'System 1 · Laya', text, show: w.title, guide: { title: w.title, plugin: true } });
+  this._nextTip(w.title, true);
+ }
+
+ /* ---- System 1 teaching the workspace ---- */
+
+ // A question answered by Laya alone: it picks the widget (or lesson) and the guide step, and the control lights up.
+ async _systemOneAsk(q, compose = false) {
+  this._msg('user', q);
+  this._setStatus('coaching');
+  try {
+   await this._learnAll();
+   const r = await systemOneAnswer(q, { pick: (...a) => this.laya.pick(...a), widgets: ws.widgets(), hint: ws.relevant(q, this._keywords(), 3) });
+   this._setStatus(null);
+   const who = `System 1 · Laya, ${r.ms} ms`;
+   let entry, focus = [];
+   if (r.lesson) {
+    entry = { kind: 's1', who, text: `That's in the lesson "${r.lesson.title}": ${r.lesson.text.split(/(?<=\.)\s/)[0]}`, lesson: r.lesson.id, q };
+   } else {
+    const g = guideFor(r.widget), show = r.step?.[1] || r.widget.title;
+    entry = { kind: 's1', who, text: `${r.widget.title}: ${r.step ? r.step[0] : g?.what || 'see its guide.'}`, show, guide: { title: r.widget.title, plugin: r.widget.plugin }, q };
+    focus = [r.widget.id];
+    ws.show(show);
+   }
+   let node = this._add(entry); this._say(entry.text);
+   // Slow mode: System 2 checks Laya's answer and speaks up only to correct it. (In tests Qwen 3.5 4B never
+   // confirmed and sometimes "corrected" right answers, so Fast mode trusts Laya and offers "Ask" instead.)
+   if (this.teacher.isConfigured && this.mode === 'slow') this._toSystem2(q, focus, { quick: entry.text, onConfirm: () => { entry.who += ` · checked by ${this._who()}`; const fresh = this._render(entry); node.replaceWith(fresh); node = fresh; this.convo.save(); } });
+   else if (compose && !this.teacher.isConfigured) this._msg('info', 'Laya chooses from what is written, so it can\'t compose. Load Qwen or connect a provider to have the teacher play something new.');
+  } catch (err) { this._setStatus(null); this._msg('error', `Laya couldn't answer: ${err.message}`); }
+ }
+
+ // The next control to try in a widget or plug-in, chosen by Laya from its current settings.
+ async _nextTip(title, plugin) {
+  const w = ws.widgets().find(x => x.title === title && x.plugin === plugin);
+  if (!w || !this.laya) return;
+  if (plugin) await this._learn(w);
+  const key = `${plugin ? 'plugin' : 'widget'}:${title}`, given = (this._tips ||= {})[key] ||= [];
+  const controls = ws.controls(w).map(c => ({ label: c.label, kind: c.kind, value: ws.valueOf(c), min: c.el.min ?? '', max: c.el.max ?? '', id: c.el.id }));
+  this._setStatus('coaching');
+  try {
+   const tip = await nextTip(w, { pick: (...a) => this.laya.pick(...a), controls, given });
+   if (!tip) { given.length = 0; this._msg('info', `That's every control in ${title}. Press Next tip again to go round once more.`); }
+   else {
+    given.push(tip.label);
+    this._add({ kind: 's1', who: `System 1 · Laya, ${tip.ms} ms`, text: tip.text, show: tip.target, guide: null });
+    ws.show(tip.target); this._say(tip.text);
+   }
+  } catch (err) { this._msg('error', `Laya couldn't choose: ${err.message}`); }
+  this._setStatus(null);
  }
 
  /* ---- Course ---- */
@@ -705,75 +1049,92 @@ export class TeacherBridge {
  _renderCourse() {
   const list = this.panel.querySelector('.tp-course');
   list.replaceChildren();
-  for (const unit of UNITS) {
+  for (const unit of COURSE_UNITS) {
    list.append(el('h3', { className: 'tp-group-title', textContent: unit }));
-   for (const l of LESSONS.filter(x => x.unit === unit)) {
+   for (const l of COURSE.filter(x => x.unit === unit)) {
     const done = this.courseDone.has(l.id);
     const item = el('button', { type: 'button', className: `tp-lesson-item${done ? ' done' : ''}${this.lesson === l ? ' current' : ''}` },
-     el('span', { className: 'tp-lesson-n', textContent: done ? '✓' : LESSONS.indexOf(l) + 1 }), el('span', { textContent: l.title }));
-    if (done) item.title = 'Done; play it again any time';
+     el('span', { className: 'tp-lesson-n', textContent: done ? '✓' : COURSE.indexOf(l) + 1 }), el('span', { textContent: l.title }));
+    if (done) item.title = 'Done; do it again any time';
     item.onclick = () => this._startLesson(l);
     list.append(item);
    }
   }
  }
 
- // A lesson card in the conversation: the idea, the task, the example (played straight away), and a link to
- // the chapter. The phrases played from here on are checked against the task.
- _startLesson(l) {
-  this.lesson = l; this.attempt.reset(); this._lessonMisses = 0;
-  const n = LESSONS.indexOf(l) + 1;
+ // A lesson card: the idea, the task, the example (or, for a workspace lesson, the controls to use), and a
+ // link to the chapter it comes from.
+ _lessonCard(l) {
+  if (!l) return null;
   const card = el('div', { className: 'teacher-msg lesson' },
-   el('span', { className: 'tp-who', textContent: `Lesson ${n} of ${LESSONS.length} · ${l.unit}` }),
+   el('span', { className: 'tp-who', textContent: `Lesson ${COURSE.indexOf(l) + 1} of ${COURSE.length} · ${l.unit}` }),
    el('strong', { textContent: l.title }), el('p', { textContent: l.text }), el('p', { className: 'tp-task', textContent: `Your turn: ${l.task}` }));
-  const hear = el('button', { type: 'button', textContent: '▶ Hear the example' });
-  hear.onclick = () => this._playSteps(l.example.steps, l.example.bpm);
-  const actions = el('div', { className: 'tp-msg-actions' }, hear);
-  if (this.teacher.isConfigured) {
-   const more = el('button', { type: 'button', textContent: 'Explain more' });
-   more.onclick = () => this._explainLesson(l);
-   actions.append(more);
-  }
-  card.append(actions, el('a', { href: l.page, target: '_blank', rel: 'noopener', textContent: `Read the chapter in Open Music Theory ↗` }));
-  this._append(card);
-  const bar = this.panel.querySelector('.tp-lesson-bar');
-  bar.hidden = false; bar.querySelector('span').textContent = `Lesson ${n}: ${l.title}`;
-  this._renderCourse(); this._showTab('lesson');
+  const actions = el('div', { className: 'tp-msg-actions' });
+  if (l.example) actions.append(el('button', { type: 'button', textContent: '▶ Hear the example', onclick: () => this._playSteps(l.example.steps, l.example.bpm) }));
+  if (l.show) actions.append(el('button', { type: 'button', textContent: 'Show me', onclick: () => this._showTargets(l.show) }));
+  if (this.teacher.isConfigured) actions.append(el('button', { type: 'button', textContent: 'Explain more', onclick: () => this._explainLesson(l) }));
+  card.append(actions);
+  if (l.page) card.append(el('a', { href: l.page, target: '_blank', rel: 'noopener', textContent: 'Read the chapter in Open Music Theory ↗' }));
+  return card;
+ }
+ _showTargets(targets = []) { targets.forEach((t, i) => setTimeout(() => ws.show(t), i * 1500)); }
+
+ // Starts a lesson: its card goes into the conversation, the example plays (or the controls light up), and
+ // from here on what the student plays and changes is checked against the task.
+ _startLesson(l) {
+  this._add({ kind: 'lesson', id: l.id }, l.title);
+  this._resumeLesson(l);
+  this._setOpen(true); this._showTab('lesson');
   document.activeElement?.blur?.(); // so the computer keyboard plays notes straight away
   const at = performance.now();
-  this._say(`${l.title}. ${l.text} Your turn: ${l.task}`).then(() => { if (this._lastNoteAt <= at) this._playSteps(l.example.steps, l.example.bpm); });
+  this._say(`${l.title}. ${l.text} Your turn: ${l.task}`).then(() => {
+   if (this._lastNoteAt > at || this.lesson !== l) return;
+   if (l.example) this._playSteps(l.example.steps, l.example.bpm); else this._showTargets(l.show);
+  });
+ }
+ // Makes a lesson the open one without posting its card again (when a saved conversation is reopened).
+ _resumeLesson(l) {
+  this._endLesson(false);
+  this.lesson = l; this.attempt.reset(); this._lessonMisses = 0;
+  this.convo.setLesson(l.id);
+  const bar = this.panel.querySelector('.tp-lesson-bar');
+  bar.hidden = false; bar.querySelector('span').textContent = `Lesson ${COURSE.indexOf(l) + 1}: ${l.title}`;
+  bar.querySelector('.tp-lesson-hear').textContent = l.example ? '▶ Example' : 'Show me';
+  // Workspace tasks finish with a click or a slider move as often as with a note, so they are checked as
+  // the student works, not only when a phrase ends.
+  if (isWorkspace(l)) this._lessonTimer = setInterval(() => this._checkLesson(true), 700);
+  this._renderCourse();
  }
 
- _endLesson() {
-  this.lesson = null; this.attempt.reset(); clearTimeout(this._missTimer);
+ _endLesson(save = true) {
+  this.lesson = null; this.attempt.reset(); clearTimeout(this._missTimer); clearInterval(this._lessonTimer);
+  if (save) this.convo.setLesson(null);
   this.panel.querySelector('.tp-lesson-bar').hidden = true;
   this._renderCourse();
  }
 
- // Each phrase is checked against the task: a pass says what was played and offers the next lesson; a miss
- // gives the hint, and after a few misses suggests hearing the example or asking for more.
- _checkLesson() {
-  const l = this.lesson, passed = l.check(this.attempt);
+ // A pass says what was done and offers the next lesson; a miss gives the hint once the student has stopped
+ // playing, and after a few misses suggests the example or asking for more. Checks from the timer stay quiet.
+ _checkLesson(quiet = false) {
+  const l = this.lesson;
+  if (!l) return;
+  const passed = isWorkspace(l) ? l.check(this.attempt, ws.state()) : l.check(this.attempt);
   if (passed) {
    this.courseDone.add(l.id); save('teacher-course-v1', [...this.courseDone]);
    this._endLesson();
-   const next = nextLesson(l.id);
+   const next = nextInCourse(l.id);
    const text = `Well done: ${typeof passed === 'string' ? `that's ${passed}` : 'you\'ve got it'}.${next ? '' : ' That was the last lesson in the course.'}`;
-   const box = el('div', { className: 'teacher-msg info passed' }, `✓ ${text}`);
-   if (next) {
-    const go = el('button', { type: 'button', className: 'tp-primary', textContent: `Next: ${next.title}` });
-    go.onclick = () => { go.disabled = true; this._startLesson(next); };
-    box.append(el('div', { className: 'tp-msg-actions' }, go));
-   }
-   this._append(box); this._say(text);
+   this._add({ kind: 'passed', text, next: next?.id || null });
+   this._say(text);
    return;
   }
+  if (quiet) return;
   // A pause between chords ends a phrase too, so a miss is only reported once the student has stopped playing.
   clearTimeout(this._missTimer);
   this._missTimer = setTimeout(() => {
    if (this.lesson !== l) return;
    this._lessonMisses++;
-   const more = this._lessonMisses >= 3 ? ` Listen to the example again${this.teacher.isConfigured ? ', or tap Explain more' : ''}.` : '';
+   const more = this._lessonMisses >= 3 ? ` ${l.example ? 'Listen to the example again' : 'Tap Show me'}${this.teacher.isConfigured ? ', or tap Explain more' : ''}.` : '';
    this._msg('info', `Not yet. ${l.hint}${more}`);
   }, 2500);
  }
@@ -782,7 +1143,40 @@ export class TeacherBridge {
   if (!this.teacher.isConfigured) { this._showTab('provider'); return; }
   this._askedAt = performance.now();
   this._msg('user', `Tell me more about ${l.title.toLowerCase()}.`);
-  this.teacher.ask(explainPrompt(l), { think: this.mode === 'slow' });
+  const focus = isWorkspace(l) ? ws.widgets().filter(w => w.title === l.widget).map(w => w.id) : [];
+  const prompt = isWorkspace(l) ? `The student is on the workspace lesson "${l.title}". It says: ${l.text} Their task: ${l.task} Explain it a little more, using the widget's real controls, and point at the control to use.` : explainPrompt(l);
+  this.teacher.ask(prompt, { think: this.mode === 'slow', context: focus.length ? `[WORKSPACE]\n${ws.describe(focus)}` : '' });
+ }
+
+ /* ---- Saved in this browser ---- */
+
+ // Downloaded models and saved conversations, each with a way to clear it.
+ async _renderStorage() {
+  const box = this.panel.querySelector('.tp-storage');
+  const status = el('p', { className: 'tp-card-status', role: 'status' });
+  const models = el('span', { className: 'tp-note', textContent: 'Checking downloaded models…' });
+  const clearModels = el('button', { type: 'button', textContent: 'Clear downloaded models' });
+  const convos = el('span', { className: 'tp-note', textContent: `${this.convo.count} saved conversation${this.convo.count === 1 ? '' : 's'}` });
+  const clearConvos = el('button', { type: 'button', textContent: 'Clear saved conversations', disabled: !this.convo.count });
+  box.replaceChildren(el('h3', { className: 'tp-group-title', textContent: 'Saved in this browser' }),
+   el('div', { className: 'tp-row' }, models, clearModels), el('div', { className: 'tp-row' }, convos, clearConvos), status);
+  clearConvos.onclick = () => {
+   if (!confirm('Delete every saved conversation with the teacher, including this one?')) return;
+   this.convo.clearAll(); this._loadConversation(); this._renderStorage();
+  };
+  clearModels.onclick = async () => {
+   if (!confirm('Delete the downloaded on-device models? They download again the next time you load them.')) return;
+   clearModels.disabled = true;
+   try { const n = await clearModelCache(); save('teacher-laya-auto-v1', false); status.className = 'tp-card-status ok'; status.textContent = n ? `Deleted. A model that is loaded keeps working until you reload the page.` : 'There was nothing to delete.'; }
+   catch (err) { status.className = 'tp-card-status bad'; status.textContent = `Couldn't delete them: ${err.message}`; }
+   this._renderStorage().then(() => { box.querySelector('.tp-card-status').replaceWith(status); });
+  };
+  try {
+   const info = await modelCacheInfo();
+   const names = [info.laya && 'Laya', ...info.qwen, ...info.voices].filter(Boolean);
+   models.textContent = names.length ? `Downloaded models: ${names.join(', ')}${info.bytes ? ` (this site stores ${formatBytes(info.bytes)})` : ''}` : 'No models downloaded';
+   clearModels.disabled = !info.caches.length;
+  } catch { models.textContent = 'Downloaded models: unknown'; }
  }
 
  /* ---- Talk mode ---- */
@@ -792,24 +1186,59 @@ export class TeacherBridge {
 
  _toggleTalk() {
   if (this.talking) { this.voice.stop(); return; }
+  this._makeVoice();
+  this.voice.start();
+ }
+
+ // A finished spoken question: routed like a typed one.
+ _heard(text) {
+  this.panel.querySelector('.question-input').value = '';
+  this._route(text);
+ }
+
+ _makeVoice() {
   this.voice ||= new Voice({
    onHeard: text => this._heard(text),
    onInterim: text => { this.panel.querySelector('.question-input').value = text; },
    onState: (state, note) => this._talkState(state, note),
   });
-  this.voice.start();
+  this.voice.setVoice(this.voiceChoice);
+  this.voice.onProgress = p => { const line = this.panel.querySelector('.tp-talk-note'); line.hidden = false; line.textContent = `Getting the voice ready: ${p.text || ''}${typeof p.progress === 'number' ? ` ${Math.round(p.progress * 100)}%` : ''}`; };
+  return this.voice;
  }
 
- // A finished spoken question: asked like a typed one, or answered aloud with what to set up first.
- _heard(text) {
-  this.panel.querySelector('.question-input').value = '';
-  if (this.teacher.isConfigured) { this._question(text); return; }
-  this._msg('user', text);
-  const reply = this.laya ? 'I can coach your playing right now. To answer questions, load Qwen or connect a provider in the Provider tab.' : 'Choose a provider in the Provider tab first, then I can answer.';
-  this._msg('info', reply); this._say(reply);
+ // The voice that reads replies in talk mode: the browser's, or a neural voice that runs in the page.
+ async _renderVoices() {
+  const box = this.panel.querySelector('.tp-voices');
+  const select = el('select'), about = el('p', { className: 'tp-note' }), status = el('p', { className: 'tp-card-status', role: 'status' });
+  const test = el('button', { type: 'button', textContent: 'Test voice' });
+  box.replaceChildren(el('h3', { className: 'tp-group-title', textContent: 'Teacher\'s voice' }), el('label', { className: 'tp-field' }, 'Reads replies aloud in talk mode', select), about, el('div', { className: 'tp-row' }, test), status);
+  select.append(el('option', { value: 'browser|', textContent: 'Browser voice (built in, no download)' }));
+  const engines = {};
+  for (const id of Object.keys(VOICE_ENGINES)) {
+   try {
+    const { ENGINE } = await loadEngine(id); engines[id] = ENGINE;
+    select.append(el('optgroup', { label: ENGINE.name }, ...ENGINE.voices.map(v => el('option', { value: `${id}|${v.id}`, textContent: `${v.label}${v.id === ENGINE.defaultVoice ? ' · recommended' : ''}` }))));
+   } catch { /* an engine that can't load here isn't offered */ }
+  }
+  const current = () => { const [engine, voice] = select.value.split('|'); return { engine, voice }; };
+  const describe = () => { const e = engines[current().engine]; about.textContent = e ? `${e.about} ${e.license}` : 'The browser\'s own voice: nothing to download, but it sounds less natural.'; };
+  const chosen = this.voiceChoice.engine === 'browser' ? 'browser|' : `${this.voiceChoice.engine}|${this.voiceChoice.voice || engines[this.voiceChoice.engine]?.defaultVoice || ''}`;
+  select.value = [...select.options].some(o => o.value === chosen) ? chosen : 'browser|';
+  describe();
+  select.onchange = () => { this.voiceChoice = current(); save('teacher-voice-v1', this.voiceChoice); this.voice?.setVoice(this.voiceChoice); describe(); status.textContent = ''; };
+  test.onclick = async () => {
+   const v = this._makeVoice();
+   test.disabled = true; status.className = 'tp-card-status'; status.textContent = 'Getting the voice ready…';
+   v.onProgress = p => { status.textContent = `${p.text || 'Downloading'}${typeof p.progress === 'number' ? ` ${Math.round(p.progress * 100)}%` : ''}`; };
+   try { await v.speak('Hi! Play a phrase and pause, and I\'ll tell you what you played and what to try next.'); status.className = 'tp-card-status ok'; status.textContent = 'That is the voice talk mode uses.'; }
+   catch (err) { status.className = 'tp-card-status bad'; status.textContent = err.message; }
+   test.disabled = false; this._makeVoice();
+  };
  }
 
  _talkState(state, note) {
+  if (state === 'voice-error') { this._msg('info', `The chosen voice couldn't start (${note}), so the browser's voice reads replies for now.`); return; }
   this.talking = state === 'listening' || state === 'speaking';
   const btn = this.panel.querySelector('.tp-talk'), line = this.panel.querySelector('.tp-talk-note');
   btn.setAttribute('aria-pressed', this.talking);
