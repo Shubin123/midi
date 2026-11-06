@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Waveform lab</title>
+<pre id="out">rendering…</pre>
+<script type="module">
+// Serve the repo over HTTP and open tests/waveforms.html, or run `node tests/waveforms.mjs` (headless, with the
+// app checks too). Results also land in window.results.
+import { runLab } from './waveforms.js';
+const golden = await fetch('waveforms.golden.json').then(r => (r.ok ? r.json() : null)).catch(() => null);
+const results = window.results = await runLab({ golden });
+document.getElementById('out').textContent = [
+ ...results.checks.map(c => `${c.ok ? 'ok  ' : 'FAIL'} ${c.name} (${c.ms} ms)${c.problems.map(p => `\n       ${p}`).join('')}`),
+ `\n${results.passed} passed, ${results.failed} failed, in ${results.ms} ms${golden ? '' : ' (no tests/waveforms.golden.json: fingerprints not compared)'}`,
+].join('\n');
+</script>

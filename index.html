@@ -22,42 +22,13 @@
             </div>
 
             <div class="controls">
-                <div class="control-group" id="osc1-group">
-                    <div class="control-title">Oscillator 1</div>
-                    <label> Waveform <select id="waveformOsc1"> <option value="sine">Sine</option> <option value="square">Square</option> <option value="sawtooth" selected>Sawtooth</option> <option value="triangle">Triangle</option> <option value="pulse">Pulse</option> </select> </label>
-                    <label> Octave (Base) <select id="octaveOsc1"> <option value="2">2</option> <option value="3">3</option> <option value="4" selected>4</option> <option value="5">5</option> <option value="6">6</option> </select> </label>
-                    <label>Detune (cents) <input type="range" id="detuneOsc1" min="-100" max="100" step="1" value="0" class="horizontal-slider" /></label>
-                    <label>Osc 1 Level <input type="range" id="levelOsc1" min="0" max="1" step="0.01" value="0.7" class="horizontal-slider" /></label>
-                </div>
-
-                <div class="control-group" id="osc2-group">
-                    <div class="control-title">Oscillator 2 <label class="switch"> <input type="checkbox" id="enableOsc2" checked> <span class="slider-switch"></span> </label> </div>
-                    <div id="osc2-controls-wrapper">
-                        <label> Osc 2 Waveform <select id="waveformOsc2"> <option value="sine">Sine</option> <option value="square">Square</option> <option value="sawtooth" selected>Sawtooth</option> <option value="triangle">Triangle</option> <option value="pulse">Pulse</option> </select> </label>
-                        <label> Osc 2 Octave Offset <select id="octaveOsc2"> <option value="-2">-2</option> <option value="-1">-1</option> <option value="0" selected>0</option> <option value="1">+1</option> <option value="2">+2</option> </select> </label>
-                        <label>Osc 2 Fine Tune (cents) <input type="range" id="fineTuneOsc2" min="-100" max="100" step="1" value="0" class="horizontal-slider" /></label>
-                        <label>Osc 2 Start Delay (ms) <input type="range" id="delayOsc2" min="0" max="50" step="0.1" value="0" class="horizontal-slider" /></label>
-                        <label>Osc 2 Level <input type="range" id="levelOsc2" min="0" max="1" step="0.01" value="0.7" class="horizontal-slider" /></label>
+                <div class="control-group wide" id="oscillators-group" data-wide="true">
+                    <div class="control-title">Oscillators</div>
+                    <!-- js/oscillators.js adds a card per oscillator here, and + Add oscillator -->
+                    <div class="osc-common">
+                        <label> Keyboard Octave <select id="baseOctave"> <option value="2">2</option> <option value="3">3</option> <option value="4" selected>4</option> <option value="5">5</option> <option value="6">6</option> </select> </label>
+                        <label>Oscillator Slop <input type="range" id="oscSlop" min="0" max="0.1" step="0.001" value="0.005" class="horizontal-slider" /></label>
                     </div>
-                </div>
-
-                <div class="control-group" id="sub-noise-group">
-                     <div class="control-title">Sub Oscillator <label class="switch"> <input type="checkbox" id="enableSub" checked> <span class="slider-switch"></span> </label> </div>
-                    <div id="sub-osc-controls">
-                        <label> Sub Waveform <select id="waveformSub"> <option value="sine">Sine</option> <option value="square" selected>Square</option> <option value="triangle">Triangle</option> </select> </label>
-                        <label> Sub Octave <select id="octaveSub"> <option value="-1">-1 Oct</option> <option value="-2" selected>-2 Oct</option> </select> </label>
-                        <label>Sub Level <input type="range" id="levelSub" min="0" max="1" step="0.01" value="0.5" class="horizontal-slider" /></label>
-                    </div>
-                    <hr style="border-color: var(--border-color); margin: 15px 0;" />
-                     <div class="control-title">Noise <label class="switch"> <input type="checkbox" id="enableNoise" > <span class="slider-switch"></span> </label> </div>
-                    <div id="noise-controls" style="display: none;">
-                        <label> Noise Type <select id="noiseType"> <option value="white">White</option> <option value="pink">Pink (Approx)</option> </select> </label>
-                        <label>Noise Level <input type="range" id="levelNoise" min="0" max="1" step="0.01" value="0" class="horizontal-slider" /></label>
-                    </div>
-                    <hr style="border-color: var(--border-color); margin: 15px 0;" />
-                    <div class="control-title">Common Pulse/Slop</div>
-                    <label id="pulseWidthLabel" class="hidden-control">Pulse Width <input type="range" id="pulseWidth" min="0.01" max="0.99" step="0.01" value="0.5" class="horizontal-slider" /></label>
-                    <label>Oscillator Slop <input type="range" id="oscSlop" min="0" max="0.1" step="0.001" value="0.005" class="horizontal-slider" /></label>
                 </div>
 
                 <div class="control-group" id="envelope-group">
@@ -92,7 +63,7 @@
                     <div class="control-title">Master & Settings</div>
                     <label> Keyboard Octaves <select id="numOctavesSelect"> <option value="1">1 Octave</option> <option value="2" selected>2 Octaves</option> <option value="3">3 Octaves</option> <option value="4">4 Octaves</option> </select> </label>
                     <label>Volume <input type="range" id="masterVolume" min="0" max="1" step="0.01" value="0.7" class="horizontal-slider" /></label>
-                    <label> Visualizer Source <select id="visualizerSourceSelect"> <option value="master" selected>Master Output</option> <option value="osc1">Oscillator 1 Sum</option> <option value="osc2">Oscillator 2 Sum</option> </select> </label>
+                    <label> Visualizer Source <select id="visualizerSourceSelect"> <option value="master" selected>Master Output</option> </select> </label>
                     <label style="margin-top: calc(15px * var(--font-scale-factor));"> UI Theme <select id="uiTheme"> <option value="midnight-drive">Midnight Drive</option> <option value="solarized-dark">Solarized Dark</option> <option value="crimson-peak">Crimson Peak</option> <option value="cyber-glow">Cyber Glow</option> <option value="forest-calm">Forest Calm</option> <option value="ocean-depth">Ocean Depth</option> <option value="autumn-warmth">Autumn Warmth</option> <option value="lavender-haze">Lavender Haze</option> <option value="desert-sunset">Desert Sunset</option> <option value="steampunk-gears">Steampunk Gears</option> <option value="vintage-library">Vintage Library</option> <option value="monochrome-noir">Monochrome Noir</option> <option value="pastel-dream">Pastel Dream</option> </select> </label>
                     <label>UI Scale (%) <input type="range" id="uiScale" min="75" max="150" step="5" value="100" class="horizontal-slider" /></label>
                     <label style="margin-top: calc(15px * var(--font-scale-factor));"><input type="checkbox" id="synthesiaToggle" /> Enable Falling Notes</label>

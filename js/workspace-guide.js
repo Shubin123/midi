@@ -21,20 +21,10 @@ export const GUIDES = {
   how: [['Pick a target and press + Add lane.', 'automation-target'], ['Tick a lane to switch it on; it only moves while the sequencer plays.', 'Automation'], ['Ramp up and Flatten reshape a whole lane; or drag single step values.', 'Automation › Ramp up'], ['Linear glides between steps; hold keeps each value until the next step.', 'Automation']],
   keywords: ['automation', 'lane', 'ramp', 'automate'],
  },
- 'Oscillator 1': {
-  what: 'The main sound source. Its waveform sets the basic tone: sine is pure, triangle soft, square hollow, sawtooth bright and buzzy, pulse nasal.',
-  how: [['Choose the waveform.', 'waveformOsc1'], ['Octave (Base) moves the on-screen keyboard up or down.', 'octaveOsc1'], ['Detune shifts the pitch by up to a semitone, in cents.', 'detuneOsc1'], ['Level sets how loud it is in the mix.', 'levelOsc1']],
-  keywords: ['oscillator', 'waveform', 'wave', 'sawtooth', 'square', 'sine', 'triangle', 'pulse', 'detune', 'tone'],
- },
- 'Oscillator 2': {
-  what: 'A second oscillator layered on the first. Detuned a few cents against oscillator 1 it makes a thick, chorused sound; an octave up or down adds weight or shine.',
-  how: [['Switch it on or off.', 'enableOsc2'], ['Choose its waveform.', 'waveformOsc2'], ['Octave offset: up to two octaves above or below oscillator 1.', 'octaveOsc2'], ['Fine tune by a few cents for a thicker sound.', 'fineTuneOsc2'], ['Start delay makes it come in a moment after the note.', 'delayOsc2']],
-  keywords: ['oscillator 2', 'osc 2', 'fine tune', 'layer', 'thick'],
- },
- 'Sub Oscillator': {
-  what: 'Adds weight below the note (a sub oscillator one or two octaves down), noise for breath and percussion, and two shared controls: pulse width and analogue-style slop.',
-  how: [['Switch the sub oscillator on and choose one or two octaves down.', 'octaveSub'], ['Set its level.', 'levelSub'], ['Add white or pink noise.', 'enableNoise'], ['Pulse Width shapes the pulse waveform, from thin to square.', 'pulseWidth'], ['Oscillator Slop adds a little random detune per note, like an analogue synth.', 'oscSlop']],
-  keywords: ['sub', 'bass', 'noise', 'pulse width', 'slop'],
+ 'Oscillators': {
+  what: 'The sound sources, layered in every note: as many oscillators as you like, each with its own waveform (sine is pure, triangle soft, square hollow, sawtooth bright and buzzy, pulse nasal, or white or pink noise), octave, detune, level and start delay. It starts with two sawtooths and a square two octaves down.',
+  how: [['Choose an oscillator\'s waveform.', 'waveformOsc1'], ['+ Add oscillator layers another one; × removes one.', 'addOscillator'], ['Octave shifts an oscillator up or down; −1 or −2 makes it a sub oscillator, for weight.', 'octaveOsc1'], ['Detune one oscillator a few cents against another for a thicker, chorused sound.', 'detuneOsc1'], ['Level sets how loud each oscillator is in the mix.', 'levelOsc1'], ['Choose Pulse as a waveform and its Pulse width slider shapes it, from thin to square.', 'waveformOsc1'], ['Keyboard Octave moves the on-screen keyboard up or down.', 'baseOctave'], ['Oscillator Slop adds a little random detune per note, like an analogue synth.', 'oscSlop']],
+  keywords: ['oscillator', 'oscillators', 'osc', 'waveform', 'wave', 'sawtooth', 'square', 'sine', 'triangle', 'pulse', 'detune', 'tone', 'sub', 'noise', 'layer', 'thick', 'slop'],
  },
  'Envelope (ADSR)': {
   what: 'How each note\'s volume moves over time: Attack (fade in), Decay (fall to the sustain level), Sustain (the level while held) and Release (fade out after you let go).',
@@ -124,9 +114,9 @@ export const WORKSPACE_LESSONS = [
   show: ['Oscilloscope'], check: (p, ws) => ws.minimized.includes('scope-module'),
  },
  {
-  id: 'ws_oscillators', unit: WORKSPACE_UNIT, widget: 'Oscillator 1', title: 'Oscillators: the raw sound',
-  text: 'A synth starts with oscillators. The waveform decides the basic tone: sine is pure, triangle soft, square hollow, sawtooth bright. Oscillator 2 layers a second wave, and a few cents of detune between them makes the sound thicker.',
-  task: 'Set Oscillator 1\'s waveform to Square, then play a note.', hint: 'Use the Waveform menu in Oscillator 1.',
+  id: 'ws_oscillators', unit: WORKSPACE_UNIT, widget: 'Oscillators', title: 'Oscillators: the raw sound',
+  text: 'A synth starts with oscillators. The waveform decides the basic tone: sine is pure, triangle soft, square hollow, sawtooth bright. Every note layers all the oscillators in the bank: + Add oscillator stacks another, a few cents of detune between two makes the sound thicker, and one an octave or two down adds weight.',
+  task: 'Set the first oscillator\'s waveform to Square, then play a note.', hint: 'Use the Waveform menu of Oscillator 1, in the Oscillators widget.',
   show: ['waveformOsc1'], check: (p, ws) => ws.value('waveformOsc1') === 'square' && played(p),
  },
  {
@@ -192,7 +182,7 @@ export const WORKSPACE_LESSONS = [
  {
   id: 'ws_scope', unit: WORKSPACE_UNIT, widget: 'Oscilloscope', title: 'Seeing the sound',
   text: 'The oscilloscope draws the wave as it plays. Point it at one oscillator to see its waveform on its own, then back at the master output to see what the filter and effects do.',
-  task: 'Set Visualizer Source to Oscillator 1 Sum, then play a note.', hint: 'Visualizer Source is in Master & Settings.',
+  task: 'Set Visualizer Source to Oscillator 1, then play a note.', hint: 'Visualizer Source is in Master & Settings.',
   show: ['visualizerSourceSelect'], check: (p, ws) => ws.value('visualizerSourceSelect') === 'osc1' && played(p),
  },
  {

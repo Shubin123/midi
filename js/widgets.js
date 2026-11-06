@@ -27,7 +27,9 @@ export function setupWidgets(workspace) {
  const widgets = [...workspace.children];
  widgets.forEach((el,i)=>el.dataset.order=i);
  const saved = read('synth-layout-v1', {});
- const list = key => Array.isArray(saved[key]) ? saved[key] : [];
+ // Widgets that were merged keep the place of the first one they replace (three oscillators became one).
+ const RENAMED = { 'osc1-group': 'oscillators-group' };
+ const list = key => Array.isArray(saved[key]) ? saved[key].map(id => RENAMED[id] || id) : [];
  const order = list('order');
  widgets.sort((a,b) => (order.includes(a.id) ? order.indexOf(a.id) : 999) - (order.includes(b.id) ? order.indexOf(b.id) : 999)).forEach(el => workspace.append(el));
  const persist = () => save('synth-layout-v1', { order: [...workspace.children].map(el=>el.id), hidden: widgets.filter(el=>el.hidden).map(el=>el.id), wide: widgets.filter(el=>el.classList.contains('wide')).map(el=>el.id), spans: Object.fromEntries(widgets.filter(el=>el.dataset.span).map(el=>[el.id,Number(el.dataset.span)])), heights: Object.fromEntries(widgets.filter(el=>el.style.height).map(el=>[el.id,parseFloat(el.style.height)])), minimized: widgets.filter(el=>el.classList.contains('minimized')).map(el=>el.id) });

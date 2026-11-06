@@ -21,31 +21,54 @@ Hardware MIDI input is Chromium-only; everything else works everywhere.
 Each held note builds its own voice graph and tears it down on release:
 
 ```
-Osc 1  ──┐
-Osc 2  ──┤
-Sub    ──┼── mix ── ADSR gain ── filter ── master gain ── analyser ── output
-Noise  ──┘
+Oscillator 1  ──┐
+Oscillator 2  ──┤
+     …        ──┼── mix ── ADSR gain ── filter ── master gain ── analyser ── output
+Oscillator n  ──┘
 ```
 
 | Stage | Details |
 | --- | --- |
-| **Oscillator 1** | Sine / square / sawtooth / triangle / pulse, base octave 2-6, ±100 cents detune, level |
-| **Oscillator 2** | Same waveforms, ±2 octave offset, ±100 cents fine tune, 0-50 ms start delay, level |
-| **Sub oscillator** | Sine / square / triangle, one or two octaves down |
-| **Noise** | White, or an approximated pink |
+| **Oscillators** | One to eight, layered in every note (`js/oscillators.js`). Each has its own waveform (sine, square, sawtooth, triangle, pulse, white or pink noise), octave (±2), detune (±100 cents), level, start delay (0-50 ms) and pulse width, and can be switched off. **+ Add oscillator** layers another; × removes one. The bank starts as two sawtooths and a square two octaves down (the sound of the old Oscillator 1, Oscillator 2 and Sub), and is saved in the browser. Keyboard octave (2-6) and slop are shared |
 | **Envelope** | Full ADSR: attack and decay to 2 s, sustain level, release to 5 s |
 | **Filter** | Lowpass / highpass / bandpass / notch / allpass, cutoff 20 Hz-20 kHz on a logarithmic slider, Q up to 30 |
 
 Two details worth calling out:
 
-- **Pulse waves** are not a native `OscillatorNode` type. They are produced by
-  running a sawtooth through a `WaveShaperNode` whose 256-point curve is a hard
-  step positioned by the pulse-width control. That is the classic trick for
-getting a
-  variable-width square out of Web Audio.
+- **Pulse waves** are not a native `OscillatorNode` type. They are built from
+  their Fourier series as a `PeriodicWave` (2,047 harmonics, cached per width),
+  so they are band-limited and high for exactly the pulse width of each cycle,
+  with no DC offset. They used to be a sawtooth through a hard-step
+  `WaveShaperNode`, which assumed the sawtooth spans ±1; Web Audio's spans
+  ±0.945, so the width came out wrong and reversed (0.25 gave 80% high), and
+  widths near the ends were mostly DC, with no tone at all at 0.01 and 0.99.
+  Width 0.5 is the same ±1 square as before.
 - **Oscillator slop** applies a small random detune per voice, emulating the
   tuning drift of analogue oscillators so stacked notes beat against each other
   instead of phase-locking.
+
+### Testing the waveforms
+
+`node tests/waveforms.mjs` checks every sound source by measuring it. It serves
+the repo, starts headless Chrome (Google Chrome, Chromium, Edge or a Playwright
+Chromium; set `CHROME` for another) and drives it over the DevTools protocol
+with Node's own WebSocket, so it needs nothing installed. It takes about five
+seconds.
+
+- **The lab** (`tests/waveforms.js`, also `tests/waveforms.html` in a browser)
+  renders oscillators through the synth's own `buildVoice` on an
+  `OfflineAudioContext`, at 375 Hz so a cycle is exactly 128 samples and each
+  harmonic falls on a DFT bin. It checks each waveform's harmonics against its
+  Fourier series, pulse widths (time high, no DC), pitch to a hundredth of a
+  cent through octave, detune and slop, level, start delay, switching off, the
+  colour of white and pink noise, and that a stack, up to a full bank of eight,
+  is exactly the sum of its oscillators. A copy of the old fixed-oscillator code
+  is kept as a reference: the default stack matches it sample for sample.
+- **In the app** (`tests/waveforms-app.js`), the Oscillators widget is used as
+  a person would: rows added up to eight and removed, every control changed,
+  the bank saved, an automation lane moving the first detune. Then every
+  waveform, a layered stack and a level change on a held note are played
+  through the real synth (envelope, filter, limiter) and measured at its output.
 
 ## Features
 
@@ -78,8 +101,8 @@ gap. The click itself is a short synthesised buffer rather than a sample.
 
 ### Visuals
 
-- A 2048-point FFT oscilloscope that can be pointed at the master output,
-  oscillator 1's sum, or oscillator 2's sum.
+- A 2048-point FFT oscilloscope that can be pointed at the master output or
+  at any one oscillator (summed over the notes playing).
 - Falling notes, Synthesia style, in the Keyboard module directly above the
   keys, so each note lines up with the key that played it. They are on by
   default; the **Falling notes** switch in that module's toolbar turns them off.
@@ -643,6 +666,8 @@ adapted texts in `js/lessons.js` are shared under the same license
 
 The service worker needs `https://` or `http://localhost`. Tests:
 
+- `node tests/waveforms.mjs`: every waveform rendered by the browser's own Web Audio and measured, then the Oscillators widget used and played through the synth in the app (headless Chrome, no dependencies; see *Testing the waveforms*)
+- `node tests/oscillators.mjs`: the oscillator bank's settings
 - `node tests/archive.mjs`: archive reading and writing
 - `node tests/formats.mjs`: WAV, AIFF and MIDI reading and writing
 - `node tests/sequencer.mjs`: sequencer scales and pattern transposition
@@ -710,7 +735,5 @@ the bottom-right corner of the running page.
 - **Computer-key labels only appear on the first two octaves** (`o < 2` in
   `createKeyboard`), so selecting three or four octaves leaves the higher keys
   unlabelled even though the mapping continues.
-- Disabling the sub-oscillator or noise section silently forces its level slider
-  to 0, so re-enabling it comes back muted rather than at the previous level.
 - The sequencer uses an audio-clock-driven timer; timing can still be affected by
   heavy main-thread load. Existing loop recordings retain their original timing.

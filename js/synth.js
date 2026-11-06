@@ -1,8 +1,8 @@
 
             const AudioContextGlobal = window.AudioContext || window.webkitAudioContext;
             let audioContext;
-            let masterGain, filterNode, filterBypassGain, masterLimiter, analyser, analyserOsc1, analyserOsc2;
-            let summingGainOsc1, summingGainOsc2;
+            let masterGain, filterNode, filterBypassGain, masterLimiter, analyser;
+            const oscTaps = []; // Per-oscillator sums for the oscilloscope: { sum, analyser }, made as they are needed
             let fxInput, fxOutput; // Insert point for effect and plugin widgets
             let voiceBus; // Built-in synth voices only; plug-in instruments mute it unless layered
             let visualizerCanvas, visualizerContext;
@@ -16,11 +16,8 @@
             const keyMapping = {'a':0,'w':1,'s':2,'e':3,'d':4,'f':5,'t':6,'g':7,'y':8,'h':9,'u':10,'j':11,'k':12,'o':13,'l':14,'p':15,';':16,'\'':17};
             const keyReverseLookup = {}; Object.keys(keyMapping).forEach(k => keyReverseLookup[keyMapping[k]] = k);
 
-            let waveformOsc1Select, octaveOsc1Select, detuneOsc1Input, levelOsc1Input,
-                enableOsc2Toggle, waveformOsc2Select, octaveOsc2Select, fineTuneOsc2Input, delayOsc2Input, levelOsc2Input, osc2ControlsWrapper,
-                enableSubToggle, waveformSubSelect, octaveSubSelect, levelSubInput, subOscControls,
-                enableNoiseToggle, noiseTypeSelect, levelNoiseInput, noiseControls,
-                pulseWidthLabel, pulseWidthInput, oscSlopInput,
+            // The oscillators themselves are the bank in js/oscillators.js (window.oscillatorBank).
+            let baseOctaveSelect, oscSlopInput,
                 enableAdsrToggle, attackInput, decayInput, sustainInput, releaseInput, adsrControls,
                 enableFilterToggle, filterTypeSelect, filterCutoffInput, filterResonanceInput, filterControlsElement,
                 masterVolumeInput, numOctavesSelect, visualizerSourceSelect,
@@ -66,9 +63,6 @@
                 masterGain = audioContext.createGain();
                 masterGain.gain.value = parseFloat(masterVolumeInput.value);
 
-                summingGainOsc1 = audioContext.createGain();
-                summingGainOsc2 = audioContext.createGain();
-
                 filterNode = audioContext.createBiquadFilter();
                 filterBypassGain = audioContext.createGain(); 
                 
@@ -88,12 +82,7 @@
 
 
                 analyser = audioContext.createAnalyser(); analyser.fftSize = 2048;
-                analyserOsc1 = audioContext.createAnalyser(); analyserOsc1.fftSize = 2048;
-                analyserOsc2 = audioContext.createAnalyser(); analyserOsc2.fftSize = 2048;
 
-                summingGainOsc1.connect(analyserOsc1);
-                summingGainOsc2.connect(analyserOsc2);
-                
                 masterLimiter.connect(analyser); 
                 analyser.connect(audioContext.destination);
 
@@ -107,32 +96,7 @@
             
             function getCurrentSynthParams() {
                 return {
-                    osc1: {
-                        waveform: waveformOsc1Select.value,
-                        detune: parseFloat(detuneOsc1Input.value),
-                        level: parseFloat(levelOsc1Input.value),
-                        pulseWidth: waveformOsc1Select.value === 'pulse' ? parseFloat(pulseWidthInput.value) : 0.5,
-                    },
-                    osc2: {
-                        enabled: enableOsc2Toggle.checked,
-                        waveform: waveformOsc2Select.value,
-                        octaveOffset: parseInt(octaveOsc2Select.value),
-                        fineTune: parseFloat(fineTuneOsc2Input.value),
-                        delay: parseFloat(delayOsc2Input.value),
-                        level: parseFloat(levelOsc2Input.value),
-                        pulseWidth: waveformOsc2Select.value === 'pulse' ? parseFloat(pulseWidthInput.value) : 0.5,
-                    },
-                    sub: {
-                        enabled: enableSubToggle.checked,
-                        waveform: waveformSubSelect.value,
-                        octave: parseInt(octaveSubSelect.value),
-                        level: parseFloat(levelSubInput.value)
-                    },
-                    noise: {
-                        enabled: enableNoiseToggle.checked,
-                        type: noiseTypeSelect.value,
-                        level: parseFloat(levelNoiseInput.value)
-                    },
+                    oscillators: window.oscillatorBank.list(),
                     common: {
                         oscSlop: parseFloat(oscSlopInput.value),
                     },
@@ -153,10 +117,11 @@
             }
 
 
-            function createKeyboard() { keyboardContainer.innerHTML = ''; let computerKeyIndex = 0; let whiteKeyCounter = 0; const baseOctave = parseInt(octaveOsc1Select.value); const numOctaves = parseInt(numOctavesSelect.value); const totalWhiteKeys = WHITE_KEYS_PER_OCTAVE * numOctaves + 1; /* the octaves plus a closing C: two octaves are 25 keys, like a 25-key controller */ for (let o = 0; o <= numOctaves; ++o) { keysPattern.forEach((keyData, patternIndex) => { if (o === numOctaves && patternIndex > 0) return; const currentOctave = baseOctave + o; const noteWithOctave = `${keyData.note}${currentOctave}`; const midiValue = (currentOctave * 12) + patternIndex; const keyElement = document.createElement('div'); keyElement.dataset.note = noteWithOctave; keyElement.dataset.midi = midiValue; keyElement.dataset.keymapIndex = computerKeyIndex; keyElement.dataset.isBlack = keyData.type === 'black'; if (keyData.type === 'white') { keyElement.className = 'white-key'; keyElement.style.flexBasis = `calc(100% / ${totalWhiteKeys})`; if (keyReverseLookup[computerKeyIndex] && o < 2) { const keyLabel = document.createElement('div'); keyLabel.className = 'key-label'; keyLabel.textContent = keyReverseLookup[computerKeyIndex].toUpperCase(); keyElement.appendChild(keyLabel); } keyboardContainer.appendChild(keyElement); whiteKeyCounter++; } else { keyElement.className = 'black-key'; /* centred on the gap between its two white keys, inside the keyboard's padding (where the white keys sit) */ const gap = whiteKeyCounter / totalWhiteKeys, blackWidth = 0.6 / totalWhiteKeys; keyElement.style.left = `calc(var(--kb-pad) + (100% - 2 * var(--kb-pad)) * ${gap - blackWidth / 2})`; keyElement.style.width = `calc((100% - 2 * var(--kb-pad)) * ${blackWidth})`; if (keyReverseLookup[computerKeyIndex] && o < 2) { const keyLabel = document.createElement('div'); keyLabel.className = 'key-label'; keyLabel.textContent = keyReverseLookup[computerKeyIndex].toUpperCase(); keyElement.appendChild(keyLabel); } keyboardContainer.appendChild(keyElement); } computerKeyIndex++; }); } if (synthesiaContainer?.classList.contains('active')) requestAnimationFrame(createSynthesiaGrid); }
+            function createKeyboard() { keyboardContainer.innerHTML = ''; let computerKeyIndex = 0; let whiteKeyCounter = 0; const baseOctave = parseInt(baseOctaveSelect.value); const numOctaves = parseInt(numOctavesSelect.value); const totalWhiteKeys = WHITE_KEYS_PER_OCTAVE * numOctaves + 1; /* the octaves plus a closing C: two octaves are 25 keys, like a 25-key controller */ for (let o = 0; o <= numOctaves; ++o) { keysPattern.forEach((keyData, patternIndex) => { if (o === numOctaves && patternIndex > 0) return; const currentOctave = baseOctave + o; const noteWithOctave = `${keyData.note}${currentOctave}`; const midiValue = (currentOctave * 12) + patternIndex; const keyElement = document.createElement('div'); keyElement.dataset.note = noteWithOctave; keyElement.dataset.midi = midiValue; keyElement.dataset.keymapIndex = computerKeyIndex; keyElement.dataset.isBlack = keyData.type === 'black'; if (keyData.type === 'white') { keyElement.className = 'white-key'; keyElement.style.flexBasis = `calc(100% / ${totalWhiteKeys})`; if (keyReverseLookup[computerKeyIndex] && o < 2) { const keyLabel = document.createElement('div'); keyLabel.className = 'key-label'; keyLabel.textContent = keyReverseLookup[computerKeyIndex].toUpperCase(); keyElement.appendChild(keyLabel); } keyboardContainer.appendChild(keyElement); whiteKeyCounter++; } else { keyElement.className = 'black-key'; /* centred on the gap between its two white keys, inside the keyboard's padding (where the white keys sit) */ const gap = whiteKeyCounter / totalWhiteKeys, blackWidth = 0.6 / totalWhiteKeys; keyElement.style.left = `calc(var(--kb-pad) + (100% - 2 * var(--kb-pad)) * ${gap - blackWidth / 2})`; keyElement.style.width = `calc((100% - 2 * var(--kb-pad)) * ${blackWidth})`; if (keyReverseLookup[computerKeyIndex] && o < 2) { const keyLabel = document.createElement('div'); keyLabel.className = 'key-label'; keyLabel.textContent = keyReverseLookup[computerKeyIndex].toUpperCase(); keyElement.appendChild(keyLabel); } keyboardContainer.appendChild(keyElement); } computerKeyIndex++; }); } if (synthesiaContainer?.classList.contains('active')) requestAnimationFrame(createSynthesiaGrid); }
             function noteToFrequency(note, octaveOffset = 0){const nN=note.replace(/\d+$/,'');const bO=parseInt(note.match(/\d+$/)[0]);const tO=bO+octaveOffset;const nI=midiNoteNames.indexOf(nN);const cA4M=69;const cMN=(tO*12)+nI;return 440*Math.pow(2,(cMN-cA4M)/12);}
             function midiNoteToNoteString(mN){const o=Math.floor(mN/12),nI=mN%12;return midiNoteNames[nI]+o;}
-            function getPulseShaperCurve(width) {const c=new Float32Array(256);const t=width*2-1;for(let i=0;i<256;i++){const x=(i/255)*2-1;c[i]=x<t?-1:1;}return c;}
+            // The oscilloscope's tap for oscillator i: a sum of that oscillator across every live note.
+            function oscTap(i) { if (!oscTaps[i]) { const sum = audioContext.createGain(), an = audioContext.createAnalyser(); an.fftSize = 2048; sum.connect(an); oscTaps[i] = { sum, analyser: an }; } return oscTaps[i]; }
 
             function playNote(noteString, velocity = 0.7, source = "unknown", forceRetrigger = false, synthParamsOverride = null) {
                 if (!audioContext) initAudio();
@@ -185,11 +150,9 @@
                         oU.mainNoteGain.gain.exponentialRampToValueAtTime(0.0001,now+0.02); 
                         const qST=now+0.02+0.05; 
                         oU.oscillators.forEach(o=>{try{o.stop(qST);}catch(e){}}); 
-                        if(oU.noiseOsc)try{oU.noiseOsc.stop(qST);}catch(e){} 
                         setTimeout(()=>{
                             if(oU.mainNoteGain)oU.mainNoteGain.disconnect(); 
-                            if(oU.gain1 && summingGainOsc1 && oU.gain1.numberOfOutputs > 0) oU.gain1.disconnect(summingGainOsc1); 
-                            if(oU.gain2 && summingGainOsc2 && oU.gain2.numberOfOutputs > 0) oU.gain2.disconnect(summingGainOsc2);
+                            oU.layers.forEach(l => l.nodes.forEach(n => n.disconnect()));
                         }, (0.02+0.05+0.01)*1000); 
                         delete activeSoundUnits[noteString];
                     }
@@ -231,54 +194,13 @@
                 }
 
 
-                const slopVal = params.common.oscSlop * 100;
-
-                const baseFreq1 = noteToFrequency(noteString, 0);
-                const detune1Cents = params.osc1.detune;
-                const slop1 = (Math.random() * 2 - 1) * slopVal;
-                const freq1 = baseFreq1 * Math.pow(2, (detune1Cents + slop1) / 1200);
-                unit.osc1 = audioContext.createOscillator();
-                unit.osc1.type = params.osc1.waveform === 'pulse' ? 'sawtooth' : params.osc1.waveform;
-                unit.osc1.frequency.setValueAtTime(freq1, now);
-                unit.gain1 = audioContext.createGain(); unit.gain1.gain.value = params.osc1.level;
-                if (params.osc1.waveform === 'pulse') { unit.shaper1 = audioContext.createWaveShaper(); unit.shaper1.curve = getPulseShaperCurve(params.osc1.pulseWidth); unit.osc1.connect(unit.shaper1).connect(unit.gain1);} else { unit.osc1.connect(unit.gain1);}
-                unit.gain1.connect(unit.mainNoteGain);
-                if (summingGainOsc1 && slotId === -1) unit.gain1.connect(summingGainOsc1); 
-                unit.osc1.start(now); unit.oscillators.push(unit.osc1);
-
-                if (params.osc2.enabled && params.osc2.level > 0) {
-                    const octOffset2 = params.osc2.octaveOffset; const fineTune2 = params.osc2.fineTune;
-                    const freq2Base = noteToFrequency(noteString, octOffset2);
-                    const slop2 = (Math.random() * 2 - 1) * slopVal;
-                    const freq2 = freq2Base * Math.pow(2, (fineTune2 + slop2) / 1200);
-                    const startDelay2Ms = params.osc2.delay;
-
-                    unit.osc2 = audioContext.createOscillator(); unit.osc2.type = params.osc2.waveform === 'pulse' ? 'sawtooth' : params.osc2.waveform;
-                    unit.osc2.frequency.setValueAtTime(freq2, now);
-                    unit.gain2 = audioContext.createGain(); unit.gain2.gain.value = params.osc2.level;
-                    if (params.osc2.waveform === 'pulse') { unit.shaper2 = audioContext.createWaveShaper(); unit.shaper2.curve = getPulseShaperCurve(params.osc2.pulseWidth); unit.osc2.connect(unit.shaper2).connect(unit.gain2); } else { unit.osc2.connect(unit.gain2); }
-                    unit.gain2.connect(unit.mainNoteGain);
-                    if (summingGainOsc2 && slotId === -1) unit.gain2.connect(summingGainOsc2); 
-                    unit.osc2.start(now + startDelay2Ms / 1000); unit.oscillators.push(unit.osc2);
-                }
-                if (params.sub.enabled && params.sub.level > 0) { 
-                    const sOO = params.sub.octave; const fS = noteToFrequency(noteString, sOO); const sS = (Math.random()*2-1)*slopVal; 
-                    unit.subOsc = audioContext.createOscillator(); unit.subOsc.type = params.sub.waveform; 
-                    unit.subOsc.frequency.setValueAtTime(fS * Math.pow(2, sS/1200), now); 
-                    unit.subGain = audioContext.createGain(); unit.subGain.gain.value = params.sub.level; 
-                    unit.subOsc.connect(unit.subGain).connect(unit.mainNoteGain); 
-                    unit.subOsc.start(now); unit.oscillators.push(unit.subOsc);
-                }
-                if (params.noise.enabled && params.noise.level > 0 && whiteNoiseBuffer) { 
-                    unit.noiseOsc = audioContext.createBufferSource(); unit.noiseOsc.buffer = whiteNoiseBuffer; unit.noiseOsc.loop = true; 
-                    unit.noiseGain = audioContext.createGain(); unit.noiseGain.gain.value = params.noise.level; 
-                    if (params.noise.type === 'pink') { 
-                        unit.noiseFilter = audioContext.createBiquadFilter(); unit.noiseFilter.type = 'lowpass'; 
-                        unit.noiseFilter.frequency.setValueAtTime(1500, now); unit.noiseFilter.Q.setValueAtTime(0.707, now); 
-                        unit.noiseOsc.connect(unit.noiseFilter).connect(unit.noiseGain);
-                    } else { unit.noiseOsc.connect(unit.noiseGain); } 
-                    unit.noiseGain.connect(unit.mainNoteGain); unit.noiseOsc.start(now); unit.oscillators.push(unit.noiseOsc);
-                }
+                // Every oscillator in the bank, layered; live notes also feed the oscilloscope's per-oscillator taps.
+                const oscillators = params.oscillators;
+                unit.layers = window.oscillatorBank.buildVoice(audioContext, oscillators, {
+                    frequency: noteToFrequency(noteString, 0), when: now, slop: params.common.oscSlop, noise: whiteNoiseBuffer,
+                    out: unit.mainNoteGain, taps: slotId === -1 ? oscillators.map((_, i) => oscTap(i).sum) : []
+                });
+                unit.oscillators = unit.layers.map(l => l.source);
 
                 if (slotId !== -1) {
                     loopSlotsData[slotId].notesCurrentlyPlaying.add(noteString);
@@ -336,18 +258,7 @@
                 
                 setTimeout(() => {
                     if(unit.mainNoteGain) unit.mainNoteGain.disconnect();
-                    if(unit.gain1) unit.gain1.disconnect(); 
-                    if(unit.gain2) unit.gain2.disconnect(); 
-                    if(unit.subGain) unit.subGain.disconnect(); 
-                    if(unit.noiseGain) unit.noiseGain.disconnect(); 
-                    if(unit.noiseFilter) unit.noiseFilter.disconnect(); 
-                    if(unit.shaper1) unit.shaper1.disconnect(); 
-                    if(unit.shaper2) unit.shaper2.disconnect();
-                    
-                    if (slotId === -1) { 
-                        if(unit.gain1 && summingGainOsc1 && unit.gain1.numberOfOutputs > 0) { try { unit.gain1.disconnect(summingGainOsc1); } catch(e) {} }
-                        if(unit.gain2 && summingGainOsc2 && unit.gain2.numberOfOutputs > 0) { try { unit.gain2.disconnect(summingGainOsc2); } catch(e) {} }
-                    }
+                    unit.layers.forEach(l => l.nodes.forEach(n => n.disconnect())); // the oscilloscope taps too
                 }, (relTime + 0.15) * 1000);
 
                 if (slotId === -1) { 
@@ -361,19 +272,20 @@
 
             function setupKeyboardEvents() { keyboardContainer.addEventListener('mousedown', e => { if (!audioContext) initAudio(); if (!audioContext || e.button !== 0) return; const tK = e.target.closest('.white-key, .black-key'); if (tK) { isMouseDraggingOnKeyboard = true; document.body.style.userSelect = 'none'; const n = tK.dataset.note; playNote(n, 0.7, "mouse-drag-start", true); tK.classList.add('active'); currentDraggedKeyElement = tK; } }); document.addEventListener('mousemove', e => { if (!isMouseDraggingOnKeyboard) return; const kUM = document.elementFromPoint(e.clientX, e.clientY)?.closest('.white-key, .black-key'); if (kUM && kUM !== currentDraggedKeyElement) { if (currentDraggedKeyElement) { stopNote(currentDraggedKeyElement.dataset.note, "mouse-drag-slide-out"); if (!sustainPedalActive) currentDraggedKeyElement.classList.remove('active'); } const n = kUM.dataset.note; playNote(n, 0.7, "mouse-drag-slide-in", true); kUM.classList.add('active'); currentDraggedKeyElement = kUM; } else if (!kUM && currentDraggedKeyElement) { stopNote(currentDraggedKeyElement.dataset.note, "mouse-drag-off-key"); if (!sustainPedalActive) currentDraggedKeyElement.classList.remove('active'); currentDraggedKeyElement = null; } }); document.addEventListener('mouseup', e => { if (e.button !== 0) return; if (isMouseDraggingOnKeyboard) { if (currentDraggedKeyElement) { stopNote(currentDraggedKeyElement.dataset.note, "mouse-drag-end"); if (!sustainPedalActive) currentDraggedKeyElement.classList.remove('active'); } isMouseDraggingOnKeyboard = false; document.body.style.userSelect = ''; currentDraggedKeyElement = null; } }); keyboardContainer.addEventListener('touchstart', e => { if (!audioContext) initAudio(); if (!audioContext) return; e.preventDefault(); for (let t of e.changedTouches) { const tK = document.elementFromPoint(t.clientX, t.clientY)?.closest('.white-key, .black-key'); if (tK) { const n = tK.dataset.note; playNote(n, 0.7, "touch-start", true); tK.classList.add('active'); activeTouches.set(t.identifier, tK); } } }, { passive: false }); keyboardContainer.addEventListener('touchmove', e => { if (!audioContext) return; e.preventDefault(); for (let t of e.changedTouches) { const tI = t.identifier; const kUT = document.elementFromPoint(t.clientX, t.clientY)?.closest('.white-key, .black-key'); const pKFT = activeTouches.get(tI); if (kUT !== pKFT) { if (pKFT) { stopNote(pKFT.dataset.note, "touch-slide-out"); if (!sustainPedalActive) pKFT.classList.remove('active'); } if (kUT) { const n = kUT.dataset.note; playNote(n, 0.7, "touch-slide-in", true); kUT.classList.add('active'); activeTouches.set(tI, kUT); } else { activeTouches.delete(tI); } } } }, { passive: false }); keyboardContainer.addEventListener('touchend', e => { e.preventDefault(); for (let t of e.changedTouches) { const tI = t.identifier; const rK = activeTouches.get(tI); if (rK) { stopNote(rK.dataset.note, "touch-end"); if (!sustainPedalActive) rK.classList.remove('active'); activeTouches.delete(tI); } } }, { passive: false }); keyboardContainer.addEventListener('touchcancel', e => { e.preventDefault(); for (let t of e.changedTouches) { const tI = t.identifier; const cK = activeTouches.get(tI); if (cK) { stopNote(cK.dataset.note, "touch-cancel"); if (!sustainPedalActive) cK.classList.remove('active'); activeTouches.delete(tI); } } }, { passive: false }); document.addEventListener('keydown', e => { if (e.target.closest('input, select, button, summary')) return; if (e.code === 'Space') { e.preventDefault(); if (!sustainPedalActive) { sustainPedalActive = true; activeComputerKeys.forEach(nS => playNote(nS, 0.7, "sustain_retrigger", false)); } } else if (!e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) { const k = e.key.toLowerCase(); if (!Object.prototype.hasOwnProperty.call(keyMapping, k)) return; const kI = keyMapping[k]; const kEl = keyboardContainer.querySelector(`[data-keymap-index="${kI}"]`); if (kEl && !activeComputerKeys.has(kEl.dataset.note)) { playNote(kEl.dataset.note, 0.7, "computer", true); kEl.classList.add('active'); activeComputerKeys.add(kEl.dataset.note); } } }); document.addEventListener('keyup', e => { if (e.target.closest('input, select, button, summary')) return; if (e.code === 'Space') { e.preventDefault(); if (sustainPedalActive) { sustainPedalActive = false; const nTR = new Set(notesSustained); nTR.forEach(nS => { if (!activeComputerKeys.has(nS) && !isKeyHeldByMouseOrTouch(nS)) { stopNote(nS, "sustain_release"); } }); notesSustained.clear(); } } else { const k = e.key.toLowerCase(); if (!Object.prototype.hasOwnProperty.call(keyMapping, k)) return; const kI = keyMapping[k]; const kEl = keyboardContainer.querySelector(`[data-keymap-index="${kI}"]`); if (kEl && activeComputerKeys.has(kEl.dataset.note)) { stopNote(kEl.dataset.note, "computer"); activeComputerKeys.delete(kEl.dataset.note); if (!sustainPedalActive) kEl.classList.remove('active'); } } }); }
             function isKeyHeldByMouseOrTouch(noteString) { if (currentDraggedKeyElement && currentDraggedKeyElement.dataset.note === noteString) return true; for (const kEl of activeTouches.values()) { if (kEl.dataset.note === noteString) return true; } return false; }
-            function updatePulseWidthVisibility() { const o1P = waveformOsc1Select.value === 'pulse'; const o2P = (enableOsc2Toggle.checked && waveformOsc2Select.value === 'pulse'); if (o1P || o2P) { pulseWidthLabel.classList.remove('hidden-control'); } else { pulseWidthLabel.classList.add('hidden-control'); } }
 
             function setupControlEvents() {
                 const sAPT = (p, v) => { if (audioContext && p) p.setTargetAtTime(parseFloat(v), audioContext.currentTime, 0.01);};
-                waveformOsc1Select.addEventListener('change', updatePulseWidthVisibility);
-                waveformOsc2Select.addEventListener('change', updatePulseWidthVisibility);
-                levelOsc1Input.addEventListener('input', () => { const nL = parseFloat(levelOsc1Input.value); Object.values(activeSoundUnits).forEach(u => { if (u.gain1 && (!u.source || !u.source.startsWith('looper-slot-'))) sAPT(u.gain1.gain, nL); }); });
-                levelOsc2Input.addEventListener('input', () => { const nL = parseFloat(levelOsc2Input.value); Object.values(activeSoundUnits).forEach(u => { if (u.gain2 && (!u.source || !u.source.startsWith('looper-slot-'))) sAPT(u.gain2.gain, nL); }); if (parseFloat(nL) == 0 && enableOsc2Toggle.checked) { enableOsc2Toggle.checked = false; toggleOsc2Controls(false); } else if (parseFloat(nL) > 0 && !enableOsc2Toggle.checked) { enableOsc2Toggle.checked = true; toggleOsc2Controls(true); } });
-                pulseWidthInput.addEventListener('input', () => { const nW = parseFloat(pulseWidthInput.value); const nC = getPulseShaperCurve(nW); Object.values(activeSoundUnits).forEach(u => { if(!u.source || !u.source.startsWith('looper-slot-')) { if (u.shaper1) u.shaper1.curve = nC; if (u.shaper2) u.shaper2.curve = nC; } }); });
-                levelSubInput.addEventListener('input', () => { const nL = parseFloat(levelSubInput.value); Object.values(activeSoundUnits).forEach(u => { if (u.subGain && (!u.source || !u.source.startsWith('looper-slot-'))) sAPT(u.subGain.gain, nL); }); if (parseFloat(nL) == 0 && enableSubToggle.checked) { enableSubToggle.checked = false; toggleSubControls(false); } else if (parseFloat(nL) > 0 && !enableSubToggle.checked) { enableSubToggle.checked = true; toggleSubControls(true); } });
-                levelNoiseInput.addEventListener('input', () => { const nL = parseFloat(levelNoiseInput.value); Object.values(activeSoundUnits).forEach(u => { if (u.noiseGain && (!u.source || !u.source.startsWith('looper-slot-'))) sAPT(u.noiseGain.gain, nL); }); if (parseFloat(nL) == 0 && enableNoiseToggle.checked) { enableNoiseToggle.checked = false; toggleNoiseControls(false); } else if (parseFloat(nL) > 0 && !enableNoiseToggle.checked) { enableNoiseToggle.checked = true; toggleNoiseControls(true); } });
+                // A held note follows its oscillators' level and pulse width (looper notes keep their recorded sound).
+                window.addEventListener('synth:oscillator', ({ detail: { id, level, pulseWidth } }) => {
+                    Object.values(activeSoundUnits).forEach(u => {
+                        const layer = (!u.source || !u.source.startsWith('looper-slot-')) && u.layers.find(l => l.id === id);
+                        if (!layer) return;
+                        if (level !== undefined) sAPT(layer.gain.gain, level);
+                        if (pulseWidth !== undefined && layer.pulse) layer.source.setPeriodicWave(window.oscillatorBank.pulseWave(audioContext, pulseWidth));
+                    });
+                });
 
-                octaveOsc1Select.addEventListener('change', () => { Object.keys(activeSoundUnits).forEach(n => stopNote(n, "octave_change")); createKeyboard(); });
+                baseOctaveSelect.addEventListener('change', () => { Object.keys(activeSoundUnits).forEach(n => stopNote(n, "octave_change")); createKeyboard(); });
                 numOctavesSelect.addEventListener('change', () => { Object.keys(activeSoundUnits).forEach(n => stopNote(n, "num_octaves_change")); createKeyboard(); });
 
                 filterTypeSelect.addEventListener('change', () => { if (filterNode && (!activeSoundUnits[Object.keys(activeSoundUnits)[0]]?.source?.startsWith('looper-slot-'))) filterNode.type = filterTypeSelect.value; }); 
@@ -386,15 +298,9 @@
                 synthesiaToggle.addEventListener('change', (e) => { synthesiaContainer.classList.toggle('active', e.target.checked); localStorage.setItem('synthesiaEnabled', e.target.checked); if (e.target.checked) { createSynthesiaGrid(); } else { clearSynthesiaGrid(); activeVisualNoteElements.forEach(d => { if (d.element && d.element.parentElement) d.element.remove(); }); activeVisualNoteElements = []; } });
                 stopAllSoundsButton.addEventListener('click', emergencyStopAllSounds);
 
-                enableOsc2Toggle.addEventListener('change', (e) => { toggleOsc2Controls(e.target.checked); updatePulseWidthVisibility(); });
-                enableSubToggle.addEventListener('change', (e) => toggleSubControls(e.target.checked));
-                enableNoiseToggle.addEventListener('change', (e) => toggleNoiseControls(e.target.checked));
                 enableAdsrToggle.addEventListener('change', (e) => { adsrControls.style.display = e.target.checked ? '' : 'none'; });
                 enableFilterToggle.addEventListener('change', (e) => { filterControlsElement.style.display = e.target.checked ? '' : 'none'; });
 
-                toggleOsc2Controls(enableOsc2Toggle.checked);
-                toggleSubControls(enableSubToggle.checked);
-                toggleNoiseControls(enableNoiseToggle.checked);
                 adsrControls.style.display = enableAdsrToggle.checked ? '' : 'none';
                 filterControlsElement.style.display = enableFilterToggle.checked ? '' : 'none';
 
@@ -404,9 +310,6 @@
                 });
             }
 
-            function toggleOsc2Controls(enabled) { osc2ControlsWrapper.style.display = enabled ? '' : 'none'; if (!enabled && parseFloat(levelOsc2Input.value) > 0) { levelOsc2Input.value = 0; levelOsc2Input.dispatchEvent(new Event('input'));} else if (enabled && parseFloat(levelOsc2Input.value) === 0) {levelOsc2Input.value = 0.7; levelOsc2Input.dispatchEvent(new Event('input'));} }
-            function toggleSubControls(enabled) { subOscControls.style.display = enabled ? '' : 'none'; if (!enabled && parseFloat(levelSubInput.value) > 0) {levelSubInput.value = 0;levelSubInput.dispatchEvent(new Event('input'));} else if (enabled && parseFloat(levelSubInput.value) === 0) {levelSubInput.value = 0.5;levelSubInput.dispatchEvent(new Event('input'));} }
-            function toggleNoiseControls(enabled) { noiseControls.style.display = enabled ? '' : 'none'; if (!enabled && parseFloat(levelNoiseInput.value) > 0) {levelNoiseInput.value = 0;levelNoiseInput.dispatchEvent(new Event('input'));} else if (enabled && parseFloat(levelNoiseInput.value) === 0) {levelNoiseInput.value = 0.05;levelNoiseInput.dispatchEvent(new Event('input'));} }
 
 
             // Lets plug-in instruments follow every note source: keyboard, MIDI, sequencer, and looper.
@@ -471,7 +374,7 @@
                 console.log("All sounds and states (looper, metronome, sustain) reset. Looper data preserved."); 
             }
 
-            function visualize() { requestAnimationFrame(visualize); if (!audioContext || !visualizerContext || !visualizerCanvas) return; let currentAnalyser = analyser; if (visualizerSourceSelect && visualizerSourceSelect.value === 'osc1' && analyserOsc1) { currentAnalyser = analyserOsc1; } else if (visualizerSourceSelect && visualizerSourceSelect.value === 'osc2' && analyserOsc2) { currentAnalyser = analyserOsc2; } if (!currentAnalyser) return; const bL=currentAnalyser.frequencyBinCount;const dA=new Uint8Array(bL);currentAnalyser.getByteTimeDomainData(dA);visualizerContext.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--primary-surface-color').trim();visualizerContext.fillRect(0,0,visualizerCanvas.width,visualizerCanvas.height);visualizerContext.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--border-color').trim();visualizerContext.lineWidth=0.5*parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--font-scale-factor'));const nVL=4;for(let i=1;i<nVL;i++){const x=(visualizerCanvas.width/nVL)*i;visualizerContext.beginPath();visualizerContext.moveTo(x,0);visualizerContext.lineTo(x,visualizerCanvas.height);visualizerContext.stroke();}const nHL=2;for(let i=1;i<=nHL;i++){const y1=visualizerCanvas.height*(0.5-0.25*i);const y2=visualizerCanvas.height*(0.5+0.25*i);visualizerContext.beginPath();visualizerContext.moveTo(0,y1);visualizerContext.lineTo(visualizerCanvas.width,y1);visualizerContext.stroke();visualizerContext.beginPath();visualizerContext.moveTo(0,y2);visualizerContext.lineTo(visualizerCanvas.width,y2);visualizerContext.stroke();}visualizerContext.lineWidth=2.5*parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--font-scale-factor'));const aC=getComputedStyle(document.documentElement).getPropertyValue('--accent-color').trim();visualizerContext.strokeStyle=aC;visualizerContext.shadowBlur=10*parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--font-scale-factor'));visualizerContext.shadowColor=aC;visualizerContext.beginPath();const sW=visualizerCanvas.width*1.0/bL;let x=0;for(let i=0;i<bL;i++){const v=dA[i]/128.0;const y=v*visualizerCanvas.height/2;if(i===0)visualizerContext.moveTo(x,y);else visualizerContext.lineTo(x,y);x+=sW;}visualizerContext.lineTo(visualizerCanvas.width,visualizerCanvas.height/2);visualizerContext.stroke();visualizerContext.shadowBlur=0; }
+            function visualize() { requestAnimationFrame(visualize); if (!audioContext || !visualizerContext || !visualizerCanvas) return; let currentAnalyser = analyser; const oscN = /^osc(\d+)$/.exec(visualizerSourceSelect ? visualizerSourceSelect.value : ''); if (oscN) currentAnalyser = oscTap(Number(oscN[1]) - 1).analyser; if (!currentAnalyser) return; const bL=currentAnalyser.frequencyBinCount;const dA=new Uint8Array(bL);currentAnalyser.getByteTimeDomainData(dA);visualizerContext.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--primary-surface-color').trim();visualizerContext.fillRect(0,0,visualizerCanvas.width,visualizerCanvas.height);visualizerContext.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--border-color').trim();visualizerContext.lineWidth=0.5*parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--font-scale-factor'));const nVL=4;for(let i=1;i<nVL;i++){const x=(visualizerCanvas.width/nVL)*i;visualizerContext.beginPath();visualizerContext.moveTo(x,0);visualizerContext.lineTo(x,visualizerCanvas.height);visualizerContext.stroke();}const nHL=2;for(let i=1;i<=nHL;i++){const y1=visualizerCanvas.height*(0.5-0.25*i);const y2=visualizerCanvas.height*(0.5+0.25*i);visualizerContext.beginPath();visualizerContext.moveTo(0,y1);visualizerContext.lineTo(visualizerCanvas.width,y1);visualizerContext.stroke();visualizerContext.beginPath();visualizerContext.moveTo(0,y2);visualizerContext.lineTo(visualizerCanvas.width,y2);visualizerContext.stroke();}visualizerContext.lineWidth=2.5*parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--font-scale-factor'));const aC=getComputedStyle(document.documentElement).getPropertyValue('--accent-color').trim();visualizerContext.strokeStyle=aC;visualizerContext.shadowBlur=10*parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--font-scale-factor'));visualizerContext.shadowColor=aC;visualizerContext.beginPath();const sW=visualizerCanvas.width*1.0/bL;let x=0;for(let i=0;i<bL;i++){const v=dA[i]/128.0;const y=v*visualizerCanvas.height/2;if(i===0)visualizerContext.moveTo(x,y);else visualizerContext.lineTo(x,y);x+=sW;}visualizerContext.lineTo(visualizerCanvas.width,visualizerCanvas.height/2);visualizerContext.stroke();visualizerContext.shadowBlur=0; }
             let activeLEDIndex=0;const genLeds=[document.getElementById('led1'),document.getElementById('led2'),document.getElementById('led3')]; function cycleLEDs(){genLeds.forEach(l=>l.classList.remove('active'));if(genLeds[activeLEDIndex])genLeds[activeLEDIndex].classList.add('active');activeLEDIndex=(activeLEDIndex+1)%genLeds.length;}
             function resizeCanvas() { if (visualizerCanvas) { visualizerCanvas.width = visualizerCanvas.clientWidth; visualizerCanvas.height = visualizerCanvas.clientHeight; if (audioContext && analyser) { const sR = audioContext.sampleRate; const bTM = (analyser.fftSize / 2 / sR * 1000).toFixed(0); const fBTM = (analyser.fftSize / sR * 1000).toFixed(0); const tAL = visualizerCanvas.parentElement.querySelector('.visualizer-time-axis').children; if (tAL[1]) tAL[1].textContent = `~${bTM}ms`; if (tAL[2]) tAL[2].textContent = `~${fBTM}ms`; } } if (synthesiaToggle && synthesiaToggle.checked) createSynthesiaGrid(); }
             function setupMIDI(){ if(navigator.requestMIDIAccess)navigator.requestMIDIAccess({sysex:false}).then(onS,onF);else console.warn("No MIDI support.");} function onS(mA){const iN=mA.inputs.values();for(let n=iN.next();n&&!n.done;n=iN.next())n.value.onmidimessage=onM;} function onF(m){console.error(`Failed MIDI: ${m}`);}
@@ -1030,11 +933,7 @@
 
 
             window.addEventListener('load', () => {
-                waveformOsc1Select = document.getElementById('waveformOsc1'); octaveOsc1Select = document.getElementById('octaveOsc1'); detuneOsc1Input = document.getElementById('detuneOsc1'); levelOsc1Input = document.getElementById('levelOsc1');
-                enableOsc2Toggle = document.getElementById('enableOsc2'); waveformOsc2Select = document.getElementById('waveformOsc2'); octaveOsc2Select = document.getElementById('octaveOsc2'); fineTuneOsc2Input = document.getElementById('fineTuneOsc2'); delayOsc2Input = document.getElementById('delayOsc2'); levelOsc2Input = document.getElementById('levelOsc2'); osc2ControlsWrapper = document.getElementById('osc2-controls-wrapper');
-                enableSubToggle = document.getElementById('enableSub'); waveformSubSelect = document.getElementById('waveformSub'); octaveSubSelect = document.getElementById('octaveSub'); levelSubInput = document.getElementById('levelSub'); subOscControls = document.getElementById('sub-osc-controls');
-                enableNoiseToggle = document.getElementById('enableNoise'); noiseTypeSelect = document.getElementById('noiseType'); levelNoiseInput = document.getElementById('levelNoise'); noiseControls = document.getElementById('noise-controls');
-                pulseWidthLabel = document.getElementById('pulseWidthLabel'); pulseWidthInput = document.getElementById('pulseWidth'); oscSlopInput = document.getElementById('oscSlop');
+                baseOctaveSelect = document.getElementById('baseOctave'); oscSlopInput = document.getElementById('oscSlop');
                 enableAdsrToggle = document.getElementById('enableAdsr'); attackInput = document.getElementById('attack'); decayInput = document.getElementById('decay'); sustainInput = document.getElementById('sustain'); releaseInput = document.getElementById('release'); adsrControls = document.getElementById('adsr-controls');
                 enableFilterToggle = document.getElementById('enableFilter'); filterTypeSelect = document.getElementById('filterType'); filterCutoffInput = document.getElementById('filterCutoff'); filterResonanceInput = document.getElementById('filterResonance'); filterControlsElement = document.getElementById('filter-controls');
                 masterVolumeInput = document.getElementById('masterVolume'); numOctavesSelect = document.getElementById('numOctavesSelect'); visualizerSourceSelect = document.getElementById('visualizerSourceSelect');
@@ -1056,7 +955,6 @@
                 new ResizeObserver(() => { if (synthesiaContainer.classList.contains('active')) createSynthesiaGrid(); }).observe(keyboardContainer);
                 setupKeyboardEvents();
                 setupControlEvents(); // This now includes looper toggle listener
-                updatePulseWidthVisibility();
                 
                 initializeLoopSlots(); 
 

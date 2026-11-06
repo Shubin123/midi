@@ -65,3 +65,16 @@ body{padding:24px}h1{font-size:1.5rem;letter-spacing:.3px;text-align:left;margin
 .plugin-window{resize:none} /* the corner grip resizes it, and remembers the size */
 .widget.sized{display:flex;flex-direction:column} /* a widget given a height keeps its grip in the bottom corner */
 .widget.sized>.resize-grip{margin:auto 0 0;align-self:flex-end;flex:none;float:none}
+/* The oscillator bank (js/oscillators.js): a card per oscillator, side by side as space allows, its controls in pairs. */
+.osc-bank{display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:12px}
+.osc-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:12px;border:1px solid var(--border-color);border-radius:10px;padding:4px 12px 0;margin:0;min-width:0}
+.osc-row legend{display:flex;align-items:center;gap:10px;padding:0 6px;font-size:12px;font-weight:600;color:var(--text-color)}
+.osc-row legend .osc-on{display:flex;align-items:center;margin:0;font-weight:400;font-size:12px}
+.osc-row legend .osc-remove{background:none;border:0;color:var(--text-muted-color);cursor:pointer;font-size:16px;line-height:1;padding:2px 4px}
+.osc-row legend .osc-remove:disabled{opacity:.35;cursor:default}
+.osc-row label{margin-bottom:8px;min-width:0;font-size:12px}
+.osc-row select{padding-left:8px;padding-right:24px;background-position:right 6px center;background-size:14px}
+.osc-row label[hidden]{display:none}
+.osc-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.osc-add:disabled{opacity:.55;cursor:default}
+.osc-common{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));column-gap:16px;margin-top:14px}

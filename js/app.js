@@ -3,6 +3,9 @@ import { createSequencer } from './sequencer.js';
 import { createAirWidget } from './air-widget.js';
 import { createPluginHost } from './plugin-host.js';
 import { createIoWidget } from './io-widget.js';
+import { mountBank } from './oscillators.js';
+// The oscillator bank is filled in now, before the synth (js/synth.js) reads it on load.
+window.oscillatorBank = mountBank(document.getElementById('oscillators-group'));
 window.addEventListener('load',()=>{
  const container=document.querySelector('.container');
  const workspace=document.createElement('main');workspace.id='workspace';
