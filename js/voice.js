@@ -107,8 +107,10 @@ function pickVoice(lang) {
 export class Voice {
  // onHeard(text) gets each finished utterance; onInterim(text) the words so far; onState(state, note) one of
  // 'off', 'listening', 'speaking', or 'error' with a message.
- constructor({ onHeard, onInterim, onState, lang = (globalThis.navigator?.language || 'en-US') } = {}) {
-  this.onHeard = onHeard; this.onInterim = onInterim; this.onState = onState; this.lang = lang;
+ // localOnly() says whether speech may only be recognised on the device (Settings › Listening and privacy):
+ // where the browser can't, the voice doesn't listen (`cannotListen`) and only speaks.
+ constructor({ onHeard, onInterim, onState, lang = (globalThis.navigator?.language || 'en-US'), localOnly = () => false } = {}) {
+  this.onHeard = onHeard; this.onInterim = onInterim; this.onState = onState; this.lang = lang; this.localOnly = localOnly; this.cannotListen = false;
   this.active = false; this.speaking = false; this.rec = null; this.local = false;
   this.choice = BROWSER; this.onProgress = null; this._token = null; this._sources = []; this.speed = SPEED.normal;
  }
@@ -127,6 +129,7 @@ export class Voice {
    const SR = Recognition(), rec = new SR();
    rec.lang = this.lang; rec.continuous = true; rec.interimResults = true;
    // Ask for on-device recognition where the browser supports it (newer Chrome); fall back quietly.
+   this.local = false;
    try {
     if (typeof SR.available === 'function' && 'processLocally' in rec) {
      const status = await SR.available({ langs: [this.lang], processLocally: true });
@@ -134,6 +137,8 @@ export class Voice {
      if (status !== 'unavailable') { rec.processLocally = true; this.local = true; }
     }
    } catch { this.local = false; }
+   this.cannotListen = !this.local && this.localOnly();
+   if (this.cannotListen) { this.onState?.(this.speaking ? 'speaking' : 'listening'); return; }
    rec.onresult = e => {
     let interim = '';
     for (let i = e.resultIndex; i < e.results.length; i++) {

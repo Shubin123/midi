@@ -96,3 +96,30 @@ export function strum(chords, { sampleRate = 48000, kind = 'piano', amp = 0.12, 
 // A progression with common tones, inversions and sevenths: C, Am, F/C… as { notes, start, end }.
 export const PROGRESSION = [[60, 64, 67], [57, 60, 64], [53, 57, 60, 65], [55, 59, 62, 67], [48, 55, 64], [62, 65, 69, 72], [50, 57, 62, 66], [55, 59, 62, 65]];
 export const chordsAt = (prog = PROGRESSION, start = 200, every = 700, length = 600) => prog.map((notes, i) => ({ notes, start: start + i * every, end: start + i * every + length }));
+
+// Speech, roughly: syllables of 90-220 ms whose pitch glides (a fifth of a tone to two semitones across each, as
+// intonation does) with vowels that change, and consonants between (40-90 ms of hiss, or a stop: silence and a
+// burst). `words` syllables, around `hz`. Returns mono samples.
+export function speak(words = 12, { sampleRate = 48000, hz = 140, seed = 5, amp = 0.25 } = {}) {
+ const r = random(seed), out = [];
+ const push = n => { for (let i = 0; i < n; i++) out.push(0); };
+ push(Math.round(0.15 * sampleRate));
+ let ph = 0;
+ for (let w = 0; w < words; w++) {
+  // A consonant first.
+  const cons = Math.round((0.04 + r() * 0.05) * sampleRate), hiss = r() < 0.6;
+  for (let i = 0; i < cons; i++) out.push(hiss ? amp * 0.35 * (r() * 2 - 1) : i > cons - 120 ? amp * 0.5 * (r() * 2 - 1) : 0);
+  const len = Math.round((0.09 + r() * 0.13) * sampleRate), from = hz * 2 ** ((r() * 4 - 2) / 12), glide = (r() < 0.5 ? -1 : 1) * (0.2 + r() * 1.8);
+  const f1 = 300 + r() * 500, f2 = 900 + r() * 1400;
+  for (let i = 0; i < len; i++) {
+   const x = i / len, f = from * 2 ** ((glide * x) / 12), env = Math.sin(Math.PI * Math.min(1, x * 1.1)) ** 0.5;
+   ph += f / sampleRate;
+   let v = 0;
+   for (let h = 1; h * f < 5000; h++) { const fh = h * f; v += (1 / (1 + ((fh - f1) / 120) ** 2) + 0.7 / (1 + ((fh - f2) / 180) ** 2) + 0.04) / h * Math.sin(2 * Math.PI * h * ph); }
+   out.push(amp * 0.6 * env * v);
+  }
+  if (r() < 0.3) push(Math.round(0.12 * sampleRate)); // a pause between words
+ }
+ push(Math.round(0.3 * sampleRate));
+ return Float32Array.from(out);
+}

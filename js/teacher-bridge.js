@@ -36,7 +36,10 @@ import { Voice, canListen, canSpeak, ENGINES as VOICE_ENGINES, loadEngine, BROWS
 import { PROVIDERS, GROUPS, SYSTEM_ONE, NO_SYSTEM_TWO, providerById, getProviderId, setProviderId, getKey, setKey, clearKey, getModelFor, setModelFor, getBase, setBase, engineFor, listModels, pickModel, fetchOpenRouterModels } from './providers.js';
 import { signIn, completeSignIn } from './ai-auth.js';
 import { read, save } from './storage.js';
-import { CLAP, listening } from './listening.js';
+import { CLAP, listening, keyAndScale } from './listening.js';
+import { readIntent, makePhrase, scoreSingBack } from './voice-mode.js';
+import { SPEECH_LOCAL_KEY, AUDIO_TO_PROVIDER_KEY } from './settings.js';
+import { encodeAudio } from './audio-files.js';
 import { Agent, ACTIONS, definitions as agentTools } from './agent-actions.js';
 import { chordMidi, scaleRunMidi } from './pitch-analyzer.js';
 
@@ -178,6 +181,14 @@ const STYLE = `
 #teacher-panel .teacher-msg.s1{border-left-color:#f4a261;white-space:normal}
 #teacher-panel .teacher-msg.change{font-size:12px;border-left-color:var(--accent-color);white-space:normal}
 #teacher-panel .teacher-msg.agent{font-size:12px;white-space:normal}
+#teacher-panel .tp-ptt{flex:none}
+#teacher-panel .tp-ptt[hidden]{display:none}
+#teacher-panel .tp-ptt.held{background:#e76f51;border-color:#e76f51;color:#fff}
+#teacher-panel .tp-sing{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 6px}
+#teacher-panel .tp-sing-note{font:600 11px Poppins,sans-serif;padding:2px 7px;border-radius:10px;border:1px solid var(--border-color)}
+#teacher-panel .tp-sing-note.good{border-color:#6bcb77;color:#6bcb77}
+#teacher-panel .tp-sing-note.off{border-color:#f4a261;color:#f4a261}
+#teacher-panel .tp-sing-note.missed{opacity:.6}
 #teacher-panel .teacher-msg.agent.suggest{border-left-color:#9aa5b1;border-left-style:dashed}
 #teacher-panel .teacher-msg.agent.confirm{border-left-color:#f4a261}
 #teacher-panel .tp-history{width:auto;max-width:150px;font-size:11px;padding:4px 6px}
@@ -242,7 +253,7 @@ export class TeacherBridge {
   this._undos = new Map();
   this.agent = new Agent({ canAct: () => this.agentActs, show: e => this._agentShow(e), env: {
    play: (steps, bpm, label) => this._playSteps(steps, bpm, label), chordMidi: c => chordMidi(c), scaleRun: sc => scaleRunMidi(sc.tonic, sc.scaleName),
-   exercise: () => this.exercise, setExercise: ex => this._setExercise(ex),
+   exercise: () => this.exercise, setExercise: ex => this._setExercise(ex), singBack: opts => this._singBack(opts),
    performance: () => this.convo.current.entries.filter(e => e.kind === 'local' || e.kind === 'rhythm').slice(-4).map(e => (e.kind === 'local' ? `phrase: ${e.title}${e.chords ? `, chords ${e.chords}` : ''} (${e.detail})` : `rhythm: ${e.bars.join(' | ')}; ${e.text} ${e.fix}`)),
   } });
   this._phraseQueue = []; this._processing = false;
@@ -493,7 +504,7 @@ export class TeacherBridge {
     <div class="tp-foot">
      <div class="tp-mode" hidden><span class="tp-seg" role="radiogroup" aria-label="Teaching speed"><button type="button" role="radio" data-mode="fast">Fast</button><button type="button" role="radio" data-mode="slow">Slow</button></span><span class="tp-mode-note"></span></div>
      <div class="tp-foot-row"><label><input type="checkbox" class="auto-check"/>Coach each phrase I play</label><label title="On: the teacher changes the workspace itself when you ask (each change listed with Undo; clearing or saving asks first). Off: it suggests, and you apply."><input type="checkbox" class="agent-check"/>Agent can act</label><span class="tp-row"><select class="tp-history" aria-label="Conversation history"></select><button type="button" class="clear-btn" title="Start a new conversation; this one stays in the history">New</button></span></div>
-     <form class="tp-ask"><input type="text" class="question-input" placeholder="Ask about theory…" aria-label="Ask the teacher"/><button type="button" class="tp-talk" aria-pressed="false" title="Talk mode: speak to the teacher and hear it answer">🎙 Talk</button><button type="submit" class="tp-primary tp-ask-btn">Ask</button></form>
+     <form class="tp-ask"><input type="text" class="question-input" placeholder="Ask about theory…" aria-label="Ask the teacher"/><button type="button" class="tp-talk" aria-pressed="false" title="Voice mode: speak to the teacher and hear it answer, and sing or play to it">🎙 Talk</button><button type="button" class="tp-ptt" hidden title="While held, what you say is a question and nothing is taken as a note">Hold to talk</button><button type="submit" class="tp-primary tp-ask-btn">Ask</button></form>
      <p class="tp-talk-note" role="status" hidden></p>
     </div>
    </section>
@@ -532,6 +543,18 @@ export class TeacherBridge {
   p.querySelectorAll('.tp-seg button').forEach(b => { b.onclick = () => { this.mode = b.dataset.mode; save('teacher-mode-v1', this.mode); this._renderMode(); }; });
   p.querySelector('.tp-ask').onsubmit = e => { e.preventDefault(); this._ask(); };
   p.querySelector('.tp-talk').onclick = () => this._toggleTalk();
+  // Listening › Speech is for talking to the teacher: its voice mode comes on.
+  // Only as Speech is chosen, or listening starts in it: switching Talk off afterwards stays off.
+  let was = { mode: listening.settings.mode, active: listening.active };
+  listening.subscribe((type, st) => {
+   if (type !== 'state') return;
+   const turned = st.mode === 'speech' && st.active && (was.mode !== 'speech' || !was.active);
+   was = { mode: st.mode, active: st.active };
+   if (turned && !this.talking && this.enabled) this._toggleTalk();
+  });
+  const ptt = p.querySelector('.tp-ptt'), hold = on => { if (!listening.voice) return; listening.voice.ptt = on; if (on) { listening.voice.sm.lastSpeech = performance.now(); this._pttUntil = Infinity; } else this._pttUntil = performance.now() + 2500; ptt.classList.toggle('held', on); };
+  ptt.onpointerdown = e => { e.preventDefault(); hold(true); };
+  ptt.onpointerup = ptt.onpointercancel = ptt.onpointerleave = () => { if (listening.voice?.ptt) hold(false); };
   this._panelResize(p.querySelector('.tp-resize'));
   p.querySelector('.tp-lesson-end').onclick = () => this._endLesson();
   p.querySelector('.tp-exercise-end').onclick = () => this._setExercise(null);
@@ -1010,6 +1033,16 @@ export class TeacherBridge {
      lesson && button(`Lesson: ${lesson.title}`, () => this._startLesson(lesson), true),
      e.q && this.teacher.isConfigured && button(`Ask ${this._who()}`, () => { this._msg('user', e.q); this._toSystem2(e.q); })));
   }
+  // A sing-back: the phrase, each note marked, what to do, and Again / New phrase / Ask the provider about it
+  // (with the take, when the provider may hear recordings).
+  if (e.kind === 'singback') {
+   const NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
+   const chips = el('div', { className: 'tp-sing' }, ...e.notes.map(n => el('span', { className: `tp-sing-note ${n.got === null ? 'missed' : n.inTune && n.onTime ? 'good' : 'off'}`, textContent: `${NAMES[n.want % 12]}${n.got === null ? ' –' : ` ${n.inTune ? '✓' : `${n.cents > 0 ? '+' : '−'}${Math.abs(n.cents)}¢`}${n.onTime ? '' : ` ${n.ms > 0 ? 'late' : 'early'} ${Math.abs(n.ms)} ms`}`}` })));
+   const audio = this._undos.get(`${e.id}:audio`);
+   return el('div', { className: 'teacher-msg s1 singback' }, el('span', { className: 'tp-who', textContent: `${e.who} · sing it back` }), chips, e.text,
+    actions(button('Again', () => this._singBack({ phrase: e.phrase })), button('New phrase', () => this._singBack({ length: e.phrase.length }), true),
+     this.teacher.isConfigured && button(`Ask ${this._who()} about it${audio ? ' (with the recording)' : ''}`, () => { const q = `I sang back ${e.phrase.map(n => NAMES[n % 12]).join(' ')}. ${e.text} What should I work on?`; this._msg('user', q); this._toSystem2(q, [], { audio }); })));
+  }
   // The agent's own entries: done (with Undo), suggested (Apply), waiting to be confirmed (Do it / Cancel),
   // refused (why), and Undo all for a turn's changes. After a reload the buttons are gone: the undo isn't kept.
   if (e.kind?.startsWith('agent-')) {
@@ -1097,6 +1130,9 @@ export class TeacherBridge {
  // Anything else that composes goes to System 2; questions about the app go to Laya.
  async _route(q) {
   if (this._voiceSpeedRequest(q)) return;
+  if (AGENT.test(q) && this.teacher.isConfigured) return this._question(q); // a lesson set up, a practice track: System 2's
+  const intent = readIntent(q);
+  if (intent) return this._doIntent(q, intent);
   const req = await meetRequest(q, { last: this._lastExample, pick: this.laya ? (...a) => this.laya.pick(...a) : null }).catch(() => null);
   if (req) return this._playRequest(q, req);
   await this._learnAll(); // what each plug-in's controls are for, so "more reverb" finds the reverb's mix
@@ -1120,11 +1156,13 @@ export class TeacherBridge {
   if (this.mode === 'slow' && this.teacher.isConfigured) { this._quietNext = true; this._toSystem2(q, [], { compose: true, quick: '', note: req.say }); }
  }
  _question(q, focus = [], opts = {}) { this._msg('user', q); this._toSystem2(q, focus, opts); }
- _toSystem2(q, focus = [], { compose = false, quick = '', onConfirm = null, note = '' } = {}) {
+ _toSystem2(q, focus = [], { compose = false, quick = '', onConfirm = null, note = '', audio = null } = {}) {
   this._askedAt = performance.now();
   const context = [this._workspaceContext(q, focus, compose), note && `[ALREADY PLAYED] The app has just played this for the student: ${note} Explain in two or three sentences what it is and why it fits the request.`].filter(Boolean).join('\n\n');
   this.agent.begin(); this._agentBusy = true;
-  return this.teacher.ask(q, { think: this.mode === 'slow', context, quick, onConfirm, tools: this._tools() }).finally(() => {
+  // A recording goes only when Settings › Listening and privacy allows it (the card offers it only then).
+  if (audio && !read(AUDIO_TO_PROVIDER_KEY, false)) audio = null;
+  return this.teacher.ask(q, { think: this.mode === 'slow', context, quick, onConfirm, tools: this._tools(), audio }).finally(() => {
    this._agentBusy = false;
    const done = this.agent.end().filter(r => r.undo);
    if (done.length > 1) { const id = `undo-${Date.now()}`; this._undos.set(id, () => done.reverse().forEach(r => r.undo())); this._add({ kind: 'agent-batch', id, count: done.length, who: `System 2 · ${this._who()}` }); }
@@ -1531,20 +1569,93 @@ export class TeacherBridge {
  // Reads text aloud when talk mode is on; resolves straight away otherwise.
  _say(text) { return this.talking && this.voice ? this.voice.speak(text) : Promise.resolve(); }
 
- _toggleTalk() {
+ // Talk is voice mode: speech recognition hears questions, and the Listening widget (opened if it wasn't) hears
+ // singing and playing in the same microphone, hands-free (js/voice-mode.js).
+ async _toggleTalk() {
   if (this.talking) { this.voice.stop(); return; }
   this._makeVoice();
   this.voice.start();
+  if (!listening.active) { this._voiceOpened = true; if (!(await listening.start())) { this._voiceOpened = false; this._msg('info', `Voice mode hears questions only: ${listening.error}`); return; } }
+  listening.voiceMode(true);
+  this._renderPtt();
  }
+ _renderPtt() { const b = this.panel?.querySelector('.tp-ptt'); if (b) b.hidden = !(this.talking && listening.voice); }
 
  // A finished spoken question: routed like a typed one.
+ // In voice mode, what recognition heard counts only when the microphone heard talk (or Hold to talk was held):
+ // words it makes of singing are left.
  _heard(text) {
   this.panel.querySelector('.question-input').value = '';
+  const v = listening.voice, now = performance.now();
+  if (v && listening.active && !(now < (this._pttUntil || 0)) && !v.sm.wasSpeech(now)) { this._msg('info', `(Heard "${text}" while you were singing, so not taken as a question. Hold to talk to be sure.)`); return; }
   this._route(text);
+ }
+ // A request System 1 meets with one of the app's actions (js/voice-mode.js readIntent): done at once, as the
+ // student asked for it, listed with Undo.
+ async _doIntent(q, intent) {
+  this._msg('user', q);
+  if (intent.action === 'sing_back') { this._say(intent.say); return this._singBack(); }
+  const args = { ...intent.args };
+  if (intent.action === 'stop_loop_recording' && !args.slot) { const k = window.synth.loops().findIndex(l => l.recording); if (k < 0) { this._msg('info', 'No loop slot is recording.'); return; } args.slot = k + 1; }
+  try {
+   const r = await ACTIONS[intent.action].run(args, this.agent.env);
+   this._agentShow({ kind: 'done', action: intent.action, args, text: r.text, who: 'System 1 · done at once', undo: r.undo });
+   this._say(intent.say);
+  } catch (err) { this._msg('info', `I couldn't do that: ${err.message}.`); }
+ }
+
+ /* ---- Sing it back ---- */
+
+ // A phrase in the sequencer's key, in the range the student last sang in (or around middle C), plays from the
+ // next bar against the metronome; the student sings it back in the bar after; each note is then marked in tune
+ // or not, early or late (js/voice-mode.js scoreSingBack). With the provider allowed to hear recordings (Settings),
+ // the take is kept, to send if they ask.
+ async _singBack({ phrase = null, length = 4 } = {}) {
+  if (this._singing) return;
+  if (!listening.active && !(await listening.start())) { this._msg('info', `Sing it back needs the microphone: ${listening.error}`); return; }
+  this._singing = true;
+  try {
+   if (listening.settings.mode !== 'melody') { const m = document.getElementById('listen-mode'); if (m) { m.value = 'melody'; m.dispatchEvent(new Event('change')); } else listening.set({ mode: 'melody' }); }
+   const sung = listening.take.slice(-12).map(n => n.midi), centre = sung.length ? Math.round(sung.sort((a, b) => a - b)[sung.length >> 1]) : 60;
+   const { key, intervals } = keyAndScale();
+   phrase ||= makePhrase({ key, intervals, low: centre - 6, high: centre + 6, length: Math.max(3, Math.min(8, length)) });
+   const m = document.getElementById('metronomeToggle');
+   if (m && !m.checked) m.click();
+   for (let i = 0; i < 100 && !timing.clock.external; i++) await new Promise(r => setTimeout(r, 20));
+   const c = timing.clock, beat = c.period, bar = c.beatsPerBar, now = performance.now();
+   const start = c.timeOf(Math.ceil((c.beatAt(now) + 1) / bar) * bar), reply = start + Math.ceil(phrase.length / bar) * bar * beat;
+   const target = this.singBackTarget = phrase.map((midi, i) => ({ midi, time: reply + i * beat })); // for whoever drives it (the tests)
+   this._later(start - now, () => this._playSteps(phrase.map(n => [n]), 60000 / beat, 'Sing it back'));
+   this._add({ kind: 'info', text: `Sing it back: listen to ${phrase.length} notes from the next bar, then sing them in the bar after, one a beat.` });
+   const heard = [], open = new Map(), off = listening.subscribe((type, e) => {
+    if (type !== 'note') return;
+    if (e.type === 'on') open.set(e.midi, { midi: e.midi, start: e.time }); else if (open.has(e.midi)) { heard.push({ ...open.get(e.midi), end: e.time }); open.delete(e.midi); }
+   });
+   const keepTake = read(AUDIO_TO_PROVIDER_KEY, false) && this.teacher.isConfigured;
+   let take = null;
+   await new Promise(r => setTimeout(r, Math.max(0, reply - beat - performance.now())));
+   if (keepTake) take = await listening.record().catch(() => null);
+   await new Promise(r => setTimeout(r, Math.max(0, reply + phrase.length * beat + 500 - performance.now())));
+   off();
+   for (const n of open.values()) heard.push({ ...n, end: performance.now() });
+   const score = scoreSingBack(target, heard.sort((a, b) => a.start - b.start), { trail: listening.trail, beatMs: beat });
+   let audio = null;
+   if (take) {
+    const t = await take.stop(), bytes = new Uint8Array(await encodeAudio([t.samples], t.sampleRate, 'wav16').arrayBuffer());
+    let text = ''; for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    audio = btoa(text);
+   }
+   const id = `sing-${Date.now()}`;
+   if (audio) this._undos.set(`${id}:audio`, audio);
+   this._add({ kind: 'singback', id, phrase, notes: score.notes, text: score.text, who: 'System 1' });
+   this._say(score.text);
+   return score;
+  } finally { this._singing = false; }
  }
 
  _makeVoice() {
   this.voice ||= new Voice({
+   localOnly: () => read(SPEECH_LOCAL_KEY, true),
    onHeard: text => this._heard(text),
    onInterim: text => { this.panel.querySelector('.question-input').value = text; },
    onState: (state, note) => this._talkState(state, note),
@@ -1611,6 +1722,9 @@ export class TeacherBridge {
  _talkState(state, note) {
   if (state === 'voice-error') { this._msg('info', `The chosen voice couldn't start (${note}), so the browser's voice reads replies for now.`); return; }
   this.talking = state === 'listening' || state === 'speaking';
+  listening.hush = state === 'speaking' && !listening.settings.headphones; // on speakers, what the microphone hears now is the teacher
+  if (!this.talking) { listening.voiceMode(false); if (this._voiceOpened) { listening.stop(); this._voiceOpened = false; } }
+  this._renderPtt();
   const btn = this.panel.querySelector('.tp-talk'), line = this.panel.querySelector('.tp-talk-note');
   btn.setAttribute('aria-pressed', this.talking);
   btn.classList.toggle('listening', state === 'listening');
@@ -1618,10 +1732,12 @@ export class TeacherBridge {
   if (state === 'error') { this._msg('error', note); this.panel.querySelector('.question-input').value = ''; }
   if (!this.talking) { line.hidden = true; return; }
   const how = !canListen() ? 'This browser can\'t listen, so talk mode only reads replies aloud.'
+   : this.voice.cannotListen ? 'This browser recognises speech only online, which ☰ Settings › Listening and privacy doesn\'t allow, so it hears your singing and playing, and reads replies aloud; type your questions.'
    : this.voice.local ? 'Speech is recognised on this device.'
    : 'Your browser\'s speech service recognises what you say (in Chrome that is online).';
+  const both = listening.voice ? ' Sing or play too: it tells talk from singing, or hold Hold to talk.' : '';
   line.hidden = false;
-  line.textContent = state === 'speaking' ? 'Speaking. Play a note to interrupt.' : `Listening: ask a question out loud, or play and pause. ${how}`;
+  line.textContent = state === 'speaking' ? 'Speaking. Play a note to interrupt.' : `Listening: ask a question out loud, or play and pause.${both} ${how}`;
  }
 }
 

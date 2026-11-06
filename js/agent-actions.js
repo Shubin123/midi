@@ -285,6 +285,9 @@ export const ACTIONS = {
    env.play(steps, bpm || (chords?.length ? 60 : 120), label);
    return { text: `playing ${label}` };
   } },
+ sing_back: { kind: 'change', danger: () => !listening.active, says: 'A sing-back round: a short phrase in the sequencer\'s key plays from the next bar against the metronome, the student sings it back in the bar after, and is told how in tune and on time each note was. Opens the microphone (asking first) if it isn\'t.',
+  params: { length: { type: 'integer', minimum: 3, maximum: 8, description: 'Notes in the phrase' } },
+  run: ({ length = 4 }, env) => { env.singBack({ length }); return { text: `a sing-back round of ${length} notes: listen, then sing` }; } },
  set_exercise: { kind: 'change', says: 'Set a rhythm exercise: a pattern of one or two bars on the sixteenth grid ("x" a hit, "." a rest), at a tempo. The metronome starts, the pattern plays once from the next bar, and the phrases after it are marked against it.',
   params: { pattern: str('16 or 32 characters of x and .'), bpm: num('Tempo', 40, 220) }, required: ['pattern'],
   run: ({ pattern, bpm = 90 }, env) => {

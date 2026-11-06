@@ -5,6 +5,10 @@
 import { read, save } from './storage.js';
 
 export const TEACHER_KEY = 'teacher-enabled-v1', PANIC_BUTTON_KEY = 'panic-button-v2', TEACH_BUTTONS_KEY = 'teach-buttons-v1';
+// Privacy (js/teacher-bridge.js reads these when it listens or asks): speech recognised on the device only (on
+// by default), and recordings sent to the AI provider (off by default: it gets what the app writes about your
+// playing, not the sound).
+export const SPEECH_LOCAL_KEY = 'speech-local-only-v1', AUDIO_TO_PROVIDER_KEY = 'audio-to-provider-v1';
 
 // The floating PANIC button and the 🎓 buttons take room, so they are off unless switched on: the page hides
 // them (workspace.css) until these classes say otherwise, set here before the teacher adds its buttons.
@@ -43,4 +47,11 @@ export function addAppSettings(section) {
   ownSwitch,
   teach,
   el('p', { textContent: 'Off, the teacher is hidden and stops listening, talking and coaching; your conversation and lessons are kept.' }));
+
+ // Listening and privacy: the teacher can't change these (nor the microphone's own permission).
+ const privacy = (id, text, key, fallback) => { const t = toggle(id, text, read(key, fallback), on => { save(key, on); window.dispatchEvent(new CustomEvent('privacy:changed', { detail: { key, on } })); }); t.dataset.notForTeacher = ''; return t; };
+ section('Listening and privacy',
+  el('p', { textContent: 'What the microphone hears is analysed on this device and never sent anywhere. The AI provider is sent what the app writes about your playing (the notes and their timing), not the sound.' }),
+  privacy('settings-speech-local', 'Recognise speech on this device only', SPEECH_LOCAL_KEY, true),
+  privacy('settings-audio-provider', 'Let the AI provider hear recordings (a sing-back take, when you ask it)', AUDIO_TO_PROVIDER_KEY, false));
 }

@@ -15,6 +15,7 @@
 import { NoteTracker, OnsetDetector, PolyTracker, PolyPitch, frameSizes, timed, snapToScale, roundTrip } from './listen-dsp.js';
 import { SCALES } from './sequencer.js';
 import { timing } from './timing-widget.js';
+import { SpeechOrMusic, HandsFreeGate } from './voice-mode.js';
 import { read, save } from './storage.js';
 
 const KEY = 'listening-v1';
@@ -22,7 +23,8 @@ const KEY = 'listening-v1';
 // 'audio-clap'), for rhythm exercises: the beat clock grades it and the teacher reads the phrase's rhythm.
 // Chords: several notes at once, for a piano or a guitar (PolyPitch: approximate, about a fifth of a second
 // behind, each note stamped from its onset).
-export const MODES = { melody: 'Melody (one note at a time)', chords: 'Chords (several notes, approximate)', rhythm: 'Rhythm only (claps and taps)' };
+// Speech: talk to the teacher; nothing heard is a note (the teacher's voice mode is switched on).
+export const MODES = { melody: 'Melody (one note at a time)', chords: 'Chords (several notes, approximate)', rhythm: 'Rhythm only (claps and taps)', speech: 'Speech (talk to the teacher)' };
 export const CLAP = 0; // the note number a clap is sent as: nothing plays it, and the teacher reads it as a clap
 const DEFAULTS = { deviceId: '', mode: 'melody', snap: false, headphones: false, playThrough: false, gateDb: -50, latencyMs: null, inputGain: 1, clapTempo: false, clickDb: null, chordEngine: 'builtin' };
 const listeners = new Set();
@@ -43,6 +45,16 @@ export const listening = {
  trail: [], // { t, semis, cents, clarity } for the last few seconds
  held: new Set(), // notes sent on and not yet off
  take: [], // the performance so far: { midi, velocity, start, end } (ms, the page's clock), the latest 2000 notes
+ // Voice mode (the teacher's Talk, js/voice-mode.js): talk and sing into the same microphone. What is heard is
+ // told apart as talk or singing, and a note goes through only once it is sung (held); `ptt` is Hold to talk,
+ // while which nothing heard is a note. `hush`: the teacher is speaking, so what is heard is its voice.
+ voice: null, hush: false,
+ voiceMode(on) {
+  if (!!this.voice === on) return;
+  if (!on) for (const e of this.voice.gate.flush(performance.now())) this._send(e);
+  this.voice = on ? { sm: new SpeechOrMusic({ gateDb: this.settings.gateDb }), gate: new HandsFreeGate(), ptt: false, label: 'quiet' } : null;
+  emit('state', this.state());
+ },
  // fn(type, detail): 'state', 'frame', 'note' ({ type, midi, velocity, time }).
  subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
  set(changes) { Object.assign(this.settings, changes); save(KEY, this.settings); this._configure(); emit('state', this.state()); },
@@ -166,7 +178,16 @@ export const listening = {
     if (onset !== null) { if (rhythm) this._clap(onset, f); else this._chordOnset = onset; }
     this.tracker.pitch = { semis: null, midi: null, cents: 0, clarity: f.clarity, voiced: false, hz: 0, db: f.db };
    }
-   else { for (const e of this.tracker.push(f)) this._send(e); onset = this.tracker.onset; }
+   else {
+    let events = this.tracker.push(f);
+    if (this.voice) {
+     const heard = this.voice.sm.push(f), label = this.hush || this.voice.ptt || this.settings.mode === 'speech' ? 'speech' : heard;
+     if (label !== this.voice.label) { this.voice.label = label; emit('voice', label); }
+     events = this.voice.gate.push(events, label, f.t);
+    } else if (this.hush || this.settings.mode === 'speech') events = events.filter(e => e.type === 'off' && this.held.has(e.midi));
+    for (const e of events) this._send(e);
+    onset = this.tracker.onset;
+   }
    if (onset !== null && this.settings.clapTempo && !this._isClick(onset, f)) window.synth.tap(onset);
    const p = this.tracker.pitch;
    this.last = { ...f, pitch: p };
@@ -204,6 +225,7 @@ export const listening = {
   if (this.tracker) for (const e of this.tracker.flush(time)) this._send(e);
   for (const midi of [...this.held]) this._send({ type: 'off', midi, velocity: 0, time });
   if (this.chords) for (const e of this.chords.flush(time)) this._send(e);
+  if (this.voice) { this.voice.gate.flush(time); this.voice.sm.reset(); }
   this.tracker?.reset(); this.claps?.reset(); this.strikes?.reset();
  },
 

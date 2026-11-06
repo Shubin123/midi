@@ -165,7 +165,9 @@ export class AiTeacher {
  }
 
  // opts.tools ({ definitions, run }) are the workspace tools a hosted model may call while answering.
- async _request(msg, { think = false, context = '', quick = '', onConfirm = null, tools = null } = {}) {
+ // opts.audio (base64 WAV) goes with the question as input_audio, for providers that hear audio; the history
+ // keeps only the words.
+ async _request(msg, { think = false, context = '', quick = '', onConfirm = null, tools = null, audio = null } = {}) {
   if (!this.engine) { this.onError?.('Set up a model in Settings first.'); return null; }
   this.onStatus?.(think ? 'reasoning' : 'thinking');
   const history = this.conversationHistory, generation = this._generation, started = performance.now();
@@ -175,7 +177,8 @@ export class AiTeacher {
   try {
    // Supervising: the app already gave a quick answer (System 1); the model confirms it or answers itself.
    const asked = quick ? `${msg}\n\n(The app's quick answer was: "${quick}". If that answers the question correctly, reply with just OK. Otherwise answer the question yourself.)` : msg;
-   const turn = context || quick ? [...history.slice(0, -1), { role: 'user', content: context ? `${context}\n\n${asked}` : asked }] : history;
+   let turn = context || quick ? [...history.slice(0, -1), { role: 'user', content: context ? `${context}\n\n${asked}` : asked }] : history;
+   if (audio) turn = [...turn.slice(0, -1), { role: 'user', content: [{ type: 'text', text: turn.at(-1).content }, { type: 'input_audio', input_audio: { data: audio, format: 'wav' } }] }];
    const used = new Set(), withTools = tools && { definitions: tools.definitions, run: (name, args) => { used.add(name); return tools.run(name, args); } };
    const raw = await this.engine.generate([{ role: 'system', content: tools ? `${SYSTEM_PROMPT}\n\n${TOOLS_PROMPT}` : SYSTEM_PROMPT }, ...turn], withTools ? { think, tools: withTools } : { think });
    this._toolsUsed = used;

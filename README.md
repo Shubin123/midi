@@ -817,6 +817,61 @@ the first time); otherwise the browser's own speech service does it, which in
 Chrome is online, and the panel says which. Firefox has no speech recognition,
 so there talk mode only reads replies aloud.
 
+**Voice mode.** Talk also opens the Listening widget (if it wasn't), so the
+same microphone hears questions and music, hands-free (`js/voice-mode.js`).
+What it hears is told apart frame by frame: singing holds a pitch (within
+0.7 of a semitone for 230 ms or more), talk glides through short voiced
+syllables, four or five a second, with consonants between. A note waits
+until it is sung (held for 120 ms while the sound is music) and then goes
+through with its own time stamp; a note that ends first, or is still talk
+400 ms after it began, is dropped, so talking lights no keys. Speech
+recognition's words count only when the microphone heard talk: words it
+makes of singing ("la la la") are left, and the panel says so. **Hold to
+talk** (shown in voice mode) makes everything heard talk while held. On
+speakers, while the teacher speaks, the microphone's notes are hushed (its
+voice is in them); with headphones they aren't. **Listening › Speech**
+switches voice mode on for talk alone.
+
+Spoken (or typed) requests that one action meets are met at once by System 1
+and listed with Undo: "record what I sing into slot 2" (or "the sound", for an
+audio take), "stop recording", "play loop 3", "stop slot 1", "slow it down to
+80", "give me a jazz rhythm to practise" (jazz, swing, rock, funk, latin,
+bossa, reggae, waltz, or four steady beats, as a rhythm exercise), "start
+listening", "stop listening" and "sing it back"; anything else goes on to
+the commands, Laya and System 2 as before.
+
+**Sing it back**: a phrase of four notes (three to eight) in the step
+sequencer's key, in the range you last sang in, plays from the next bar
+against the metronome, and you sing it back in the bar after. Each note is
+then marked: in tune (within 25 cents, in whatever octave you sing), or how
+many cents sharp or flat, and on time (within 60 ms) or how early or late,
+with one thing to do about the worst ("The second (D) was 38 cents flat. The
+third came 75 ms late."), read aloud in talk mode, and **Again**, **New
+phrase** and **Ask** the provider about it. The agent's `sing_back` action
+starts one too.
+
+**Privacy** (☰ Settings › Listening and privacy, which the teacher can't
+change): what the microphone hears is analysed on this device and never
+sent; the provider gets what the app writes about your playing, not the
+sound. **Recognise speech on this device only** is on by default: where the
+browser can recognise speech only through its online service, voice mode
+still hears your singing and reads replies aloud, and says why it doesn't
+take spoken questions. **Let the AI provider hear recordings** is off by
+default; on, a sing-back keeps its take and **Ask … (with the recording)**
+sends it as `input_audio` (WAV) with the question, for providers that hear
+audio; the conversation keeps only the words. The red **Mic on** pill shows
+whenever the microphone is open.
+
+`node tests/voice-mode.mjs` checks the classifier on made-up talk at three
+voices' pitches and on singing, that talk sends (almost) no notes while sung
+notes go through on time, the spoken requests (and the questions and
+commands left alone), the phrases, and the scoring, from numbers and from a
+sung reply. `node tests/voice-mode-panel.mjs` does it in the app with speech
+recognition stubbed: Talk opening voice mode, talk taken and singing's words
+left, Hold to talk, spoken requests recording into slot 2 and setting a jazz
+exercise, the teacher's voice hushed on speakers, a sing-back round marked
+note by note, the privacy switches, and Listening › Speech.
+
 **The teacher's voice** is chosen in the Provider tab, with a **Test voice**
 button. Besides the browser's own voice, three neural voice engines run in the
 page, each downloaded once when first used and kept in the browser
