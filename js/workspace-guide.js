@@ -11,6 +11,11 @@ export const GUIDES = {
   how: [['Click or tap a key to play it; drag across keys for a glissando.', 'Keyboard'], ['Turn the falling notes on or off.', 'synthesiaToggle'], ['Change how many octaves show in Master & Settings › Keyboard Octaves; two octaves are 25 keys, like a 25-key controller.', 'numOctavesSelect']],
   keywords: ['keys', 'piano', 'falling notes', 'midi controller', 'computer keyboard'],
  },
+ 'Listening': {
+  what: 'Audio In: sing, hum, whistle or play an instrument into the microphone (or an audio interface) and the app plays along as if from a keyboard. The notes light the keys, fall, are recorded by an armed loop slot and reach the teacher and the beat clock. The tuner shows the note and how many cents off it is.',
+  how: [['Press 🎙 Listen and allow the microphone; the red Mic on pill at the top says it is open.', 'listen-toggle'], ['Choose the input: a microphone or an audio interface\'s input.', 'listen-device'], ['Tick Snap to the sequencer\'s key and scale so every note lands in the key.', 'listen-snap'], ['With headphones on, tick I\'m wearing headphones, then Play what I sing through the synth to hear it as the patch.', 'listen-headphones'], ['Raise the noise gate if the room is heard as notes.', 'listen-gate'], ['Calibrate latency once, so notes land on the beat you sang them on.', 'listen-calibrate']],
+  keywords: ['listen', 'listening', 'microphone', 'mic', 'sing', 'singing', 'hum', 'whistle', 'voice', 'tuner', 'audio in', 'latency', 'headphones', 'in tune', 'cents'],
+ },
  'Step sequencer': {
   what: 'A 16-step pattern player. Each row is a note of the chosen key and scale; each column is a sixteenth note.',
   how: [['Click cells to turn steps on.', 'Step sequencer'], ['Choose the key, scale and octave the rows follow; changing them moves the pattern with them.', 'seq-scale'], ['Set the speed with Base BPM.', 'seq-bpm'], ['Press ▶ Play to hear it, ■ Stop to stop.', 'seq-play'], ['Clear notes empties the grid.', 'seq-clear']],

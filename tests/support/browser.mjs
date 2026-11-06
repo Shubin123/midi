@@ -35,7 +35,8 @@ async function findChrome() {
 // beforeScripts(source), errors, close() }: `errors` collects what the page throws or logs as an error since the
 // last open() or reload(); beforeScripts() runs `source` in every page from then on, before the page's own scripts;
 // evaluate() fails after `timeout` ms (a page that never finishes fails the suite rather than hanging it).
-export async function launch({ width = 1500, height = 1000 } = {}) {
+// `args` are more Chrome switches (a fake microphone, say).
+export async function launch({ width = 1500, height = 1000, args = [] } = {}) {
  const server = createServer(async (req, res) => {
   const path = normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname)).replace(/^(\.\.[/\\])+/, '');
   try {
@@ -47,7 +48,7 @@ export async function launch({ width = 1500, height = 1000 } = {}) {
  const base = `http://127.0.0.1:${server.address().port}`;
 
  const profile = await mkdtemp(join(tmpdir(), 'midi-tests-'));
- const chrome = spawn(await findChrome(), ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, `--window-size=${width},${height}`, '--autoplay-policy=no-user-gesture-required', '--no-first-run', '--no-default-browser-check', '--mute-audio', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+ const chrome = spawn(await findChrome(), ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, `--window-size=${width},${height}`, '--autoplay-policy=no-user-gesture-required', '--no-first-run', '--no-default-browser-check', '--mute-audio', ...args, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
  // Stopped or interrupted, the run takes its Chrome and profile with it: nothing is left running or on disk.
  const quit = () => { chrome.kill(); try { rmSync(profile, { recursive: true, force: true }); } catch { /* best effort */ } };
  process.once('exit', quit);

@@ -135,7 +135,7 @@ async function instantiateVst3(ctx, rec) {
  const input = ctx.createGain(), output = ctx.createGain();
  if (io.inputs && !info.instrument) input.connect(node);
  node.connect(output);
- const onNote = ({ detail }) => node.port.postMessage({ note: detail.midi, on: detail.on, velocity: detail.velocity });
+ const onNote = ({ detail }) => { if (!detail.silent) node.port.postMessage({ note: detail.midi, on: detail.on, velocity: detail.velocity }); }; // a note heard on speakers stays silent
  const onPanic = () => node.port.postMessage({ panic: true });
  // Tempo-synced plug-ins (SyncDelay, mda DubDelay, ...) follow the session tempo through the VST3 ProcessContext.
  const onTempo = ({ detail }) => node.port.postMessage({ tempo: detail });

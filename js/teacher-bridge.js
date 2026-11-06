@@ -37,8 +37,8 @@ import { PROVIDERS, GROUPS, SYSTEM_ONE, NO_SYSTEM_TWO, providerById, getProvider
 import { signIn, completeSignIn } from './ai-auth.js';
 import { read, save } from './storage.js';
 
-// Notes the player struck; the sequencer, looper and the teacher's own playback are not analysed.
-const PLAYED = /^(midi|computer|mouse|touch)/;
+// Notes the player struck or sang; the sequencer, looper and the teacher's own playback are not analysed.
+const PLAYED = /^(midi|computer|mouse|touch|audio)/; // audio: sung or played into the microphone (js/listening.js)
 const toNote = midi => NOTE_NAMES[midi % 12] + Math.floor(midi / 12); // the synth calls MIDI 60 "C5"
 const MAX_MESSAGES = 200;
 const host = url => url.replace(/^https?:\/\//, '').replace(/\/.*$/, '');

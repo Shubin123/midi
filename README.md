@@ -117,6 +117,68 @@ and the mapped keys are labelled on the first two octaves. MIDI arrives through
 `navigator.requestMIDIAccess({ sysex: false })`, with note-on velocity mapped
 from the 0-127 range onto voice gain.
 
+### Listening: sing or play into the microphone
+
+The **Listening** widget (`js/listening.js`, `js/listening-widget.js`) lets the
+app hear you without a MIDI keyboard: sing, hum, whistle or play a
+single-line instrument into the microphone or an audio interface's input,
+and what you play arrives as if from a keyboard. Every note goes through the
+same path as a MIDI note (`window.synth.input`, source `audio`), so it lights
+its key, falls, is recorded by an armed loop slot, is coached by the AI
+teacher and graded by the beat clock, with nothing in those changed.
+
+- **Pitch** (`js/listen-dsp.js`, run in an AudioWorklet, `js/listen-worklet.js`):
+  McLeod's normalised square difference (MPM) on a 43 ms window every 5 ms,
+  computed by FFT, with how clear the pitch is. On made-up voices, whistles
+  and waveforms from 65 Hz to 2 kHz it is within 2 cents (5 for a square
+  wave, which aliases), within 20 cents with noise 20 dB down, and a voice
+  with no fundamental reads as its fundamental.
+- **Onsets**: spectral flux and the rise in level, each against its own
+  recent median, ignored while the level is falling (a note dying away smears
+  its spectrum), then placed on a 5 ms level envelope.
+- **Notes**: a note starts once its pitch holds still for 25 ms, stamped with
+  when it began (so a scoop up into it is one note, on time), follows the
+  median of the last frames (vibrato of ±90 cents is still one note), moves
+  to another note only when the pitch stays 0.6 of a semitone away for
+  40-80 ms and holds still, and ends after 60 ms of quiet or a 20 ms gap
+  before the next. Sung again out of a consonant (a dip in level that comes
+  back up), it is a new note. **Snap to the sequencer's key and scale** puts
+  every note on the step sequencer's scale. Velocity follows how loud you
+  sing.
+- **Latency**: a sound reaches the page some time after it was made.
+  **Calibrate latency** plays eight clicks and hears them back (on
+  headphones, clap along instead), and every note is then stamped that much
+  earlier, so it lands on the beat it was sung on; until then the browser's
+  own figures are used. Echo cancellation, noise suppression and automatic
+  gain are switched off, since they are made for speech.
+- **Feedback**: on speakers the microphone hears the app too, so notes the app
+  is sounding itself (the keyboard, the sequencer, a loop, the teacher's
+  examples, in any octave) are followed but not sent, and what you sing
+  lights the keys without sounding. Tick **I'm wearing headphones** and
+  **Play what I sing through the synth** to hear it as the current patch.
+- **Seeing it**: a level meter with the noise gate on it, a tuner (the note,
+  cents sharp or flat, the frequency), and over the falling notes a **pitch
+  trail** of what you sing gliding between the keys, green within 10 cents,
+  amber within 25, red beyond. A red **Mic on** pill shows at the top of the
+  page while the microphone is open; clicking it stops listening.
+- **Fallbacks**: a refused or missing microphone, or a browser without
+  AudioWorklet, says so in the widget; MIDI and the keyboard carry on. All
+  of it runs on the device; no sound leaves the page.
+
+The input, mode, snapping, headphones, gate and measured latency are kept.
+`node tests/listening.mjs` checks the pitch, a sung melody (vibrato, scoops,
+breaths, a re-sung note, a legato step) note for note with every onset within
+20 ms (in practice within 7), a whistled melody, snapping, velocity, the gate
+and the app's own notes being left out. `node tests/listening-panel.mjs` does
+it in the app: a melody rendered through the app's own oscillators is played
+into the real worklet and comes out note for note within 20 ms, lighting its
+keys and falling, silent on speakers and sounding with headphones; the
+teacher's live strip, phrase analysis and the beat clock get it; the tuner
+reads 445 Hz as A4 +20¢; calibration on a 40 ms loopback measures 40 ms and
+a note through it is then stamped on time; the app's own notes played back
+into the input are ignored; a refused microphone; and then Chrome's fake
+microphone playing a sung melody from a file, through `getUserMedia`.
+
 ### Loop recorder
 
 Four independent slots, each of which can be armed, recorded, played, and
@@ -323,6 +385,7 @@ Source files:
 - `js/synth.js`: existing synthesis, keyboard, MIDI, and loop recorder engine
 - `js/sequencer.js`: sequencer transport and automation editor
 - `js/timing.js`, `js/timing-widget.js`: the beat clock, tempo and rhythm, the timing strip and Sync to MIDI clock
+- `js/listening.js`, `js/listening-widget.js`, `js/listen-dsp.js`, `js/listen-worklet.js`: Audio In, the Listening widget, and the pitch, onset and note tracking
 - `js/commands.js`: requests to change a setting, read without a model
 - `js/automation.js`: automation targets, interpolation, and parameter application
 - `js/widgets.js`: responsive widget layout, dragging, and visibility

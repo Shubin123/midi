@@ -8,7 +8,7 @@
 import { BeatClock, MidiClock, TempoWatch, DIFFICULTY, grade, estimateTempo, eventTimes } from './timing.js';
 import { read, save } from './storage.js';
 
-const PLAYED = /^(midi|computer|mouse|touch)/;
+const PLAYED = /^(midi|computer|mouse|touch|audio)/; // audio: sung or played into the microphone (js/listening.js)
 const COLORS = { good: '#6bcb77', ok: '#f4a261', off: '#ff6b6b', free: '#9aa5b1' };
 const listeners = new Set();
 const emit = (type, detail) => listeners.forEach(fn => fn(type, detail));

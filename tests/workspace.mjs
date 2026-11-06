@@ -12,7 +12,7 @@ const { parsePlayCommand, SYSTEM_PROMPT } = await import('../js/ai-teacher.js');
 const { Attempt } = await import('../js/lessons.js');
 
 /* ---- Guides cover every widget the workspace builds ---- */
-const TITLES = ['Keyboard', 'Step sequencer', 'Automation', 'Oscillators', 'Envelope (ADSR)', 'Metronome & Tempo', 'Filter', 'Master & Settings', 'Loop recorder', 'Oscilloscope', 'Air', 'Plugins', 'Import / Export', 'Settings'];
+const TITLES = ['Keyboard', 'Listening', 'Step sequencer', 'Automation', 'Oscillators', 'Envelope (ADSR)', 'Metronome & Tempo', 'Filter', 'Master & Settings', 'Loop recorder', 'Oscilloscope', 'Air', 'Plugins', 'Import / Export', 'Settings'];
 assert.deepEqual(Object.keys(GUIDES).sort(), [...TITLES].sort(), 'one guide per widget');
 for (const [title, g] of Object.entries(GUIDES)) {
  assert.ok(g.what.length > 30 && g.how.length >= 2, `${title}: says what it is for and how to use it`);

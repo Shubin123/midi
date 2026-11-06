@@ -136,7 +136,8 @@
                 }
                 
                 const now = audioContext.currentTime;
-                if (slotId !== -1 || !activeSoundUnits[noteString] || forceRetrigger) emitNote(noteString, velocity, true, source);
+                const silent = source === 'audio' && inputSilent;
+                if (slotId !== -1 || !activeSoundUnits[noteString] || forceRetrigger) emitNote(noteString, velocity, true, source, silent);
 
                 if (slotId === -1) { 
                     if (activeSoundUnits[noteString] && !forceRetrigger) { 
@@ -159,7 +160,7 @@
                     }
                 }
 
-                const unit = { mainNoteGain: audioContext.createGain(), oscillators: [], source: source };
+                const unit = { mainNoteGain: audioContext.createGain(), oscillators: [], layers: [], source: source, silent };
                 
                 if (slotId !== -1) { 
                     if (!loopSlotsData[slotId].soundUnits[noteString]) {
@@ -196,7 +197,8 @@
 
 
                 // Every oscillator in the bank, layered; live notes also feed the oscilloscope's per-oscillator taps.
-                const oscillators = params.oscillators;
+                // A silent note has none.
+                const oscillators = silent ? [] : params.oscillators;
                 unit.layers = window.oscillatorBank.buildVoice(audioContext, oscillators, {
                     frequency: noteToFrequency(noteString, 0), when: now, slop: params.common.oscSlop, noise: whiteNoiseBuffer,
                     out: unit.mainNoteGain, taps: slotId === -1 ? oscillators.map((_, i) => oscTap(i).sum) : []
@@ -238,7 +240,7 @@
                     : activeSoundUnits[noteString];
 
                 if (!unit) return; 
-                emitNote(noteString, 0, false, source);
+                emitNote(noteString, 0, false, source, unit.silent);
 
                 const now = audioContext.currentTime; 
                 let relTime;
@@ -323,8 +325,10 @@
             // `source` is the playNote/stopNote source ("midi", "computer", "sequencer", "looper-slot-0", ...).
             // `time` is when the note was played, on the page's clock: a MIDI message's own time stamp when there is
             // one (it is taken as the key goes down, before the page gets to it), else now.
-            let midiNoteTime = null;
-            function emitNote(noteString, velocity, on, source) { const nN=noteString.replace(/\d+$/,''); const midi=parseInt(noteString.match(/\d+$/)[0])*12+midiNoteNames.indexOf(nN); window.dispatchEvent(new CustomEvent('synth:note',{detail:{note:noteString,midi,velocity,on,source,time:source==='midi'&&midiNoteTime?midiNoteTime:performance.now()}})); }
+            // Notes heard by the listener (source "audio", js/listening.js) carry the time they were sung, and say
+            // when they are `silent` (on speakers they light the keys without sounding, so the mic doesn't hear them).
+            let midiNoteTime = null, inputSilent = true;
+            function emitNote(noteString, velocity, on, source, silent = false) { const nN=noteString.replace(/\d+$/,''); const midi=parseInt(noteString.match(/\d+$/)[0])*12+midiNoteNames.indexOf(nN); window.dispatchEvent(new CustomEvent('synth:note',{detail:{note:noteString,midi,velocity,on,source,silent,time:(source==='midi'||source==='audio')&&midiNoteTime?midiNoteTime:performance.now()}})); }
 
             function emergencyStopAllSounds() {
                 console.warn("PANIC: Stopping all sounds!"); 
@@ -1028,5 +1032,17 @@ window.synth = {
  },
  // Starts a loop slot immediately, skipping beat quantization, so a bounce begins on its first frame.
  playLoop: id => { if (!audioContext) initAudio(); const slot = loopSlotsData[id]; if (slot.isPlaying || !slot.recordedEvents.length || slot.loopDuration <= 0) return false; const q = slot.quantizeStartTime; slot.quantizeStartTime = 0; startPlaybackForSlot(id); slot.quantizeStartTime = q; return true; },
- stopLoop: id => stopPlaybackForSlot(id)
+ stopLoop: id => stopPlaybackForSlot(id),
+ // A note heard by the listener (js/listening.js), played as a MIDI controller's is: lit on the keys, falling,
+ // recorded by an armed loop slot, and stamped with when it was sung (`time`, on the page's clock). It sounds
+ // only when `silent` is false, which the listener allows with headphones on.
+ input: (midi, on, { velocity = 0.7, time = null, silent = true } = {}) => {
+  if (!audioContext) initAudio();
+  const nS = midiNoteToNoteString(midi), kE = keyboardContainer.querySelector(`[data-midi="${midi}"]`);
+  midiNoteTime = time; inputSilent = silent;
+  try {
+   if (on) { playNote(nS, velocity, 'audio', true); kE?.classList.add('active'); }
+   else { stopNote(nS, 'audio'); if (kE && !sustainPedalActive) kE.classList.remove('active'); }
+  } finally { midiNoteTime = null; inputSilent = true; }
+ }
 };
