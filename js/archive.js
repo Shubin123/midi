@@ -1,13 +1,36 @@
 // Reads .zip, .tar, .tar.gz/.tgz and .gz archives in the browser with DecompressionStream.
-// Returns a Map of normalized relative paths to Uint8Array contents.
+// Returns a Map of normalized relative paths to Uint8Array contents, or to a LargeEntry for an entry of LARGE
+// bytes or more. A ZIP of LARGE bytes or more is read in slices, never whole, so a multi-gigabyte installer
+// or disk image costs only its central directory.
+export const LARGE = 256 << 20;
+
+// A file too large to hold in memory, read only when asked: as a stream, or the start of it.
+export class LargeEntry {
+ constructor(source, size, method = 0) { this.source = source; this.size = size; this.method = method; }
+ stream() {
+  if (this.method === 0) return this.source.stream();
+  if (this.method === 8) return this.source.stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  throw new Error(`Unsupported ZIP compression method ${this.method}.`);
+ }
+ async head(n) {
+  if (this.method === 0) return new Uint8Array(await this.source.slice(0, n).arrayBuffer());
+  const reader = this.stream().getReader(), parts = [];
+  for (let got = 0; got < n;) { const { value, done } = await reader.read(); if (done) break; parts.push(value); got += value.length; }
+  reader.cancel().catch(() => {});
+  return concat(parts).subarray(0, n);
+ }
+ // A Blob of the contents, to slice: a stored entry's own bytes, or a deflated one's, decompressed.
+ async blob() { return this.method === 0 ? this.source : new Response(this.stream()).blob(); }
+}
+
 export async function readArchive(blob, name = '') {
- const bytes = new Uint8Array(await blob.arrayBuffer());
+ const head = new Uint8Array(await blob.slice(0, 512).arrayBuffer());
  let files;
- if (isZip(bytes)) files = await unzip(bytes);
- else if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
-  const raw = await inflate(bytes, 'gzip');
+ if (isZip(head)) files = await unzip(blob);
+ else if (head[0] === 0x1f && head[1] === 0x8b) {
+  const raw = await inflate(new Uint8Array(await blob.arrayBuffer()), 'gzip');
   files = isTar(raw) ? untar(raw) : new Map([[name.replace(/\.gz$/i, '') || 'file', raw]]);
- } else if (isTar(bytes)) files = untar(bytes);
+ } else if (isTar(head)) files = untar(new Uint8Array(await blob.arrayBuffer()));
  else throw new Error(`Unsupported archive format${name ? ' for ' + name : ''}. Use .zip, .tar, .tar.gz or .tgz.`);
  return normalize(files);
 }
@@ -15,33 +38,59 @@ export async function readArchive(blob, name = '') {
 const isZip = b => b[0] === 0x50 && b[1] === 0x4b && (b[2] === 3 || b[2] === 5) && (b[3] === 4 || b[3] === 6);
 const isTar = b => b.length > 262 && String.fromCharCode(...b.subarray(257, 262)) === 'ustar';
 const text = new TextDecoder();
+const view = b => new DataView(b.buffer, b.byteOffset, b.byteLength);
+export const concat = parts => {
+ if (parts.length === 1) return parts[0];
+ const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+ parts.reduce((at, p) => (out.set(p, at), at + p.length), 0);
+ return out;
+};
 
 async function inflate(bytes, format) {
  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream(format));
  return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
-async function unzip(bytes) {
- const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+async function unzip(blob) {
+ const whole = blob.size < LARGE ? new Uint8Array(await blob.arrayBuffer()) : null;
+ const read = async (start, end) => whole ? whole.subarray(start, end) : new Uint8Array(await blob.slice(start, end).arrayBuffer());
+ // The end record is in the last 65,557 bytes (its comment is at most 65,535), a ZIP64 locator just before it.
+ const tailStart = Math.max(0, blob.size - 65557 - 20), tail = await read(tailStart, blob.size), tv = view(tail);
  let end = -1;
- for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65557); i--) if (view.getUint32(i, true) === 0x06054b50) { end = i; break; }
+ for (let i = tail.length - 22; i >= 0; i--) if (tv.getUint32(i, true) === 0x06054b50) { end = i; break; }
  if (end < 0) throw new Error('Corrupt ZIP: end of central directory not found.');
- const count = view.getUint16(end + 10, true);
- let at = view.getUint32(end + 16, true);
- if (at === 0xffffffff) throw new Error('ZIP64 archives (over 4 GB or 65,535 files) are not supported.');
+ let count = tv.getUint16(end + 10, true), dirSize = tv.getUint32(end + 12, true), at = tv.getUint32(end + 16, true);
+ // ZIP64 (over 4 GB or 65,535 files): the real count, size and offset are in the record the locator points to.
+ if ((count === 0xffff || dirSize === 0xffffffff || at === 0xffffffff) && end >= 20 && tv.getUint32(end - 20, true) === 0x07064b50) {
+  const rec = Number(tv.getBigUint64(end - 12, true)), z = view(await read(rec, rec + 56));
+  if (z.getUint32(0, true) !== 0x06064b50) throw new Error('Corrupt ZIP64 end of central directory.');
+  count = Number(z.getBigUint64(32, true)); dirSize = Number(z.getBigUint64(40, true)); at = Number(z.getBigUint64(48, true));
+ }
+ const dir = await read(at, at + dirSize), dv = view(dir);
  const files = new Map();
- for (let n = 0; n < count; n++) {
-  if (view.getUint32(at, true) !== 0x02014b50) throw new Error('Corrupt ZIP central directory.');
-  const flags = view.getUint16(at + 8, true), method = view.getUint16(at + 10, true);
-  const size = view.getUint32(at + 20, true), nameLen = view.getUint16(at + 28, true);
-  const extraLen = view.getUint16(at + 30, true), commentLen = view.getUint16(at + 32, true);
-  const local = view.getUint32(at + 42, true);
-  const path = text.decode(bytes.subarray(at + 46, at + 46 + nameLen));
-  at += 46 + nameLen + extraLen + commentLen;
+ for (let n = 0, p = 0; n < count; n++) {
+  if (p + 46 > dir.length || dv.getUint32(p, true) !== 0x02014b50) throw new Error('Corrupt ZIP central directory.');
+  const flags = dv.getUint16(p + 8, true), method = dv.getUint16(p + 10, true);
+  let packed = dv.getUint32(p + 20, true), size = dv.getUint32(p + 24, true), local = dv.getUint32(p + 42, true);
+  const nameLen = dv.getUint16(p + 28, true), extraLen = dv.getUint16(p + 30, true), commentLen = dv.getUint16(p + 32, true);
+  const path = text.decode(dir.subarray(p + 46, p + 46 + nameLen));
+  // The ZIP64 extra field (id 1) holds, in this order, the sizes and offset that read 0xffffffff above.
+  for (let x = p + 46 + nameLen, stop = x + extraLen; x + 4 <= stop; x += 4 + dv.getUint16(x + 2, true)) {
+   if (dv.getUint16(x, true) !== 1) continue;
+   let f = x + 4;
+   const next = () => { const v = Number(dv.getBigUint64(f, true)); f += 8; return v; };
+   if (size === 0xffffffff) size = next();
+   if (packed === 0xffffffff) packed = next();
+   if (local === 0xffffffff) local = next();
+   break;
+  }
+  p += 46 + nameLen + extraLen + commentLen;
   if (path.endsWith('/')) continue;
   if (flags & 1) throw new Error(`${path} is encrypted; password-protected ZIPs are not supported.`);
-  const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
-  const data = bytes.subarray(start, start + size);
+  const lv = view(await read(local, local + 30));
+  const start = local + 30 + lv.getUint16(26, true) + lv.getUint16(28, true);
+  if (size >= LARGE) { files.set(path, new LargeEntry(blob.slice(start, start + packed), size, method)); continue; }
+  const data = await read(start, start + packed);
   if (method === 0) files.set(path, data);
   else if (method === 8) files.set(path, await inflate(data, 'deflate-raw'));
   else throw new Error(`${path} uses unsupported ZIP compression method ${method}.`);

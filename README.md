@@ -715,6 +715,13 @@ serves them under `plugin-fs/<id>/`, so a plugin's relative imports,
 AudioWorklet modules and `fetch` calls resolve as they would on a web server.
 Installed plugins and their settings come back after a reload.
 
+Large files aren't read until they're needed (`js/archive.js`). A ZIP of
+256 MB or more is read in slices: its central directory, then only the entries
+used. ZIP64 is read too, so archives over 4 GB open. A file of 256 MB or more,
+whether dropped or inside an archive, stays unread until something asks for its
+start or streams it. A 10 GB disk image in a ZIP is named in a fraction of a
+second, using next to no memory.
+
 Every plugin, VST3 and captured ones included, gets its own window
 (`js/plugin-window.js`) with its controls, as plug-in editors open in a DAW.
 A new plugin opens its window at the top right. Drag the title bar (or focus
@@ -939,7 +946,7 @@ what the plug-in says about itself, entirely in the browser:
 | `Contents/Resources/moduleinfo.json` | VST3 class name, vendor, version, SDK version, sub-categories |
 | Binaries (Mach-O, PE, ELF, WebAssembly headers) | platform and CPU architectures |
 | Strings inside binaries | VST3 sub-categories, VST SDK version, framework (JUCE, iPlug2, DPF, ...) |
-| `.pkg` installers (xar) | each component's `PackageInfo` and gzip cpio `Payload` |
+| `.pkg` installers (xar) | each component's `PackageInfo` and gzip cpio `Payload`, streamed front to back: in a bundle only `Info.plist`, `moduleinfo.json` and the start of each binary are kept, so a multi-gigabyte installer's sample content is skipped and never held |
 | Nested archives, `.dmg`, `.exe`, `.msi` | nested archives are opened; the others are flagged with next steps |
 
 Each card then offers three routes: rebuild from source with
@@ -1012,7 +1019,7 @@ later, nothing to install; see *Running it*):
 - `node tests/settings.mjs`: the Settings menu (clicking off closes it); the PANIC and 🎓 buttons off by default and switched on; switching the AI teacher off and on; stopping every sound from Settings or the PANIC button; the panic on coming back to the tab; and every switch kept after a reload (headless Chrome)
 - `node tests/themes.mjs`: every UI theme, and the UI scale, chosen and then back after a reload by the time the page is parsed and at its first frame; switching back to the default; a retired theme name (headless Chrome)
 - `node tests/oscillators.mjs`: the oscillator bank's settings
-- `node tests/archive.mjs`: archive reading and writing
+- `node tests/archive.mjs`: archive reading and writing, ZIP64, and large entries left unread
 - `node tests/formats.mjs`: WAV, AIFF and MIDI reading and writing
 - `node tests/sequencer.mjs`: sequencer scales and pattern transposition
 - `node tests/coach.mjs`: chord and scale names to notes, every coaching step in every key, and fitting examples onto 25 keys
@@ -1021,7 +1028,7 @@ later, nothing to install; see *Running it*):
 - `node tests/requests.mjs`: requests to play something met by System 1, and System 2's examples read reliably
 - `node tests/voice.mjs`: how talk mode reads music notation aloud
 - `node tests/teacher.mjs`: the AI teacher's analysis and API requests
-- `node tests/native-id.mjs`: identification (macOS; uses `clang`, `pkgbuild` and `productbuild`)
+- `node tests/native-id.mjs`: identification, including an installer streamed past 256 MB of samples to its plug-in (macOS; uses `clang`, `pkgbuild` and `productbuild`)
 - `node tests/vst3-wasm.mjs`: the WebAssembly VST3 builds, and their VSTGUI editors opened, drawn and dragged
 - `node tests/plugin-editor.mjs`: plug-in windows' editors and generic controls, every way an editor can fail forced, and AGain's real VSTGUI editor used (headless Chrome)
 - `node tests/editor-frameworks.mjs`: the editor adapter each framework gets, from a bundle's editor.json or its binary's strings

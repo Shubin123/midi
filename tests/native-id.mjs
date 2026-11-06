@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readArchive } from '../js/archive.js';
+import { readArchive, LargeEntry, LARGE } from '../js/archive.js';
 import { identifyNative, standInFor, binaryInfo } from '../js/native-id.js';
 import { parsePlist } from '../js/plist.js';
 
@@ -69,6 +69,24 @@ assert.equal(rev.installLocation, '/Library/Audio/Plug-Ins/VST3');
 assert.match(rev.path, /^Rev Installer\.pkg › .*Rev\.vst3$/);
 assert.ok(installer.find(i => i.installer && i.format === 'macOS disk image'));
 console.log('Installer: plugin found inside a zipped product .pkg payload; .dmg flagged.');
+
+// An installer of LARGE bytes or more, as a dropped file or a large ZIP entry is (a LargeEntry): it is streamed, a
+// payload of samples is skipped, and the plug-in in the next component is still found. A large disk image in a
+// ZIP is named without being read.
+mkdirSync(join(dir, 'content/Samples'), { recursive: true });
+writeFileSync(join(dir, 'content/Samples/kit.bin'), Buffer.alloc(LARGE + 4096));
+run('pkgbuild', ['--quiet', '--root', 'content', '--identifier', 'com.acme.content.pkg', '--version', '1.0', '--install-location', '/Library/Application Support/Acme', 'content.pkg']);
+run('productbuild', ['--quiet', '--package', 'content.pkg', '--package', 'rev-component.pkg', 'Big Installer.pkg']);
+const bigPkg = readFileSync(join(dir, 'Big Installer.pkg'));
+const streamed = await identifyNative(new Map([['Big Installer.pkg', new LargeEntry(new Blob([bigPkg]), bigPkg.length)]]));
+assert.deepEqual(streamed.map(i => [i.name, i.format, i.kind, i.platforms.join()]), [['Rev', 'VST3', 'Effect', 'macOS (x86_64 + arm64)']]);
+assert.equal(streamed[0].installLocation, '/Library/Audio/Plug-Ins/VST3');
+writeFileSync(join(dir, 'Big.dmg'), Buffer.alloc(LARGE + 4096));
+run('zip', ['-q', 'dmg.zip', 'Big.dmg']);
+const dmg = await readArchive(new Blob([readFileSync(join(dir, 'dmg.zip'))]), 'dmg.zip');
+assert.ok(dmg.get('Big.dmg') instanceof LargeEntry);
+assert.deepEqual((await identifyNative(dmg)).map(i => [i.name, i.format, i.installer]), [['Big.dmg', 'macOS disk image', true]]);
+console.log('Large installer streamed past its samples to the plug-in; large disk image named unread.');
 
 // Loose files and binary-header edge cases.
 const loose = await identifyNative(new Map([['Rev', new Uint8Array(readFileSync(join(dir, 'Rev')))], ['old.dll', pe]]));

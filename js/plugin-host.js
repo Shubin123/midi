@@ -1,9 +1,10 @@
 // Loads browser-native plugins straight from archives: our web-plugin contract, Web Audio Modules 2.0, and VST3
 // bundles built for WebAssembly (with their own editors where they have one: js/plugin-editor.js).
-// Archives are unpacked in memory and served by plugin-sw.js so relative imports keep working.
+// Archives are unpacked in memory (a file of hundreds of MB is left unread until needed: js/archive.js) and
+// served by plugin-sw.js so relative imports keep working.
 // Native machine-code plugins (VST3, AU, ...) can't run in a browser; they are identified and offered a rebuild,
 // a capture or a built-in stand-in.
-import { readArchive, writeZip } from './archive.js';
+import { readArchive, writeZip, LargeEntry, LARGE } from './archive.js';
 import { testSignal, encodeWav, analyze, verdict, layout } from './capture.js';
 import { createCapturedPlugin } from './capture-engine.js';
 import { Vst3Module } from './vst3-runtime.js';
@@ -58,15 +59,18 @@ function stripRoot(files) {
  return roots.size === 1 && [...files.keys()].every(p => p.includes('/')) ? new Map([...files].map(([p, d]) => [p.slice(p.indexOf('/') + 1), d])) : files;
 }
 
+// A dropped file of LARGE bytes or more (an installer, a disk image) is read only as far as it is needed.
+const fileData = async file => file.size >= LARGE ? new LargeEntry(file, file.size) : new Uint8Array(await file.arrayBuffer());
+
 async function toFiles(blob, name) {
  try { return await readArchive(blob, name); } catch (e) {
   if (!/Unsupported archive/.test(e.message)) throw e;
-  return new Map([[name, new Uint8Array(await blob.arrayBuffer())]]);
+  return new Map([[name, await fileData(blob)]]);
  }
 }
 
 async function readEntry(entry, prefix, files) {
- if (entry.isFile) { const file = await new Promise((resolve, reject) => entry.file(resolve, reject)); files.set(prefix + entry.name, new Uint8Array(await file.arrayBuffer())); return; }
+ if (entry.isFile) { const file = await new Promise((resolve, reject) => entry.file(resolve, reject)); files.set(prefix + entry.name, await fileData(file)); return; }
  const reader = entry.createReader();
  for (let batch; (batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject))).length;) for (const child of batch) await readEntry(child, `${prefix}${entry.name}/`, files);
 }
@@ -77,7 +81,7 @@ async function install(files, entry, fileName) {
  await removeFiles(id);
  const cache = await caches.open(CACHE);
  await Promise.all([...files].map(([path, data]) => cache.put(new URL(`${id}/${path}`, root).href,
-  new Response(data, { headers: { 'Content-Type': TYPES[path.split('.').pop().toLowerCase()] || 'application/octet-stream' } }))));
+  new Response(data instanceof LargeEntry ? data.stream() : data, { headers: { 'Content-Type': TYPES[path.split('.').pop().toLowerCase()] || 'application/octet-stream' } }))));
  return { id, name, main: entry.main, format: entry.format, version: Date.now(), bypass: false, values: {} };
 }
 
