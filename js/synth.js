@@ -327,7 +327,7 @@
             // one (it is taken as the key goes down, before the page gets to it), else now.
             // Notes heard by the listener (source "audio", js/listening.js) carry the time they were sung, and say
             // when they are `silent` (on speakers they light the keys without sounding, so the mic doesn't hear them).
-            let midiNoteTime = null, inputSilent = true;
+            let midiNoteTime = null, inputSilent = true, loopRecordKind = 'notes';
             function emitNote(noteString, velocity, on, source, silent = false) { const nN=noteString.replace(/\d+$/,''); const midi=parseInt(noteString.match(/\d+$/)[0])*12+midiNoteNames.indexOf(nN); window.dispatchEvent(new CustomEvent('synth:note',{detail:{note:noteString,midi,velocity,on,source,silent,time:(source==='midi'||source==='audio')&&midiNoteTime?midiNoteTime:performance.now()}})); }
 
             function emergencyStopAllSounds() {
@@ -398,7 +398,7 @@
                 console.log("All sounds and states (looper, metronome, sustain) reset. Looper data preserved."); 
             }
 
-            function visualize() { requestAnimationFrame(visualize); if (!audioContext || !visualizerContext || !visualizerCanvas) return; let currentAnalyser = analyser; const oscN = /^osc(\d+)$/.exec(visualizerSourceSelect ? visualizerSourceSelect.value : ''); if (oscN) currentAnalyser = oscTap(Number(oscN[1]) - 1).analyser; if (!currentAnalyser) return; const bL=currentAnalyser.frequencyBinCount;const dA=new Uint8Array(bL);currentAnalyser.getByteTimeDomainData(dA);visualizerContext.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--primary-surface-color').trim();visualizerContext.fillRect(0,0,visualizerCanvas.width,visualizerCanvas.height);visualizerContext.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--border-color').trim();visualizerContext.lineWidth=0.5*parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--font-scale-factor'));const nVL=4;for(let i=1;i<nVL;i++){const x=(visualizerCanvas.width/nVL)*i;visualizerContext.beginPath();visualizerContext.moveTo(x,0);visualizerContext.lineTo(x,visualizerCanvas.height);visualizerContext.stroke();}const nHL=2;for(let i=1;i<=nHL;i++){const y1=visualizerCanvas.height*(0.5-0.25*i);const y2=visualizerCanvas.height*(0.5+0.25*i);visualizerContext.beginPath();visualizerContext.moveTo(0,y1);visualizerContext.lineTo(visualizerCanvas.width,y1);visualizerContext.stroke();visualizerContext.beginPath();visualizerContext.moveTo(0,y2);visualizerContext.lineTo(visualizerCanvas.width,y2);visualizerContext.stroke();}visualizerContext.lineWidth=2.5*parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--font-scale-factor'));const aC=getComputedStyle(document.documentElement).getPropertyValue('--accent-color').trim();visualizerContext.strokeStyle=aC;visualizerContext.shadowBlur=10*parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--font-scale-factor'));visualizerContext.shadowColor=aC;visualizerContext.beginPath();const sW=visualizerCanvas.width*1.0/bL;let x=0;for(let i=0;i<bL;i++){const v=dA[i]/128.0;const y=v*visualizerCanvas.height/2;if(i===0)visualizerContext.moveTo(x,y);else visualizerContext.lineTo(x,y);x+=sW;}visualizerContext.lineTo(visualizerCanvas.width,visualizerCanvas.height/2);visualizerContext.stroke();visualizerContext.shadowBlur=0; }
+            function visualize() { requestAnimationFrame(visualize); if (!audioContext || !visualizerContext || !visualizerCanvas) return; let currentAnalyser = analyser; const oscN = /^osc(\d+)$/.exec(visualizerSourceSelect ? visualizerSourceSelect.value : ''); if (oscN) currentAnalyser = oscTap(Number(oscN[1]) - 1).analyser; const input = visualizerSourceSelect?.value === 'input'; if (input) currentAnalyser = window.synth.inputScope; /* the Listening widget's input, while it listens */ if (!currentAnalyser) { if (input) { visualizerContext.clearRect(0, 0, visualizerCanvas.width, visualizerCanvas.height); window.synth.scopeOverlay?.(visualizerContext, visualizerCanvas.width, visualizerCanvas.height, null); } return; } const bL=currentAnalyser.frequencyBinCount;const dA=new Uint8Array(bL);currentAnalyser.getByteTimeDomainData(dA);visualizerContext.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--primary-surface-color').trim();visualizerContext.fillRect(0,0,visualizerCanvas.width,visualizerCanvas.height);visualizerContext.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--border-color').trim();visualizerContext.lineWidth=0.5*parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--font-scale-factor'));const nVL=4;for(let i=1;i<nVL;i++){const x=(visualizerCanvas.width/nVL)*i;visualizerContext.beginPath();visualizerContext.moveTo(x,0);visualizerContext.lineTo(x,visualizerCanvas.height);visualizerContext.stroke();}const nHL=2;for(let i=1;i<=nHL;i++){const y1=visualizerCanvas.height*(0.5-0.25*i);const y2=visualizerCanvas.height*(0.5+0.25*i);visualizerContext.beginPath();visualizerContext.moveTo(0,y1);visualizerContext.lineTo(visualizerCanvas.width,y1);visualizerContext.stroke();visualizerContext.beginPath();visualizerContext.moveTo(0,y2);visualizerContext.lineTo(visualizerCanvas.width,y2);visualizerContext.stroke();}visualizerContext.lineWidth=2.5*parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--font-scale-factor'));const aC=getComputedStyle(document.documentElement).getPropertyValue('--accent-color').trim();visualizerContext.strokeStyle=aC;visualizerContext.shadowBlur=10*parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--font-scale-factor'));visualizerContext.shadowColor=aC;visualizerContext.beginPath();const sW=visualizerCanvas.width*1.0/bL;let x=0;for(let i=0;i<bL;i++){const v=dA[i]/128.0;const y=v*visualizerCanvas.height/2;if(i===0)visualizerContext.moveTo(x,y);else visualizerContext.lineTo(x,y);x+=sW;}visualizerContext.lineTo(visualizerCanvas.width,visualizerCanvas.height/2);visualizerContext.stroke();visualizerContext.shadowBlur=0; if (input) window.synth.scopeOverlay?.(visualizerContext, visualizerCanvas.width, visualizerCanvas.height, currentAnalyser); }
             let activeLEDIndex=0;const genLeds=[document.getElementById('led1'),document.getElementById('led2'),document.getElementById('led3')]; function cycleLEDs(){genLeds.forEach(l=>l.classList.remove('active'));if(genLeds[activeLEDIndex])genLeds[activeLEDIndex].classList.add('active');activeLEDIndex=(activeLEDIndex+1)%genLeds.length;}
             function resizeCanvas() { if (visualizerCanvas) { visualizerCanvas.width = visualizerCanvas.clientWidth; visualizerCanvas.height = visualizerCanvas.clientHeight; if (audioContext && analyser) { const sR = audioContext.sampleRate; const bTM = (analyser.fftSize / 2 / sR * 1000).toFixed(0); const fBTM = (analyser.fftSize / sR * 1000).toFixed(0); const tAL = visualizerCanvas.parentElement.querySelector('.visualizer-time-axis').children; if (tAL[1]) tAL[1].textContent = `~${bTM}ms`; if (tAL[2]) tAL[2].textContent = `~${fBTM}ms`; } } if (synthesiaToggle && synthesiaToggle.checked) createSynthesiaGrid(); }
             function setupMIDI(){ if(navigator.requestMIDIAccess)navigator.requestMIDIAccess({sysex:false}).then(onS,onF);else console.warn("No MIDI support.");} function onS(mA){const iN=mA.inputs.values();for(let n=iN.next();n&&!n.done;n=iN.next())n.value.onmidimessage=onM;} function onF(m){console.error(`Failed MIDI: ${m}`);}
@@ -708,7 +708,12 @@
                 if (slot.isRecording) { // --- Stop recording ---
                     slot.isRecording = false;
                     let rawDuration = performance.now() - slot.loopStartTime;
-                    if (slot.recordedEvents.length === 0) {
+                    if (slot.audioTake) {
+                        const beatMs = getBeatDurationMs();
+                        slot.loopDuration = metronomeEnabled ? Math.max(beatMs, Math.round(rawDuration / beatMs) * beatMs) : rawDuration;
+                        slot.statusText = `Rec audio (${(slot.loopDuration / 1000).toFixed(1)}s)`;
+                        window.dispatchEvent(new CustomEvent('synth:loop-record', { detail: { id: currentArmedSlotId, on: false, at: slot.loopStartTime, duration: slot.loopDuration } }));
+                    } else if (slot.recordedEvents.length === 0) {
                         slot.loopDuration = 0;
                         slot.statusText = "Rec Empty";
                     } else {
@@ -747,14 +752,18 @@
                 slot.loopStartTime = performance.now();
                 slot.quantizeStartTime = audioContext.currentTime; 
                 slot.isRecording = true;
-                slot.statusText = "Recording...";
+                // Record: Audio (js/loop-audio.js) keeps what the listener hears instead of the notes.
+                slot.audio = null; slot.audioTake = loopRecordKind === 'audio';
+                if (slot.audioTake) window.dispatchEvent(new CustomEvent('synth:loop-record', { detail: { id: slotId, on: true, at: slot.loopStartTime } }));
+                slot.statusText = slot.audioTake ? "Recording audio..." : "Recording...";
                 updateAllLoopSlotButtons();
             }
 
             function recordEvent(slotId, type, note, velocity, synthParams) {
                 const slot = loopSlotsData[slotId];
-                if (!slot || !slot.isRecording) return;
-                const time = performance.now() - slot.loopStartTime;
+                if (!slot || !slot.isRecording || slot.audioTake) return; // a slot taking audio keeps the sound, not the notes
+                // A MIDI or sung note is kept at the time it was played (its time stamp), not when the page got it.
+                const time = Math.max(0, (midiNoteTime ?? performance.now()) - slot.loopStartTime);
                 const eventData = { type, note, velocity, time };
                 if (type === 'noteon' && synthParams) {
                     eventData.synthParams = JSON.parse(JSON.stringify(synthParams)); 
@@ -768,7 +777,7 @@
 
                 const slot = loopSlotsData[slotId];
                 if (slot.isRecording) return; 
-                if (slot.recordedEvents.length === 0 || slot.loopDuration <= 0) { // Check loopDuration > 0
+                if ((slot.recordedEvents.length === 0 && !slot.audio) || slot.loopDuration <= 0) { // Check loopDuration > 0
                     slot.statusText = "Loop Empty";
                     updateAllLoopSlotButtons();
                     setTimeout(() => { 
@@ -829,6 +838,8 @@
                 slot.isPlaying = false;
                 slot.playbackScheduledEvents.forEach(clearTimeout);
                 slot.playbackScheduledEvents = [];
+                (slot.audioSources || []).forEach(src => { try { src.stop(); } catch (e) {} });
+                slot.audioSources = [];
                 
                 const notesToStop = new Set(slot.notesCurrentlyPlaying);
                 notesToStop.forEach(noteString => {
@@ -845,23 +856,29 @@
                 // slot.soundUnits = {}; // Keep soundUnits if notes are just stopping with release; clear if emergency?
                                       // stopNote will handle removing its instance. If all done, it will be empty.
 
+                const kept = slot.recordedEvents.length > 0 || !!slot.audio;
                 if (!emergency) {
-                     slot.statusText = slot.recordedEvents.length > 0 ? `Stopped (${(slot.loopDuration / 1000).toFixed(1)}s)` : "Empty";
+                     slot.statusText = kept ? `Stopped (${(slot.loopDuration / 1000).toFixed(1)}s)` : "Empty";
                 } else { // From Panic button
-                     slot.statusText = slot.recordedEvents.length > 0 ? `Panic Stop (${(slot.loopDuration / 1000).toFixed(1)}s)`: "Panic Stop (Empty)";
+                     slot.statusText = kept ? `Panic Stop (${(slot.loopDuration / 1000).toFixed(1)}s)`: "Panic Stop (Empty)";
                 }
                 updateAllLoopSlotButtons();
             }
             
             function playbackLoopSlot(slotId, loopCycleStartAudioTime) {
                 const slot = loopSlotsData[slotId];
-                if (!slot.isPlaying || slot.recordedEvents.length === 0 || slot.loopDuration <= 0) { // loopDuration must be > 0
+                if (!slot.isPlaying || (slot.recordedEvents.length === 0 && !slot.audio) || slot.loopDuration <= 0) { // loopDuration must be > 0
                     if (slot.isPlaying) stopPlaybackForSlot(slotId);
                     return;
                 }
 
                 slot.playbackScheduledEvents = [];
-
+                // An audio take plays from the start of every cycle, through the master volume and effects.
+                if (slot.audio) {
+                    const src = new AudioBufferSourceNode(audioContext, { buffer: slot.audio });
+                    src.connect(masterGain); src.start(Math.max(audioContext.currentTime, loopCycleStartAudioTime)); src.stop(loopCycleStartAudioTime + slot.loopDuration / 1000);
+                    (slot.audioSources ||= []).push(src); src.onended = () => { slot.audioSources = slot.audioSources.filter(x => x !== src); src.disconnect(); };
+                }
                 slot.recordedEvents.forEach(event => {
                     const eventTimeInLoopSec = event.time / 1000.0;
                     const scheduledAudioTime = loopCycleStartAudioTime + eventTimeInLoopSec;
@@ -913,6 +930,7 @@
                     currentArmedSlotId = -1; 
                 }
                 slot.recordedEvents = [];
+                slot.audio = null; slot.audioTake = false;
                 slot.loopDuration = 0;
                 slot.loopStartTime = 0;
                 slot.quantizeStartTime = 0;
@@ -961,7 +979,7 @@
 
 
                     playButton.textContent = slot.isPlaying ? 'Stop' : 'Play';
-                    playButton.disabled = slot.isRecording || (slot.recordedEvents.length === 0 && !slot.isPlaying);
+                    playButton.disabled = slot.isRecording || (slot.recordedEvents.length === 0 && !slot.audio && !slot.isPlaying);
                     playButton.classList.toggle('playing', slot.isPlaying);
                     
                     clearButton.disabled = slot.isRecording || slot.isPlaying;
@@ -1019,9 +1037,17 @@ window.synth = {
  suspendClick: () => stopMetronome(),
  resumeClick: () => { if (metronomeEnabled) startMetronome(); },
  get output() { return masterLimiter; },
+ // What the oscilloscope shows for Input (Listening), and what it draws over it (js/listen-tools.js).
+ inputScope: null, scopeOverlay: null,
  panic: () => emergencyStopAllSounds(),
  params: () => getCurrentSynthParams(),
- loops: () => loopSlotsData.map(s => ({ events: s.recordedEvents, duration: s.loopDuration, busy: s.isRecording || s.isPlaying })),
+ loops: () => loopSlotsData.map(s => ({ events: s.recordedEvents, duration: s.loopDuration, busy: s.isRecording || s.isPlaying, audio: s.audio || null, playing: s.isPlaying, recording: s.isRecording })),
+ // What the next loop recording keeps: 'notes' (played through the patch it was recorded with) or 'audio' (the
+ // sound the listener hears, js/loop-audio.js).
+ get loopKind() { return loopRecordKind; },
+ set loopKind(kind) { loopRecordKind = kind === 'audio' ? 'audio' : 'notes'; },
+ // An audio take for a slot: an AudioBuffer, or null to drop it.
+ setLoopAudio: (id, buffer) => { const slot = loopSlotsData[id]; slot.audio = buffer; if (!buffer && !slot.recordedEvents.length) slot.statusText = 'Empty'; updateAllLoopSlotButtons(); },
  setLoop: (id, events, duration) => {
   const slot = loopSlotsData[id];
   if (slot.isRecording) slot.isRecording = false;

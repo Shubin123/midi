@@ -7,6 +7,7 @@ import { mountBank } from './oscillators.js';
 import { addAppSettings } from './settings.js';
 import { mountTiming } from './timing-widget.js';
 import { createListeningWidget } from './listening-widget.js';
+import { mountListenTools } from './listen-tools.js';
 // The oscillator bank is filled in now, before the synth (js/synth.js) reads it on load.
 window.oscillatorBank = mountBank(document.getElementById('oscillators-group'));
 window.addEventListener('load',()=>{
@@ -28,6 +29,7 @@ window.addEventListener('load',()=>{
  workspace.append(createAirWidget(),createPluginHost(),createIoWidget(api));
  document.querySelector('.controls').remove();document.querySelector('.looper-toggle-bar').remove();
  const looper=workspace.querySelector('#launchpadLooperContainer');looper.classList.add('open');looper.style.display='grid';
+ mountListenTools(api,workspace); // Record from audio, audio loops, and the scope's Input (Listening)
  container.append(workspace);addAppSettings(setupWidgets(workspace).section);
  window.dispatchEvent(new Event('resize'));
 });

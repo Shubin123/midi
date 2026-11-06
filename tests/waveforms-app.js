@@ -46,7 +46,7 @@ check('one Oscillators widget replaces Oscillator 1, Oscillator 2 and the Sub', 
  expect(!$('osc2-group') && !$('sub-noise-group'), 'an old oscillator widget is still there');
  expect(w.querySelectorAll('.osc-row').length === 3, `${w.querySelectorAll('.osc-row').length} rows, not 3`);
  expect(JSON.stringify(plain(bank().list())) === JSON.stringify(DEFAULT_STACK), 'not the default stack');
- expect([...$('visualizerSourceSelect').options].map(o => o.value).join() === 'master,osc1,osc2,osc3', 'the oscilloscope does not list each oscillator');
+ expect([...$('visualizerSourceSelect').options].map(o => o.value).join() === 'master,osc1,osc2,osc3,input', 'the oscilloscope does not list each oscillator (then the Listening input)');
  const seen = widgets().find(x => x.id === 'oscillators-group');
  expect(seen?.title === 'Oscillators', 'the teacher does not see it as Oscillators');
  expect(controls(seen).some(c => c.label === 'Oscillator 1 waveform') && controls(seen).some(c => c.label === 'Oscillator 3 level'), 'the teacher can\'t tell the rows\' controls apart');
@@ -56,7 +56,7 @@ check(`+ Add oscillator, up to ${MAX_OSCILLATORS}; × removes one and the rest r
  while (!add.disabled) add.click();
  const rows = () => $('oscillators-group').querySelectorAll('.osc-row');
  expect(bank().list().length === MAX_OSCILLATORS && rows().length === MAX_OSCILLATORS, `${rows().length} rows`);
- expect($(`waveformOsc${MAX_OSCILLATORS}`) && $('visualizerSourceSelect').options.length === MAX_OSCILLATORS + 1, 'the last row or its oscilloscope source is missing');
+ expect($(`waveformOsc${MAX_OSCILLATORS}`) && $('visualizerSourceSelect').options.length === MAX_OSCILLATORS + 2, 'the last row or its oscilloscope source is missing');
  const second = bank().list()[1].id;
  rows()[1].querySelector('.osc-remove').click();
  expect(bank().list().length === MAX_OSCILLATORS - 1 && !bank().list().some(o => o.id === second), 'the second oscillator was not removed');

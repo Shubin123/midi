@@ -96,6 +96,7 @@ export const listening = {
   const sink = new GainNode(ctx, { gain: 0 });
   source.connect(gain); gain.connect(scope); gain.connect(worklet); worklet.connect(sink).connect(ctx.destination);
   this.nodes = { ctx, source, gain, scope, worklet, sink };
+  window.synth.inputScope = scope; // the oscilloscope's Input (Listening)
   this.sizes = frameSizes(ctx.sampleRate);
   this.tracker = new NoteTracker({ gateDb: this.settings.gateDb });
   this.claps = new OnsetDetector({ gateDb: this.settings.gateDb, minGapMs: 70 });
@@ -115,6 +116,7 @@ export const listening = {
   }
   this.stream?.getTracks().forEach(t => t.stop());
   Object.assign(this, { nodes: null, stream: null, active: false, kind: null, label: '' });
+  if (window.synth) window.synth.inputScope = null;
   this.last = null;
   if (announce) emit('state', this.state());
  },
@@ -184,10 +186,10 @@ export const listening = {
   emit('clap', { time, velocity });
  },
  // On speakers, with the metronome clicking, an onset within 30 ms of a beat no louder than a click sounds here
- // (measured in calibration, else -30 dB) is the click coming back.
+ // is the click coming back. How loud that is comes from calibration; until then nothing is taken for a click.
  _isClick(time, f) {
-  if (this.settings.headphones || !window.synth?.metronome || !timing.clock.external) return false;
-  return Math.abs(timing.clock.nearest(time, 1).offsetMs) <= 30 && f.db < (this.settings.clickDb ?? -30) + 6;
+  if (this.settings.headphones || this.settings.clickDb === null || !window.synth?.metronome || !timing.clock.external) return false;
+  return Math.abs(timing.clock.nearest(time, 1).offsetMs) <= 30 && f.db < this.settings.clickDb + 6;
  },
 
  // Plays clicks and hears them back: the round trip, in ms. On speakers, keep quiet while it listens; on
@@ -213,6 +215,31 @@ export const listening = {
   const result = roundTrip(times, heard, gapMs * 0.9);
   if (result) this.set({ latencyMs: Math.round(result.ms), clickDb: this.settings.headphones ? this.settings.clickDb : Math.round(levels.sort((a, b) => a - b)[levels.length >> 1]) });
   return result;
+ },
+ // Records what the listener hears (after the input gain) until stop(), which resolves to { samples (mono),
+ // sampleRate, at (the page's time when the first sample was made, the round trip taken off) }.
+ async record() {
+  if (!this.nodes) throw new Error('Start listening first.');
+  const { ctx, gain } = this.nodes;
+  if (!this._recorderLoaded?.has(ctx)) { await ctx.audioWorklet.addModule(new URL('./recorder-worklet.js', import.meta.url)); (this._recorderLoaded ||= new WeakSet()).add(ctx); }
+  const node = new AudioWorkletNode(ctx, 'master-recorder', { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1, channelCountMode: 'explicit' }), mute = new GainNode(ctx, { gain: 0 });
+  gain.connect(node); node.connect(mute).connect(ctx.destination);
+  const blocks = [];
+  let first = null, stopped = null;
+  node.port.onmessage = ({ data }) => { if (data.started !== undefined) first = data.started; if (data.data) blocks.push(data); if (data.stopped) stopped?.(); };
+  node.port.postMessage('start');
+  const latency = this.latencyMs;
+  return {
+   stop: async () => {
+    await new Promise(r => { stopped = r; node.port.postMessage('stop'); });
+    try { gain.disconnect(node); } catch { /* listening stopped */ }
+    node.disconnect(); mute.disconnect();
+    const length = blocks.reduce((n, b) => n + b.data[0].length, 0), samples = new Float32Array(length);
+    let at = 0; for (const b of blocks) { samples.set(b.data[0], at); at += b.data[0].length; }
+    const start = first ?? blocks[0]?.frame ?? 0;
+    return { samples, sampleRate: ctx.sampleRate, at: window.synth.perfTimeOf(start / ctx.sampleRate - latency / 1000) };
+   },
+  };
  },
  // Where calibration clicks go: straight to the speakers, past the effects and the limiter.
  clickOut(ctx) { if (this._clickOut?.context !== ctx) { this._clickOut = new GainNode(ctx, { gain: 0.25 }); this._clickOut.connect(ctx.destination); } return this._clickOut; },

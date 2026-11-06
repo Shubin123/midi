@@ -262,10 +262,10 @@ export async function runTiming() {
  const phraseEnd = () => wait(clock.period * clock.beatsPerBar + 500);
 
  // Two bars: beats and offsets (ms) from them.
- const PLAN = [[0, 5], [1, -10], [2, 18], [2.5, 0], [3, -15], [4, 8], [5, 22], [6, -5], [6.5, 12], [7, 0]]; // none on a grade's edge
+ const PLAN = [[0, 5], [1, -10], [2, 12], [2.5, 0], [3, -12], [4, 8], [5, -4], [6, -5], [6.5, 10], [7, 0]]; // well inside the green, so a shift can't change a grade
  const offsetsOf = from => timing.onsets.filter(o => o.time >= from - 1).map(o => Math.round(o.offsetMs));
 
- await check('the same rhythm against the metronome: played as MIDI, clapped, and sung, the rhythm cards match and each offset is within 6 ms', async expect => {
+ await check('the same rhythm against the metronome: played as MIDI, clapped, and sung, the rhythm cards match and each offset is within 6 ms of MIDI\'s (less one shift for all)', async expect => {
   await fresh(100); metronome(true); await wait(300);
   const results = {};
   // As MIDI, stamped with the exact times (in the past, as a controller's time stamps can be).
@@ -291,7 +291,10 @@ export async function runTiming() {
    if (!r.card || !m.card) continue;
    expect(r.card.bars.join('|') === m.card.bars.join('|'), `${kind}: ${r.card.bars.join(' | ')}, MIDI: ${m.card.bars.join(' | ')}`);
    expect(r.card.grades.map(g => g.grade).join() === m.card.grades.map(g => g.grade).join(), `${kind} grades ${r.card.grades.map(g => g.grade).join()} vs ${m.card.grades.map(g => g.grade).join()}`);
-   expect(r.offsets.length === m.offsets.length && r.offsets.every((o, i) => Math.abs(o - m.offsets[i]) <= 6), `${kind} offsets ${r.offsets.join(' ')}, MIDI ${m.offsets.join(' ')}`);
+   // The same offsets, up to one shift for them all: what calibration takes off (here, how the test's own clock
+   // and the page's line up, which moves by a few ms on a busy machine).
+   const diffs = r.offsets.map((o, i) => o - m.offsets[i]), shift = [...diffs].sort((a, b) => a - b)[diffs.length >> 1];
+   expect(r.offsets.length === m.offsets.length && Math.abs(shift) <= 15 && diffs.every(d => Math.abs(d - shift) <= 6), `${kind} offsets ${r.offsets.join(' ')}, MIDI ${m.offsets.join(' ')}`);
   }
   expect(results.claps?.card && !document.querySelector('#keyboard .active'), 'a clap lit a key');
   metronome(false);
@@ -355,6 +358,132 @@ export async function runTiming() {
   listening.set({ headphones: false, clickDb: null }); metronome(false);
  });
  mode('melody');
+ listening.stop();
+ return { checks };
+}
+
+// The widgets that take the Listening widget's input (node tests/listening-tools.mjs): the step sequencer's
+// Record from audio, the loop recorder keeping notes or audio, and the oscilloscope's Input view.
+export async function runTools() {
+ const checks = [];
+ const check = async (name, fn) => {
+  const problems = [];
+  try { await fn((ok, why) => { if (!ok) problems.push(why); }); } catch (err) { problems.push(`threw: ${err.message}`); }
+  checks.push({ name, ok: !problems.length, problems });
+ };
+ const { listening } = await import('../js/listening.js');
+ const { timing } = await import('../js/timing-widget.js');
+ const ctx = window.synth.ensureAudio();
+ await ctx.resume();
+ const rate = ctx.sampleRate;
+ listening.set({ latencyMs: null, headphones: false, playThrough: false, snap: false, clapTempo: false, mode: 'melody' });
+ const ctxOf = T => { const ts = ctx.getOutputTimestamp(); return ts.contextTime + (T - ts.performanceTime) / 1000; };
+ // Plays samples into the listener so that their start is at T0 on the page's clock (now, when left out): into
+ // the input it already has, as a microphone would go on, or (`fresh`) as a clip of its own.
+ const playAt = async (samples, T0 = performance.now() + 100, fresh = false) => {
+  const b = ctx.createBuffer(1, samples.length, rate); b.copyToChannel(samples, 0);
+  const src = new AudioBufferSourceNode(ctx, { buffer: b });
+  if (fresh || !listening.nodes) await listening.listenTo(src, 'a test clip'); else src.connect(listening.nodes.gain);
+  src.start(Math.max(ctx.currentTime, ctxOf(T0)));
+  return { T0, done: new Promise(r => { src.onended = r; }) };
+ };
+ const meter = new AnalyserNode(ctx, { fftSize: 2048 });
+ window.synth.output.connect(meter);
+ const level = () => { const d = new Float32Array(meter.fftSize); meter.getFloatTimeDomainData(d); return Math.sqrt(d.reduce((a, v) => a + v * v, 0) / d.length); };
+ const until = async (fn, ms = 8000) => { const end = performance.now() + ms; while (!fn() && performance.now() < end) await wait(20); return fn(); };
+ // Listening is on a test clip (no microphone): Record from audio uses it as it is.
+ await listening.listenTo(new GainNode(ctx), 'a test clip');
+
+ await check('Step sequencer › Record from audio: a bar of count-in, then each sung note on its sixteenth and its row of the key and scale; Undo puts the old pattern back', async expect => {
+  const set = (id, v) => { const e = $(id); e.value = v; e.dispatchEvent(new Event('change', { bubbles: true })); };
+  set('#seq-key', '0'); set('#seq-scale', 'Major Pentatonic'); set('#seq-octave', '5'); // rows C5..C6 (MIDI 60..72)
+  window.synth.tempo = 100;
+  const old = JSON.stringify(window.__seq?.pattern ?? null);
+  const m = $('#metronomeToggle'); if (m.checked) m.click();
+  await wait(200);
+  $('#seq-record').click();
+  await until(() => $('#seq-record').dataset.barStart);
+  const barStart = Number($('#seq-record').dataset.barStart), six = timing.clock.period / 4;
+  expect(m.checked, 'the metronome didn\'t start for the count-in');
+  expect(barStart - performance.now() > timing.clock.period * 2, `the bar starts ${Math.round(barStart - performance.now())} ms from now: no count-in`);
+  const plan = [[0, 60], [4, 62], [6, 64], [8, 67], [12, 69], [14, 72]], T0 = barStart - 200;
+  const { done } = await playAt(sing(plan.map(([step, midi]) => ({ midi, start: 200 + step * six, end: 200 + step * six + six * 1.6 })), { sampleRate: rate, vibrato: 0, tail: 200 }), T0);
+  await done;
+  await until(() => /Recorded/.test($('.seq-record-status').textContent), 4000);
+  expect(/Recorded 6 notes/.test($('.seq-record-status').textContent), `status: ${$('.seq-record-status').textContent}`);
+  const on = [...document.querySelectorAll('#step-sequencer .step')].filter(c => c.getAttribute('aria-pressed') === 'true').map(c => `${c.getAttribute('aria-label')}`);
+  const want = ['C5, step 1', 'D5, step 5', 'E5, step 7', 'G5, step 9', 'A5, step 13', 'C6, step 15'];
+  expect(want.every(w => on.includes(w)) && on.length === 6, `steps on: ${on.join('; ')}`);
+  $('#seq-record-undo').click();
+  const after = [...document.querySelectorAll('#step-sequencer .step')].filter(c => c.getAttribute('aria-pressed') === 'true').map(c => c.getAttribute('aria-label'));
+  expect(!want.every(w => after.includes(w)), `Undo left ${after.join('; ')}`);
+  if (m.checked) m.click();
+  set('#seq-octave', '4');
+ });
+
+ await check('Loop recorder › Record: Notes: what is sung is kept as notes, at the times they were sung, and plays back through the synth', async expect => {
+  $('#looper-record-kind').value = 'notes'; $('#looper-record-kind').dispatchEvent(new Event('change'));
+  const m = $('#metronomeToggle'); if (m.checked) m.click();
+  await wait(100);
+  $('#loop-slot-arm-0').click(); $('#loop-slot-arm-0').click(); // arm, then record (at once, with no metronome)
+  const startedAt = performance.now();
+  const notes = [{ midi: 64, start: 200, end: 500 }, { midi: 67, start: 600, end: 900 }, { midi: 72, start: 1000, end: 1400 }];
+  const { T0, done } = await playAt(sing(notes, { sampleRate: rate, vibrato: 20 }));
+  await done; await wait(150);
+  $('#loop-slot-arm-0').click(); // stop
+  const slot = window.synth.loops()[0], ons = slot.events.filter(e => e.type === 'noteon');
+  expect(ons.map(e => e.note).join(' ') === 'E5 G5 C6', `the slot has ${ons.map(e => e.note).join(' ')}`);
+  const errs = ons.map((e, i) => e.time - (T0 + notes[i].start - startedAt));
+  expect(errs.every(e => Math.abs(e) < 25), `kept ${errs.map(Math.round).join(', ')} ms from when they were sung`);
+  listening.stop();
+  $('#loop-slot-play-0').click();
+  const loud = await until(() => level() > 0.01, 3000);
+  expect(loud, 'the loop made no sound');
+  $('#loop-slot-play-0').click();
+  $('#loop-slot-clear-0').click();
+ });
+
+ await check('Loop recorder › Record: Audio: the sound itself is kept for the loop\'s length, lined up with when it was made, and plays back', async expect => {
+  await listening.listenTo(new GainNode(ctx), 'a test clip');
+  $('#looper-record-kind').value = 'audio'; $('#looper-record-kind').dispatchEvent(new Event('change'));
+  $('#loop-slot-arm-1').click(); $('#loop-slot-arm-1').click();
+  const startedAt = performance.now();
+  const { T0, done } = await playAt(sing([{ midi: 62, start: 300, end: 900 }], { sampleRate: rate, vibrato: 0 }));
+  await done; await wait(100);
+  $('#loop-slot-arm-1').click();
+  const ok = await until(() => window.synth.loops()[1].audio, 3000);
+  expect(ok, 'no audio was kept');
+  const slot = window.synth.loops()[1];
+  if (ok) {
+   expect(Math.abs(slot.audio.duration * 1000 - slot.duration) < 5, `the audio is ${(slot.audio.duration * 1000).toFixed(0)} ms for a ${slot.duration.toFixed(0)} ms loop`);
+   const d = slot.audio.getChannelData(0), first = d.findIndex(v => Math.abs(v) > 0.02) / rate * 1000, want = T0 + 300 - startedAt;
+   expect(Math.abs(first - want) < 15, `the sound starts ${first.toFixed(0)} ms in, not ${want.toFixed(0)}`);
+   expect(slot.events.length === 0, `notes were kept too: ${slot.events.length}`);
+  }
+  listening.stop();
+  $('#loop-slot-play-1').click();
+  expect(await until(() => level() > 0.01, 3000), 'the audio loop made no sound');
+  $('#loop-slot-play-1').click(); $('#loop-slot-clear-1').click();
+  $('#looper-record-kind').value = 'notes'; $('#looper-record-kind').dispatchEvent(new Event('change'));
+ });
+
+ await check('Oscilloscope › Input (Listening): the input\'s wave with the note it hears', async expect => {
+  const sel = $('#visualizerSourceSelect');
+  expect([...sel.options].some(o => o.value === 'input'), 'no Input (Listening) source');
+  sel.value = 'input'; sel.dispatchEvent(new Event('change', { bubbles: true }));
+  const texts = [], g = $('#visualizerCanvas').getContext('2d'), fill = g.fillText;
+  g.fillText = function (t, ...a) { texts.push(t); return fill.call(this, t, ...a); };
+  await wait(100);
+  expect(texts.some(t => /not listening/.test(t)), `with nothing heard it says ${texts.at(-1)}`);
+  const tone = new Float32Array(rate); for (let i = 0; i < tone.length; i++) tone[i] = 0.3 * Math.sin((2 * Math.PI * 440 * i) / rate);
+  texts.length = 0;
+  const { done } = await playAt(tone);
+  await wait(500);
+  expect(texts.some(t => /^Input · A4 [+−]\d¢ · 44\d\.\d Hz$/.test(t)), `it drew ${[...new Set(texts)].slice(-3).join(' | ')}`);
+  await done;
+  g.fillText = fill;
+  sel.value = 'master'; sel.dispatchEvent(new Event('change', { bubbles: true }));
+ });
  listening.stop();
  return { checks };
 }

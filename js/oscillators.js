@@ -105,12 +105,13 @@ export function mountBank(root, { key = 'synth-oscillators-v1' } = {}) {
  const persist = () => save(key, list.map(({ id, ...o }) => o));
  const announce = (type, detail) => window.dispatchEvent(new CustomEvent(type, { detail }));
 
- // The oscilloscope's sources: the master output, then each oscillator on its own.
+ // The oscilloscope's sources: the master output, then each oscillator on its own, then what the Listening
+ // widget hears (js/listening.js).
  const syncScope = () => {
   const select = document.getElementById('visualizerSourceSelect');
   if (!select) return;
   const was = select.value;
-  select.replaceChildren(el('option', { value: 'master', textContent: 'Master Output' }), ...list.map((_, i) => el('option', { value: `osc${i + 1}`, textContent: `Oscillator ${i + 1}` })));
+  select.replaceChildren(el('option', { value: 'master', textContent: 'Master Output' }), ...list.map((_, i) => el('option', { value: `osc${i + 1}`, textContent: `Oscillator ${i + 1}` })), el('option', { value: 'input', textContent: 'Input (Listening)' }));
   select.value = [...select.options].some(o => o.value === was) ? was : 'master';
  };
 

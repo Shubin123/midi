@@ -150,3 +150,9 @@ html:not(.teach-buttons-on) .teach-btn{display:none!important}
 .mic-indicator{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:10003;background:#d63c3c;color:#fff;border:0;border-radius:14px;padding:4px 12px;font:600 12px Poppins,sans-serif;cursor:pointer;box-shadow:0 2px 10px #0006;animation:mic-glow 1.6s ease-in-out infinite}
 .mic-indicator[hidden]{display:none}
 @keyframes mic-glow{50%{box-shadow:0 0 16px #d63c3c}}
+/* What the widgets do with the Listening widget's input (js/listen-tools.js). */
+#seq-record{border-color:#d63c3c}
+.seq-record-status{margin:0}
+#seq-record-undo[hidden]{display:none}
+.looper-kind{margin:0 0 10px}
+.looper-kind select{width:auto;max-width:100%;margin:0}

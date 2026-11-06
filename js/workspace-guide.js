@@ -18,7 +18,7 @@ export const GUIDES = {
  },
  'Step sequencer': {
   what: 'A 16-step pattern player. Each row is a note of the chosen key and scale; each column is a sixteenth note.',
-  how: [['Click cells to turn steps on.', 'Step sequencer'], ['Choose the key, scale and octave the rows follow; changing them moves the pattern with them.', 'seq-scale'], ['Set the speed with Base BPM.', 'seq-bpm'], ['Press ▶ Play to hear it, ■ Stop to stop.', 'seq-play'], ['Clear notes empties the grid.', 'seq-clear']],
+  how: [['Click cells to turn steps on.', 'Step sequencer'], ['Choose the key, scale and octave the rows follow; changing them moves the pattern with them.', 'seq-scale'], ['Set the speed with Base BPM.', 'seq-bpm'], ['Press ▶ Play to hear it, ■ Stop to stop.', 'seq-play'], ['Clear notes empties the grid.', 'seq-clear'], ['● Record from audio: sing or play one bar into the microphone after a bar of count-in, and it becomes the pattern, on sixteenths, in the key and scale.', 'seq-record']],
   keywords: ['sequencer', 'pattern', 'steps', 'grid', 'beat'],
  },
  'Automation': {
@@ -53,12 +53,12 @@ export const GUIDES = {
  },
  'Loop recorder': {
   what: 'Four slots that record what you play as notes, with the sound you played them with, and loop it. Recording starts and stops on the beat.',
-  how: [['To record a loop, press Arm on a slot, play, then press Arm again to finish recording.', 'Loop recorder › Arm 1'], ['Play loops a slot you have recorded; press it again to stop.', 'Loop recorder › Play 1'], ['Clear empties a slot.', 'Loop recorder › Clear 1']],
+  how: [['To record a loop, press Arm on a slot, play, then press Arm again to finish recording.', 'Loop recorder › Arm 1'], ['Play loops a slot you have recorded; press it again to stop.', 'Loop recorder › Play 1'], ['Clear empties a slot.', 'Loop recorder › Clear 1'], ['Record: Notes keeps what you play or sing as notes, played back with their sound; Audio keeps the sound itself, as the Listening widget hears it.', 'looper-record-kind']],
   keywords: ['loop', 'looper', 'record a loop', 'slot', 'arm', 'overdub'],
  },
  'Oscilloscope': {
   what: 'Draws the sound wave as it plays, so you can see what the waveform, filter and effects do to it.',
-  how: [['Play a note and watch the wave.', 'Oscilloscope'], ['Choose what it shows in Master & Settings › Visualizer Source.', 'visualizerSourceSelect']],
+  how: [['Play a note and watch the wave.', 'Oscilloscope'], ['Choose what it shows in Master & Settings › Visualizer Source: the output, one oscillator, or Input (Listening), the microphone with the note it hears.', 'visualizerSourceSelect']],
   keywords: ['oscilloscope', 'scope', 'wave', 'visualizer', 'visualiser'],
  },
  'Air': {

@@ -166,7 +166,31 @@ teacher and graded by the beat clock, with nothing in those changed.
   of it runs on the device; no sound leaves the page.
 
 **Mode** is **Melody** (one note at a time) or **Rhythm only** (claps and
-taps, for rhythm exercises; see Beat, tempo and rhythm). The input, mode,
+taps, for rhythm exercises; see Beat, tempo and rhythm).
+
+The other widgets take it too (`js/listen-tools.js`):
+
+- **Step sequencer › ● Record from audio**: after a bar of count-in (the
+  metronome starts if it wasn't on), sing or play one bar; each note lands
+  on its sixteenth and on the nearest row of the key and scale (moved by
+  octaves into the rows' range, so a low voice still lands), and a clap on
+  the tonic. **Undo recording** puts the old pattern back.
+- **Loop recorder › Record**: **Notes** keeps what you sing as notes, at the
+  times they were sung (MIDI notes too now keep their own time stamps), played
+  back through the patch they were sung with; **Audio heard by Listening**
+  keeps the sound itself, from when it was made (the round trip taken off),
+  beat-quantised like any loop and played from the start of each cycle
+  through the master volume and effects.
+- **Oscilloscope › Input (Listening)** (Master & Settings › Visualizer
+  Source): the input's waveform, the note it hears with cents and frequency,
+  and a tick every period of it.
+
+`node tests/listening-tools.mjs` sings a bar into Record from audio (six
+notes land on their steps and rows, Undo puts the old pattern back), records a
+sung phrase into a loop slot as notes (each within 25 ms of when it was
+sung, and it plays back) and as audio (as long as the loop, the sound within
+15 ms of where it was made, and it plays back), and reads the oscilloscope's
+Input view. The input, mode,
 snapping, headphones, gate and measured latency are kept.
 `node tests/listening.mjs` checks the pitch, a sung melody (vibrato, scoops,
 breaths, a re-sung note, a legato step) note for note with every onset within
@@ -268,9 +292,10 @@ Onsets with no pulse have a flat autocorrelation and are left alone. In
 Tap BPM at the moment it was made, and **Follow my tempo** has the
 metronome (or the sequencer) follow you instead: once the last notes' tempo
 is clear and 1.5% away, the metronome's next click comes one new beat after
-its last, with no jump, and no rushing or dragging is said. On speakers, an
-onset within 30 ms of a metronome click and no louder than a click is heard
-there (measured in calibration) is the click coming back, not a clap.
+its last, with no jump, and no rushing or dragging is said. On speakers, once
+calibration has measured how loud a click is heard, an onset within 30 ms of
+a metronome click and no louder than that is the click coming back, not a
+clap.
 
 What keeps happening is kept in the browser as a small profile: each beat's
 offset over the latest phrases, and how often you rush or drag. Once a beat
@@ -289,7 +314,9 @@ strip, a nudge, a rhythm card and its exercise marked against, System 2 reading
 the [RHYTHM] summary and setting an exercise, and the Course tab's profile.
 `node tests/listening-timing.mjs` plays the same two bars against the
 metronome as MIDI, as claps and sung into the Listening widget: the rhythm
-cards match and every offset is within 6 ms of MIDI's. Claps rushing to 107
+cards match and every offset is within 6 ms of MIDI's, less one shift common
+to them all (what calibration takes off; on a busy machine the test's clock
+and the page's drift apart by a few ms). Claps rushing to 107
 against 100 are said once; free claps at 96 BPM (one missed, one stray)
 become your pulse with the claps on its beats; four claps set 100 BPM;
 clapping at 110 moves the metronome to 110 without stopping it; and on
@@ -420,6 +447,7 @@ Source files:
 - `js/sequencer.js`: sequencer transport and automation editor
 - `js/timing.js`, `js/timing-widget.js`: the beat clock, tempo and rhythm, the timing strip and Sync to MIDI clock
 - `js/listening.js`, `js/listening-widget.js`, `js/listen-dsp.js`, `js/listen-worklet.js`: Audio In, the Listening widget, and the pitch, onset and note tracking
+- `js/listen-tools.js`: Record from audio, audio loops and the oscilloscope's Input view
 - `js/commands.js`: requests to change a setting, read without a model
 - `js/automation.js`: automation targets, interpolation, and parameter application
 - `js/widgets.js`: responsive widget layout, dragging, and visibility
