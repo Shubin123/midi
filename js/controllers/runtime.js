@@ -106,7 +106,8 @@ export class Device {
   for (const [id, index] of Object.entries(f.index)) {
    const a = this.mappingFor(id), p = a?.do === 'page' ? this.slotParam(a.slot) : a?.do === 'param' ? param(a.param) : null;
    if (!p) continue;
-   this.queue.push(fill(f.message, { index, value: Math.round(p.norm * 127) }));
+   this.queue = this.queue.filter(q => q.seed !== id); // only the latest value of each
+   this.queue.push(Object.assign(fill(f.message, { index, value: Math.round(p.norm * 127) }), { seed: id }));
    this.takeover.set(`${id}|${p.full}`, { caught: true, last: 0 });
   }
  }
@@ -311,7 +312,7 @@ export class Device {
  /* -- Feedback -- */
  flash(title, value, ms = 1500) { this.transient = { title: String(title), value: String(value), until: performance.now() + ms }; }
  // A hint on the screen for a while (or until replaced): the teacher's show_on_screen.
- show(lines, ms = 6000) { this.note = { lines: [].concat(lines).slice(0, 2).map(String), until: ms ? performance.now() + ms : 0 }; }
+ show(lines, ms = 6000) { this.note = { lines: [].concat(lines).slice(0, 2).map(String), until: ms ? performance.now() + ms : 0 }; this.transient = null; }
  light(ids, rgb, { ms = 0, blink = false } = {}) { for (const id of ids) { if (rgb) this.lights.set(id, { rgb, until: ms ? performance.now() + ms : 0, blink }); else this.lights.delete(id); } }
  flashPad(id, rgb, ms = 160) { this.flashes.set(id, { rgb, until: performance.now() + ms }); }
  get canShow() { const f = this.preset.feedback; return !!f && this.use && (f.requires !== 'sysex' || midi.sysex) && !!this.port.output; }
@@ -513,16 +514,19 @@ export const controllers = {
   if (owner) { owner.others = owner.others.filter(x => x !== port); if (owner.dawPort === port) owner.dawPort = null; emit('device', owner); }
   this.waiting = (this.waiting || []).filter(x => x !== port);
  },
- // Feedback at most every throttleMs (40 by default) a device, a dozen messages at a time.
- frame() { const now = performance.now(); for (const d of this.devices) if (d.use && now - (d.rendered || 0) >= (d.preset.feedback?.throttleMs ?? 40) - 5) { d.rendered = now; d.render(now, 12); } },
+ // Feedback at most every throttleMs (40 by default) a device, twenty messages at a time (500 a second).
+ frame() { const now = performance.now(); for (const d of this.devices) if (d.use && now - (d.rendered || 0) >= (d.preset.feedback?.throttleMs ?? 40) - 5) { d.rendered = now; d.render(now, 20); } },
 
  // A pad press is remembered for lessons and flashed by its timing when the beat clock grades it.
  padHits: [],
  padHit(dev, e) { this.padHits.push({ device: dev, control: e.control, time: e.time ?? performance.now(), velocity: e.velocity }); if (this.padHits.length > 64) this.padHits.shift(); },
  timed(onset) {
   if (!onset.grade) return;
-  const hit = this.padHits.findLast?.(h => Math.abs(h.time - onset.time) < 30) || [...this.padHits].reverse().find(h => Math.abs(h.time - onset.time) < 30);
-  if (hit && hit.device.timingFlash !== false) hit.device.flashPad(hit.control, GRADE_COLOR[onset.grade], 220);
+  const hit = [...this.padHits].reverse().find(h => !h.grade && Math.abs(h.time - onset.time) < 30);
+  if (!hit) return;
+  hit.grade = onset.grade;
+  // Pads that play (drums, notes, an exercise's) flash how well they were timed; a loop or transport pad doesn't.
+  if (/^(drum|note|lesson-pad)$/.test(hit.device.mappingFor(hit.control)?.do || '')) hit.device.flashPad(hit.control, GRADE_COLOR[onset.grade], 220);
  },
 
  // The on-screen controls a hardware control moves now get a badge with its name (K5, F2), so it is clear

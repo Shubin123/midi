@@ -1026,6 +1026,37 @@ student, and nothing outside the widgets and Settings can be changed. The
 tempo set anywhere (Tap BPM, − and +, the teacher) shows in the sequencer's
 Base BPM, and a metronome that is clicking keeps up with it.
 
+### The teacher and a controller
+
+With a controller connected, the teacher knows it: asked about knobs, pads or
+the controller (or during one of its lessons) the model is told what is
+connected, its preset and program, each control by name with what it does now,
+and what the device does by itself with Shift, so it can say "turn knob 5 to
+brighten the sound" or "hold Shift and press pad 1 to start the arpeggiator"
+on a MiniLab 3, and the right names on any other preset. The agent gains
+`read_controller_state`, `list_controller_presets`, `switch_controller_preset`,
+`set_controller_page`, `map_control` (a control to an app control or an action;
+remapping the keys, a strip, the pedal or a control that stops things asks
+first), `light_pads` (pads, and keys on the screen's keyboard, to show what to
+play), `show_on_screen`, `create_preset_from_mappings` (asks before replacing
+one), `edit_preset_mapping` (the student's own presets only; asks first) and
+`export_preset`; each is listed in the panel with Undo, like the rest. Said or
+typed, "switch to the drum preset", "map the faders to the loop volumes", "map
+knob 3 to the resonance", "knobs on the plugin page" and "save this as my
+practice preset" are met at once by System 1, through the same agent.
+
+A course unit, **Your controller** (js/controllers/lessons.js), is written
+against roles ("{pad 1}", "{knob 5}") that become the connected controller's own
+names: Knob 5 brightens the sound, Shaping a sound with the knobs (cutoff and
+attack), Pad drumming (the Teacher / practice variation, pads 1 and 2 lit for
+kick and snare, the metronome on; eight alternating hits, most on the beat), and
+A loop from the pads. Each is checked from what the controller and the app did
+since it started. A pad that plays (a drum, a note) flashes green, amber or red
+for how well each hit was timed, in any lesson or none; drum pads reach the
+teacher as a rhythm without a pitch, as claps do. The main encoder can browse
+the course (Main encoder browses: lessons) and start a lesson with its click,
+and the controller's screen shows the chord held.
+
 ### Conversations are kept
 
 The conversation (messages, coaching steps, lessons, guides, changes, and the

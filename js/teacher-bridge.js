@@ -40,8 +40,11 @@ import { CLAP, listening, keyAndScale } from './listening.js';
 import { readIntent, makePhrase, scoreSingBack } from './voice-mode.js';
 import { SPEECH_LOCAL_KEY, AUDIO_TO_PROVIDER_KEY } from './settings.js';
 import { encodeAudio } from './audio-files.js';
-import { Agent, ACTIONS, definitions as agentTools } from './agent-actions.js';
+import { Agent, ACTIONS, definitions as agentTools, midiOf as midiOfName } from './agent-actions.js';
 import { chordMidi, scaleRunMidi } from './pitch-analyzer.js';
+import { controllers } from './controllers/runtime.js';
+import { controllerContext, readControllerCommand } from './controllers/agent.js';
+import { CONTROLLER_UNIT, CONTROLLER_LESSONS, lessonState } from './controllers/lessons.js';
 
 // Notes the player struck or sang; the sequencer, looper and the teacher's own playback are not analysed.
 const PLAYED = /^(midi|computer|mouse|touch|audio)/; // audio: sung or played into the microphone (js/listening.js)
@@ -49,11 +52,14 @@ const toNote = midi => NOTE_NAMES[midi % 12] + Math.floor(midi / 12); // the syn
 const MAX_MESSAGES = 200;
 const host = url => url.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
 // The course: the workspace first, then tempo and rhythm, then music theory from Open Music Theory.
-const COURSE = [...WORKSPACE_LESSONS, ...RHYTHM_LESSONS, ...LESSONS], COURSE_UNITS = [WORKSPACE_UNIT, RHYTHM_UNIT, ...UNITS];
+const COURSE = [...WORKSPACE_LESSONS, ...RHYTHM_LESSONS, ...CONTROLLER_LESSONS, ...LESSONS], COURSE_UNITS = [WORKSPACE_UNIT, RHYTHM_UNIT, CONTROLLER_UNIT, ...UNITS];
 const courseLesson = id => COURSE.find(l => l.id === id) || null;
 const nextInCourse = id => COURSE[COURSE.findIndex(l => l.id === id) + 1] || null;
 const isWorkspace = l => l?.unit === WORKSPACE_UNIT;
 const isRhythm = l => l?.unit === RHYTHM_UNIT;
+const isController = l => l?.unit === CONTROLLER_UNIT; // checked from what the controller did (js/controllers/lessons.js)
+// Questions about the controller get it described to the model ([CONTROLLER]).
+const ABOUT_CONTROLLER = /\b(knobs?|faders?|pads?|encoders?|controller|minilab|shift|strips?|pedal|preset|map(ping)?|bank|arp(eggiator)?|screen)\b/i;
 // A phrase analysis cut down to what phraseMessage() reads, for keeping in a saved conversation.
 const compact = a => ({ noteOns: a.noteOns.slice(0, 48).map(n => ({ note: n.note })), noteCount: a.noteCount, durationMs: a.durationMs, pitchClasses: a.pitchClasses, scales: a.scales.slice(0, 1).map(({ tonicName, scaleName, score }) => ({ tonicName, scaleName, score })), chords: a.chords.map(c => ({ best: { chordName: c.best.chordName } })) });
 // Questions that are about the app rather than the music get the workspace described to the model.
@@ -254,6 +260,7 @@ export class TeacherBridge {
   this.agent = new Agent({ canAct: () => this.agentActs, show: e => this._agentShow(e), env: {
    play: (steps, bpm, label) => this._playSteps(steps, bpm, label), chordMidi: c => chordMidi(c), scaleRun: sc => scaleRunMidi(sc.tonic, sc.scaleName),
    exercise: () => this.exercise, setExercise: ex => this._setExercise(ex), singBack: opts => this._singBack(opts),
+   lightKeys: (keys, seconds) => this._lightKeys(keys, seconds),
    performance: () => this.convo.current.entries.filter(e => e.kind === 'local' || e.kind === 'rhythm').slice(-4).map(e => (e.kind === 'local' ? `phrase: ${e.title}${e.chords ? `, chords ${e.chords}` : ''} (${e.detail})` : `rhythm: ${e.bars.join(' | ')}; ${e.text} ${e.fix}`)),
   } });
   this._phraseQueue = []; this._processing = false;
@@ -283,6 +290,9 @@ export class TeacherBridge {
   this.setEnabled(this.enabled, true);
   window.addEventListener('teacher:enabled', e => this.setEnabled(e.detail));
   timing.subscribe((type, d) => { if (type === 'flag') this._nudge(d); });
+  // A controller's main encoder browses the course and starts a lesson; its screen shows the chord held.
+  controllers.teacher = { lessons: () => COURSE, start: id => { const l = courseLesson(id); if (l) this._startLesson(l); } };
+  controllers.chord = () => (this.enabled ? this._chordName || '' : '');
   this._renderProviders(); this._renderState(); this._renderEmpty();
   // Finish an OpenRouter sign-in if we came back from one; that connects it straight away.
   completeSignIn().then(key => {
@@ -311,7 +321,7 @@ export class TeacherBridge {
    // Every release counts, whatever its source: the tracker ignores notes it isn't holding.
    if (!on) { this.tracker.noteOff(midi, now); this.attempt.noteOff(midi); return; }
    if (!PLAYED.test(source)) return;
-   const vel = Math.round(velocity * 127), clap = source === 'audio-clap';
+   const vel = Math.round(velocity * 127), clap = source === 'audio-clap' || source === 'midi-drum'; // a drum pad is a rhythm without a pitch, as a clap
    this._lastNoteAt = now; if (!clap) this._keysLow = followKeys(this._keysLow, midi); clearTimeout(this._missTimer);
    if (this.voice?.speaking) this.voice.cancelSpeech(); // the student's turn: stop talking
    this.tracker.noteOn(midi, vel, now); this.attempt.noteOn(midi, now);
@@ -967,6 +977,16 @@ export class TeacherBridge {
   const held = [...this.tracker.heldNotes];
   const chord = held.length >= 3 ? detectChord(held, Math.min(...held))[0] : null;
   chip.hidden = !chord; chip.textContent = chord?.chordName || '';
+  this._chordName = chord?.chordName || '';
+ }
+ // Keys lit on the screen's keyboard for an exercise (light_pads with keys), for some seconds.
+ _lightKeys(keys, seconds = 0) {
+  const nums = keys.map(k => (Number.isInteger(k) ? k : midiOfName(k))).filter(m => m !== null);
+  const els = nums.map(m => document.querySelector(`#keyboard [data-midi="${m}"]`)).filter(Boolean);
+  document.querySelectorAll('#keyboard .teacher-hint').forEach(e => e.classList.remove('teacher-hint'));
+  els.forEach(e => e.classList.add('teacher-hint'));
+  clearTimeout(this._keysLit); if (seconds) this._keysLit = setTimeout(() => els.forEach(e => e.classList.remove('teacher-hint')), seconds * 1000);
+  return els.length;
  }
 
  _showLocal(a) {
@@ -1137,6 +1157,7 @@ export class TeacherBridge {
   if (req) return this._playRequest(q, req);
   await this._learnAll(); // what each plug-in's controls are for, so "more reverb" finds the reverb's mix
   if (AGENT.test(q) && this.teacher.isConfigured) return this._question(q);
+  if (await this._controllerCommand(q)) return;
   if (this._command(q)) return;
   const compose = COMPOSE.test(q);
   if (compose && this.teacher.isConfigured) return this._question(q, [], { compose });
@@ -1215,9 +1236,10 @@ export class TeacherBridge {
  // A request about the music only gets it when it names a widget: the workspace distracted Qwen from playing.
  _workspaceContext(q, focus = [], musicOnly = false) {
   const ids = [...new Set([...focus, ...(isWorkspace(this.lesson) ? ws.widgets().filter(w => w.title === this.lesson.widget).map(w => w.id) : []), ...ws.relevant(q, this._keywords())])];
-  if (!ids.length && (musicOnly || !ABOUT_APP.test(q))) return '';
+  const ctl = (ABOUT_CONTROLLER.test(q) || isController(this.lesson)) && !musicOnly ? controllerContext() : '';
+  if (!ids.length && (musicOnly || !ABOUT_APP.test(q))) return ctl;
   const learned = ws.widgets().filter(w => w.plugin && ids.includes(w.id) && profiles.has(w.title)).map(w => `What ${w.title} does: ${summarize(profiles.get(w.title))}`);
-  return `[WORKSPACE]\n${ws.describe(ids)}${learned.length ? `\n${learned.join('\n')}` : ''}`;
+  return [`[WORKSPACE]\n${ws.describe(ids)}${learned.length ? `\n${learned.join('\n')}` : ''}`, ctl].filter(Boolean).join('\n\n');
  }
 
  // A reply's "show" points at controls one after another; "set" changes them, each with an Undo.
@@ -1269,6 +1291,21 @@ export class TeacherBridge {
    const shown = c.el.closest('.plugin-param')?.querySelector('output')?.textContent.match(/\s(ms|s|%|hz|khz)$/i)?.[1].toLowerCase();
    return shown && shown !== 'khz' ? { ...words, unit: shown } : words;
   });
+ }
+ // Requests about the controller met at once ("switch to the drum preset", "map the faders to the loop volumes",
+ // "save this as my practice preset"): each goes through the agent, so it is listed with Undo, and one that
+ // would replace something asks first.
+ async _controllerCommand(q) {
+  const calls = readControllerCommand(q);
+  if (!calls) return false;
+  this._msg('user', q);
+  this.agent.begin();
+  const said = [];
+  for (const c of calls) said.push(await this.agent.call(c.action, c.args, 'System 1 · done at once'));
+  const done = this.agent.end().filter(r => r.undo);
+  if (done.length > 1) { const id = `undo-${Date.now()}`; this._undos.set(id, () => done.reverse().forEach(r => r.undo())); this._add({ kind: 'agent-batch', id, count: done.length, who: 'System 1 · done at once' }); }
+  this._say(said.length > 1 ? `Done: ${done.map(r => r.text).join('; ')}.` : said[0]);
+  return true;
  }
  // System 1 changes settings when asked, at once and with no model (js/commands.js): "set the cutoff to 800",
  // "turn off oscillator 2", "louder", "hide the oscilloscope". Words that fit several controls ask which, with
@@ -1487,11 +1524,13 @@ export class TeacherBridge {
   bar.querySelector('.tp-lesson-hear').textContent = l.example ? '▶ Example' : 'Show me';
   // Workspace tasks finish with a click or a slider move as often as with a note, so they are checked as
   // the student works, not only when a phrase ends.
-  if (isWorkspace(l)) this._lessonTimer = setInterval(() => this._checkLesson(true), 700);
+  if (isWorkspace(l) || isController(l)) this._lessonTimer = setInterval(() => this._checkLesson(true), 700);
+  if (isController(l)) { this._lessonSince = performance.now(); const d = controllers.active[0]; if (d) try { l.setup?.(d); } catch (err) { this._msg('info', err.message); } else this._msg('info', 'This lesson is for a MIDI controller: plug one in (the Controllers widget shows it) and start it again.'); }
   this._renderCourse();
  }
 
  _endLesson(save = true) {
+  if (isController(this.lesson)) { const d = controllers.active[0]; if (d) try { this.lesson.teardown?.(d); } catch { /* it was unplugged */ } }
   this.lesson = null; this.attempt.reset(); clearTimeout(this._missTimer); clearInterval(this._lessonTimer);
   if (save) this.convo.setLesson(null);
   this.panel.querySelector('.tp-lesson-bar').hidden = true;
@@ -1503,7 +1542,7 @@ export class TeacherBridge {
  _checkLesson(quiet = false) {
   const l = this.lesson;
   if (!l) return;
-  const passed = isWorkspace(l) ? l.check(this.attempt, ws.state()) : l.check(this.attempt);
+  const passed = isWorkspace(l) ? l.check(this.attempt, ws.state()) : isController(l) ? l.check(this.attempt, lessonState(this._lessonSince)) : l.check(this.attempt);
   if (passed) {
    this.courseDone.add(l.id); save('teacher-course-v1', [...this.courseDone]);
    this._endLesson();

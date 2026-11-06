@@ -18,6 +18,7 @@ import { readPattern } from './timing.js';
 import { mappings, FEATURES, TARGETS as MAP_TARGETS, recordLane } from './listen-map.js';
 import { soundMatch } from './sound-match.js';
 import { describePatch } from './patch-infer.js';
+import { CONTROLLER_ACTIONS } from './controllers/agent.js';
 
 const $ = id => document.getElementById(id);
 const KEYS = { C: 0, 'C#': 1, DB: 1, D: 2, 'D#': 3, EB: 3, E: 4, F: 5, 'F#': 6, GB: 6, G: 7, 'G#': 8, AB: 8, A: 9, 'A#': 10, BB: 10, B: 11 };
@@ -317,6 +318,9 @@ export const ACTIONS = {
    return { text: `exercise ${p} at ${Math.round(bpm)} BPM`, undo: () => { env.setExercise(was); window.synth.tempo = tempo; if ($('metronomeToggle').checked !== clicking) click($('metronomeToggle')); } };
   } },
 };
+// A MIDI controller's: read it, switch its preset and page, map a control, light pads, write on its screen,
+// and make, edit and export presets (js/controllers/agent.js).
+Object.assign(ACTIONS, CONTROLLER_ACTIONS);
 export const READS = Object.keys(ACTIONS).filter(k => ACTIONS[k].kind === 'read');
 
 // The tools as a hosted model is offered them.
