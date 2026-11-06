@@ -75,8 +75,7 @@ seconds.
 
 ### Checking for regressions
 
-Run `npm ci --ignore-scripts` first to install the pinned emulator used by the
-native-execution tests. Then `npm test` (or `node tests/all.mjs`) runs every
+`npm test` (or `node tests/all.mjs`) runs every
 suite in parallel, the ones that drive headless Chrome at most three at
 a time, and fails if any does. The browser suites share
 `tests/support/browser.mjs`, which serves the repo and drives headless Chrome. The waveform checks don't just look for "about right": each one
@@ -1570,16 +1569,17 @@ The synth's existing WebAssembly plugin/audio path is unchanged.
 **Observed with Arcade 2.2.0's supplied installer:** factory-only mode executes
 `GetPluginFactory` and VST3 virtual methods and returns Output's two Arcade
 classes. It deliberately skips initialization, and both class IDs are zero.
-Normal startup reaches CoreFoundation UUID calls, then the emulator faults
-before the first of 768 initializers completes. **Arcade does not play audio.**
+Normal startup passes the previous emulator crash and executes UUID and string
+formatting calls, then stops at unsupported `_sscanf` before the first of 768
+initializers completes. **Arcade does not play audio.**
 The report always says `playable: false`; passing the harness tests does not
 certify native plugin playback.
 
-Run `npm ci --ignore-scripts`, serve the repository root on localhost or HTTPS,
-and open the experiment page. Unicorn.js 2.1.4 is loaded from `node_modules`,
-or from a pinned jsDelivr URL if not installed locally, and checked against
-a fixed SHA-256 before execution. Plugin bytes stay local. The engine is
-GPL-2.0; its license is in the installed dependency. No proprietary binary,
+Serve the repository root on localhost or HTTPS and open the experiment page.
+The patched Unicorn.js engine is bundled in `vendor/unicorn` and checked against
+a fixed SHA-256 before execution; there is no CDN fallback. Plugin bytes stay
+local. The engine's GPL-2.0 license, complete corresponding source archive and
+rebuild instructions are included in that directory. No proprietary binary,
 installer, sample content, or license-bypass code is included.
 
 `node tests/native-vst3.mjs` checks the loader, CPU execution (including SSE),
@@ -1694,10 +1694,9 @@ python -m http.server 8000
 ```
 
 Node is not needed to run the app. It is used only by the test suites in
-`tests/`, which need Node 22 or later (for its built-in WebSocket). Run
-`npm ci --ignore-scripts` before the complete suite: `package.json` and its
-lockfile pin Unicorn.js for the new native-execution tests. The other suites
-still use Node's own modules without additional packages.
+`tests/`, which need Node 22 or later (for its built-in WebSocket). The native
+execution tests use the bundled CPU engine; no npm dependency installation is
+needed. The other suites use Node's own modules without additional packages.
 
 Browsers require a user gesture before audio can start, so the `AudioContext`
 is created lazily on the first interaction and resumed if it is suspended. Web

@@ -4,8 +4,5 @@
   "type": "module",
   "scripts": {
     "test": "node tests/all.mjs"
-  },
-  "dependencies": {
-    "@alexaltea/unicorn-js": "2.1.4"
   }
 }

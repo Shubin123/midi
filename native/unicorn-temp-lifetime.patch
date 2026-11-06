@@ -1,0 +1,29 @@
+--- a/qemu/tcg/tcg.c
++++ b/qemu/tcg/tcg.c
+@@ -1438,6 +1438,8 @@
+ void tcg_gen_callN(TCGContext *tcg_ctx, void *func, TCGTemp *ret, int nargs, TCGTemp **args)
+ {
+     int i, real_args, nb_rets, pi;
++    TCGv_i64 extended_args[MAX_OPC_PARAM];
++    int extended_count = 0;
+     unsigned sizemask, flags;
+     TCGHelperInfo *info;
+     TCGOp *op;
+@@ -1497,6 +1499,7 @@
+     for (i = 0; i < nargs; i++) {
+         int arg_is_64bit = sizemask & (1 << (i+1)*2);
+         if (!arg_is_64bit) {
+             TCGv_i64 ext_temp = tcg_temp_new_i64(tcg_ctx);
++            extended_args[extended_count++] = ext_temp;
+             TCGv_i64 ext_orig = temp_tcgv_i64(tcg_ctx, args[i]);
+             tcg_gen_ext32u_i64(tcg_ctx, ext_temp, ext_orig);
+@@ -1582,6 +1585,9 @@
+     /* Make sure the fields didn't overflow.  */
+     tcg_debug_assert(TCGOP_CALLI(op) == real_args);
+     tcg_debug_assert(pi <= ARRAY_SIZE(op->args));
++    for (i = 0; i < extended_count; i++) {
++        tcg_temp_free_i64(tcg_ctx, extended_args[i]);
++    }
+ 
+ #if defined(__sparc__) && !defined(__arch64__)
+     /* Free all of the parts we allocated above.  */

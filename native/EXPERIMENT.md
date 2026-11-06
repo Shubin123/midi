@@ -17,7 +17,6 @@ but **Arcade is not playable**.
 ## Run
 
 ```sh
-npm ci --ignore-scripts
 python3 -m http.server 8000
 ```
 
@@ -35,15 +34,14 @@ execution experiment** from a macOS x86_64 VST3 card in the app. Select a
 - **Download report** exports the result, including the failing stage and import
   or address, without exporting proprietary code.
 
-The emulator is `@alexaltea/unicorn-js` 2.1.4, an Emscripten-built x86 CPU
-emulator, not a macOS implementation. Its unmodified single-architecture
-distribution is pinned in `package-lock.json` and verified against SHA-256
-`643adbbb0c77eadb71182f116c9da0860814221a25194dac3ed561589929ef6d`.
-The worker prefers the installed package and otherwise fetches that exact
-version from jsDelivr. No plugin content is uploaded. The engine's source
-and GPL-2.0 license are available through the dependency's package metadata
-and https://github.com/AlexAltea/unicorn.js; the npm release records source
-commit `560284c59c11c8d6c94d537f4354339f069ddcdf`.
+The emulator is a locally patched, Emscripten-built Unicorn.js x86 CPU
+engine, not a macOS implementation. Its bytes are bundled in `vendor/unicorn`
+and verified against a pinned SHA-256 before loading. There is no network
+fallback and no npm runtime dependency. The complete corresponding source,
+GPL-2.0 license, upstream pins, and rebuild instructions are included there.
+`native/build-unicorn.py` rebuilds the supplied source archive in a fresh
+directory; this build path was verified before publication. No plugin content
+is uploaded or included in the repository.
 
 ## Observed target: Arcade
 
@@ -66,21 +64,21 @@ In **Chrome**, with the package selected directly from disk:
 3. Normal startup enters the first of **768** static initializers. The provided
    default-allocator constant and UUID bridge allow actual `CFUUIDCreate`,
    `CFUUIDGetUUIDBytes`, `CFRelease`, and `__cxa_atexit` calls.
-4. The published emulator then raises a Wasm memory-out-of-bounds exception.
-   The last CPU entry is `0x100412c3` (unslid `0x412c3`). The report identifies
-   this as `emulator-fault`, not a guest memory fault or successful conversion.
-   Zero initializers have completed; the worker is discarded.
+4. The patched emulator passes the previous Wasm memory-out-of-bounds crash.
+   Actual initialization executes eleven `sprintf`, one `strcpy`, and ten
+   `strcat` calls, then stops explicitly at the unimplemented `_sscanf` import.
+   Zero initializers have completed; the worker is discarded. This remains
+   a startup failure, not a playable conversion.
 
-A separate source build at upstream commit
-`1220477c7fb0f8fe4b500f4bd211de52f6dfe638`, with Unicorn submodule
-`8028ec436f2d9376525352dd38ed9ed6b9f6be10`, reproduced the same failure.
-A profiling build identified the fault in `tcg_optimize_x86_64`, called by
-translation-block generation. Increasing the Emscripten stack to 4 MiB and
-adding stack checks did not resolve it. Disabling that optimizer did not
-produce a returning startup attempt and is not shipped as a workaround.
-Those diagnostic builds are not runtime dependencies.
+The old published engine faulted at last CPU entry `0x100412c3`. Source
+profiling and ASAN isolated a TCI adapter temporary-lifetime leak: helper-call
+argument extensions were allocated but never freed, corrupting long
+instrumented translation blocks. The bundled source frees these temporaries
+after emitting the helper call; the optimizer remains enabled. An independent
+512-group load/store regression now completes. No plugin machine code was
+changed to fix this host-engine defect.
 
-Fixing the emulator is only the next step, not proof that Arcade will run:
+Fixing this emulator defect is not proof that Arcade will run:
 the binary imports 31 native libraries/frameworks, including Objective-C,
 Cocoa, WebKit, CoreAudio, Security, and Accelerate. Their behavior, plugin
 resources/content, bundle startup, licensing, VST3 object creation, event and
@@ -101,6 +99,10 @@ No licensing checks are patched or suppressed.
   operations are supplied. Allocation is a bounded bump allocator; frees
   retire records but do not reclaim space. Destructors are registered but the
   diagnostic worker is discarded rather than implementing macOS unload.
+- `sprintf`/`snprintf` support bounded integer, byte-string, character and
+  pointer conversions with register and stack arguments. Unsupported floating,
+  wide-character, positional and `%n` conversions fail explicitly. `snprintf`
+  returns the untruncated byte count and honors zero capacity.
 - CPU instruction allowances and per-call elapsed-time checks are backed by
   a separate page-side worker watchdog (30 seconds by default). The watchdog
   can terminate a wedged Wasm emulator; it does not rely on guest cooperation.

@@ -8,7 +8,7 @@ import { writeZip } from '../js/archive.js';
 import { nativeFixture, nativePackage, leb } from './support/native-vst3-fixture.js';
 import { loadNativeEngine } from '../js/native-vst3-engine.js';
 
-const require = createRequire(import.meta.url), uc = await require('@alexaltea/unicorn-js/x86')();
+const require = createRequire(import.meta.url), uc = await require('../vendor/unicorn/unicorn.cjs')();
 const fixture = nativeFixture(), parsed = parseMachO(fixture);
 assert.equal(parsed.symbols.get('_GetPluginFactory'), 0x200);
 assert.equal(parsed.segments.length, 2);
@@ -43,6 +43,27 @@ use(nativeFixture({ importName: '_not_implemented' }), guest => assert.throws(()
 use(nativeFixture({ importName: '_unknown_data', dataImport: true }), guest => assert.throws(() => guest.call(guest.export('_probe')), /Unsupported imported data/));
 use(nativeFixture({ importName: '___stack_chk_guard', dataImport: true }), guest => { guest.call(guest.export('_probe')); assert.equal(guest.report().calls.___stack_chk_guard, undefined); });
 use(nativeFixture({ importName: '_kCFAllocatorDefault', dataImport: true }), guest => assert.equal(guest.call(guest.export('_probe')), 0));
+use(fixture, guest => {
+ const destination = guest.allocate(128), source = guest.allocate(128);
+ guest.write(source, new TextEncoder().encode('copied string\0'));
+ guest.setRegister('RDI', destination); guest.setRegister('RSI', source);
+ assert.equal(guest.invokeImport({ name: '_strcpy' }), destination);
+ assert.equal(guest.string(destination), 'copied string');
+ assert.equal(guest.invokeImport({ name: '_strcat' }), destination);
+ assert.equal(guest.string(destination), 'copied stringcopied string');
+ const format = guest.allocate(128);
+ guest.write(format, new TextEncoder().encode('%llX:%X:%X:%X:%X\0'));
+ guest.setRegister('RDI', destination); guest.setRegister('RSI', format);
+ guest.setRegister('RDX', 0xfedcba9876543210n); guest.setRegister('RCX', 1); guest.setRegister('R8', 2); guest.setRegister('R9', 3);
+ const stack = 0x40080000; guest.setRegister('RSP', stack); guest.writePointer(stack + 8, 4);
+ assert.equal(guest.invokeImport({ name: '_sprintf' }), 24);
+ assert.equal(guest.string(destination), 'FEDCBA9876543210:1:2:3:4');
+ guest.write(format, new TextEncoder().encode('%08X\0'));
+ guest.setRegister('RDI', destination); guest.setRegister('RSI', 5); guest.setRegister('RDX', format); guest.setRegister('RCX', 42);
+ assert.equal(guest.invokeImport({ name: '_snprintf' }), 8); assert.equal(guest.string(destination), '0000');
+ guest.setRegister('RDI', 0); guest.setRegister('RSI', 0);
+ assert.equal(guest.invokeImport({ name: '_snprintf' }), 8);
+});
 use(fixture, guest => {
  guest.setRegister('RDI', 0);
  const uuid = guest.invokeImport({ name: '_CFUUIDCreate' });
@@ -93,15 +114,17 @@ const originalFetch = globalThis.fetch, originalScripts = globalThis.importScrip
 try {
  globalThis.fetch = async () => new Response('corrupted engine');
  await assert.rejects(loadNativeEngine(), /SHA-256/);
- const requested = [], engineBytes = readFileSync(require.resolve('@alexaltea/unicorn-js/x86'));
- globalThis.fetch = async url => { requested.push(String(url)); return requested.length === 1 ? new Response('', { status: 404 }) : new Response(engineBytes); };
+ const requested = [], engineBytes = readFileSync(require.resolve('../vendor/unicorn/unicorn.cjs'));
+ globalThis.fetch = async url => { requested.push(String(url)); return new Response(engineBytes); };
  globalThis.importScripts = url => { assert.match(url, /^blob:/); globalThis.MUnicorn = async () => 'verified-engine'; };
  assert.equal(await loadNativeEngine(), 'verified-engine');
- assert.match(requested[1], /unicorn-js@2\.1\.4\/dist\/unicorn_x86\.js$/);
+ assert.equal(requested.length, 1); assert.match(requested[0], /vendor\/unicorn\/unicorn\.cjs$/);
+ globalThis.fetch = async () => new Response('', { status: 404 });
+ await assert.rejects(loadNativeEngine(), /patched Unicorn/);
 } finally {
  globalThis.fetch = originalFetch;
  if (originalScripts === undefined) delete globalThis.importScripts; else globalThis.importScripts = originalScripts;
  if (originalFactory === undefined) delete globalThis.MUnicorn; else globalThis.MUnicorn = originalFactory;
 }
-console.log('Engine dependency: corrupted bytes rejected and pinned fallback verified.');
+console.log('Engine dependency: corrupted bytes rejected, patched local engine verified, no buggy CDN fallback.');
 console.log('native VST3 experiment: all checks passed');

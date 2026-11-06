@@ -1,4 +1,5 @@
 import { parseMachO, dyldFixups } from './macho-loader.js';
+import { formatGuestPrintf } from './native-vst3-printf.js';
 
 const IMAGE = 0x10000000, HEAP = 0x30000000, HEAP_SIZE = 32 << 20;
 const STACK = 0x40000000, STACK_SIZE = 1 << 20, IMPORTS = 0x50000000, IMPORT_SIZE = 1 << 20;
@@ -73,6 +74,13 @@ export class NativeVst3Guest {
  }
  register(name) { return Number(BigInt.asUintN(64, this.engine.reg_read_i64(this.uc[`X86_REG_${name}`]))); }
  setRegister(name, value) { this.engine.reg_write_i64(this.uc[`X86_REG_${name}`], BigInt(value)); }
+ argument64(index) {
+  if (!Number.isInteger(index) || index < 0 || index >= 64) throw new NativeExecutionError('Guest argument limit exceeded');
+  const name = ['RDI', 'RSI', 'RDX', 'RCX', 'R8', 'R9'][index];
+  if (name) return BigInt.asUintN(64, this.engine.reg_read_i64(this.uc[`X86_REG_${name}`]));
+  const bytes = this.read(this.register('RSP') + 8 * (index - 5), 8);
+  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getBigUint64(0, true);
+ }
  allocate(size) {
   if (!Number.isSafeInteger(size) || size < 0 || size > HEAP_SIZE) throw new NativeExecutionError('Guest allocation exceeds 32 MiB heap');
   const address = this.heapTop, next = address + Math.ceil(Math.max(1, size) / 16) * 16;
@@ -122,6 +130,39 @@ export class NativeVst3Guest {
    case '_bzero': case '___bzero': fill(destination, source); return 0;
    case '_memcpy': case '_memmove': this.write(destination, this.read(source, size)); return destination;
    case '_strlen': return this.stringBytes(destination).length;
+   case '_strcpy': case '_strcat': {
+    const sourceBytes = this.stringBytes(source, 1 << 20), bytes = new Uint8Array(sourceBytes.length + 1);
+    const offset = entry.name === '_strcat' ? this.stringBytes(destination, 1 << 20).length : 0;
+    if (offset + bytes.length > (1 << 20)) throw new NativeExecutionError('Guest string exceeds limit');
+    bytes.set(sourceBytes); this.write(destination + offset, bytes); return destination;
+   }
+   case '_sprintf': case '_snprintf': {
+    const bounded = entry.name === '_snprintf', capacity = bounded ? source : 1 << 20;
+    if (!Number.isSafeInteger(capacity) || capacity < 0 || capacity > (1 << 20)) throw new NativeExecutionError('printf capacity exceeds limit');
+    let index = bounded ? 3 : 2;
+    let output;
+    try {
+     output = formatGuestPrintf(this.stringBytes(bounded ? size : source), () => this.argument64(index++), (pointer, precision) => {
+      const address = Number(pointer);
+      if (!Number.isSafeInteger(address)) throw new NativeExecutionError('Invalid printf string pointer');
+      if (precision === 0) return new Uint8Array();
+      const bytes = [];
+      for (let offset = 0; offset < (precision ?? 1 << 20); offset++) {
+       const byte = this.read(address + offset, 1)[0];
+       if (!byte) return new Uint8Array(bytes);
+       bytes.push(byte);
+      }
+      if (precision === null) throw new NativeExecutionError('Unterminated printf string');
+      return new Uint8Array(bytes);
+     });
+    } catch (error) { throw new NativeExecutionError(error.message, { ...entry, kind: 'unsupported-printf' }); }
+    if (!bounded && output.length >= capacity) throw new NativeExecutionError('sprintf output exceeds limit');
+    if (capacity) {
+     const bytes = new Uint8Array(Math.min(output.length, capacity - 1) + 1);
+     bytes.set(output.subarray(0, bytes.length - 1)); this.write(destination, bytes);
+    }
+    return output.length;
+   }
    case '_strcmp': {
     const left = this.stringBytes(destination), right = this.stringBytes(source);
     for (let index = 0; index <= Math.max(left.length, right.length); index++) { const difference = (left[index] || 0) - (right[index] || 0); if (difference) return difference; }

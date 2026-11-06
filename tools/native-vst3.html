@@ -21,7 +21,7 @@
    <button id="stop" disabled>Stop</button>
   </div>
   <p>Normal startup runs initializers and stops at the first missing macOS dependency. Factory-only mode deliberately skips initialization; its metadata can be incomplete or invalid. Neither mode produces playable audio.</p>
-  <p>The plugin stays on your machine. The pinned, integrity-checked GPL-2.0 Unicorn.js engine loads locally after <code>npm ci --ignore-scripts</code>, or from jsDelivr if unavailable locally. File parsing and emulation have size and execution limits; this is not a security audit of untrusted plugins.</p>
+  <p>The plugin stays on your machine. The patched, integrity-checked GPL-2.0 Unicorn.js engine loads from <code>vendor/unicorn</code>, which includes its corresponding source and license. No CDN or dependency installation is required. File parsing and emulation have size and execution limits; this is not a security audit of untrusted plugins.</p>
   <p id="status" role="status" aria-live="polite">Choose a plugin to begin.</p>
   <pre id="result" tabindex="0" aria-label="Execution report"></pre>
   <button id="download" disabled>Download report</button>

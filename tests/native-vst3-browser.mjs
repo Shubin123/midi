@@ -52,9 +52,10 @@ try {
     assert.equal(report.initialized, false); assert.equal(report.initializerCount, 768);
     assert.ok(report.calls.__Znwm > 0 && report.calls._memcpy > 0);
    } else {
-    assert.equal(report.stage, 'initializers'); assert.equal(report.error.kind, 'emulator-fault');
-    assert.equal(report.error.address, '0x100412c3'); assert.equal(report.initializersCompleted, 0);
+    assert.equal(report.stage, 'initializers'); assert.equal(report.error.kind, 'unsupported-import');
+    assert.equal(report.error.name, '_sscanf'); assert.equal(report.initializersCompleted, 0);
     assert.equal(report.calls._CFUUIDCreate, 1); assert.equal(report.calls._CFUUIDGetUUIDBytes, 1); assert.equal(report.calls._CFRelease, 1);
+    assert.equal(report.calls._sprintf, 11); assert.equal(report.calls._strcpy, 1); assert.equal(report.calls._strcat, 10);
    }
    console.log(`Arcade ${mode}: ${JSON.stringify(report)}`);
   }
