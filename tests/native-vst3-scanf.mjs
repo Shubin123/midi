@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import { scanGuestIntegers } from '../js/native-vst3-scanf.js';
+
+const encoder = new TextEncoder();
+const scan = (input, format) => {
+ const values = [], result = scanGuestIntegers(encoder.encode(input), encoder.encode(format), (value, bits) => values.push({ value, bits }));
+ return { result, values };
+};
+const values = (input, format) => scan(input, format).values.map(entry => entry.value);
+assert.deepEqual(values('56535441524344617263616465000000', '%08lX%04X%04X%02X%02X%02X%02X%02X%02X%02X%02X'), [0x56535441n, 0x5243n, 0x4461n, 0x72n, 0x63n, 0x61n, 0x64n, 0x65n, 0n, 0n, 0n]);
+assert.deepEqual(values(' -12, +42 / 0xff 077 123', '%d,%u / %i %i %i'), [0xfffffff4n, 42n, 255n, 63n, 123n]);
+assert.deepEqual(scan('-128 65535 4294967295 18446744073709551615', '%hhd %hu %u %llu'), { result: 4, values: [{ value: 128n, bits: 8 }, { value: 65535n, bits: 16 }, { value: 4294967295n, bits: 32 }, { value: 18446744073709551615n, bits: 64 }] });
+assert.deepEqual(values('12 34', '%*d %d'), [34n]);
+assert.deepEqual(values('12%34', '%d%%%d'), [12n, 34n]);
+assert.deepEqual(values(' \n%34', '%%%d'), [34n]);
+assert.deepEqual(values('123456', '%2d%2d%2d'), [12n, 34n, 56n]);
+assert.deepEqual(values('-1', '%u'), [0xffffffffn]);
+assert.equal(scan('', '%d').result, -1);
+assert.equal(scan(' \n', '%d').result, -1);
+assert.equal(scan('?', '%d').result, 0);
+assert.equal(scan('-', '%d').result, 0);
+assert.equal(scan('1 ?', '%d%d').result, 1);
+assert.equal(scan('1', '%d%d').result, 1);
+assert.equal(scan('1', '%*d%d').result, 0);
+assert.equal(scan('', 'literal').result, -1);
+assert.equal(scan('', '').result, 0);
+for (const format of ['%f', '%s', '%n', '%p', '%[a-z]', '%0d', '%1048577d', '%1$d', '%']) assert.throws(() => scan('', format), /Unsupported|exceeds limit/);
+assert.throws(() => scan('256', '%hhu'), /destination range/);
+assert.throws(() => scan('18446744073709551616', '%llu'), /supported range/);
+console.log('native scanf: class IDs, widths, suppression, register-independent integers, EOF and explicit bounds passed');

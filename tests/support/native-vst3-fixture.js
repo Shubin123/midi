@@ -56,6 +56,36 @@ export function nativeFixture({ code = [0xb8, 42, 0, 0, 0, 0xc3], importName, da
  return bytes;
 }
 
+export function nativeMutexFixture() {
+ const bytes = nativeFixture({ importName: '_pthread_mutex_lock', initializer: true });
+ const view = new DataView(bytes.buffer);
+ bytes.set([0x48, 0x83, 0xec, 8, 0x48, 0x8d, 0x3d], 0x380);
+ view.setInt32(0x387, 0x1500 - 0x38b, true);
+ bytes.set([0xff, 0x15], 0x38b); view.setInt32(0x38d, 0x1600 - 0x391, true);
+ bytes.set([0x48, 0x83, 0xc4, 8, 0xc3], 0x391);
+ view.setBigUint64(0x1500, 0x32aaaba7n, true);
+ return bytes;
+}
+
+export function nativeScanFixture() {
+ const bytes = nativeFixture({ importName: '_sscanf', initializer: true });
+ const view = new DataView(bytes.buffer), encoder = new TextEncoder();
+ let offset = 0x380;
+ const relative = (prefix, target) => {
+  bytes.set(prefix, offset); offset += prefix.length;
+  view.setInt32(offset, target - offset - 4, true); offset += 4;
+ };
+ bytes.set([0x48, 0x83, 0xec, 8], offset); offset += 4;
+ relative([0x48, 0x8d, 0x3d], 0x1500);
+ relative([0x48, 0x8d, 0x35], 0x1540);
+ relative([0x48, 0x8d, 0x15], 0x1400);
+ relative([0xff, 0x15], 0x1600);
+ bytes.set([0x48, 0x83, 0xc4, 8, 0xc3], offset);
+ bytes.set(encoder.encode('12345678\0'), 0x1500);
+ bytes.set(encoder.encode('%08X\0'), 0x1540);
+ return bytes;
+}
+
 export async function nativePackage(binary, { modern = false, truncated = false } = {}) {
  const encoder = new TextEncoder();
  const entry = (path, content, mode = 0o100644) => {

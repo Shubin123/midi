@@ -6,7 +6,7 @@ try {
  await browser.open('tools/native-vst3.html');
  const checks = await browser.evaluate(`(async () => {
   const { probeNativeVst3 } = await import('../js/native-vst3-probe.js');
-  const { nativeFixture, nativePackage } = await import('../tests/support/native-vst3-fixture.js');
+  const { nativeFixture, nativePackage, nativeScanFixture, nativeMutexFixture } = await import('../tests/support/native-vst3-fixture.js');
   const file = new File([nativeFixture()], 'fixture');
   const checks = [];
   const check = (name, ok) => checks.push({ name, ok });
@@ -16,6 +16,10 @@ try {
   const pkg = new File([await nativePackage(nativeFixture({ initializer: true }))], 'fixture.pkg');
   const startup = await probeNativeVst3(pkg);
   check('package extraction and initializers execute without a native helper', startup.initialized && startup.initializersCompleted === 1 && startup.factory?.classes[0].name === 'Native fixture');
+  const scanned = await probeNativeVst3(new File([nativeScanFixture()], 'scan-fixture'));
+  check('native initializer scans into guest memory and changes the factory class ID', scanned.initialized && scanned.calls._sscanf === 1 && scanned.factory?.classes[0].cid === '7856341205060708090a0b0c0d0e0f10');
+  const locked = await probeNativeVst3(new File([nativeMutexFixture()], 'mutex-fixture'));
+  check('native initializer acquires a statically initialized guest mutex in the worker', locked.initialized && locked.calls._pthread_mutex_lock === 1);
   const unsupported = await probeNativeVst3(new File([nativeFixture({ code: [0x0f, 0x05, 0xc3], initializer: true })], 'syscall'));
   check('unsupported startup fails explicitly instead of faking success', unsupported.error?.kind === 'syscall' && unsupported.stage === 'initializers' && !unsupported.playable && !unsupported.initialized);
   const controller = new AbortController();
@@ -53,9 +57,11 @@ try {
     assert.ok(report.calls.__Znwm > 0 && report.calls._memcpy > 0);
    } else {
     assert.equal(report.stage, 'initializers'); assert.equal(report.error.kind, 'unsupported-import');
-    assert.equal(report.error.name, '_sscanf'); assert.equal(report.initializersCompleted, 0);
+    assert.equal(report.error.name, '_getrlimit'); assert.equal(report.initializersCompleted, 73);
     assert.equal(report.calls._CFUUIDCreate, 1); assert.equal(report.calls._CFUUIDGetUUIDBytes, 1); assert.equal(report.calls._CFRelease, 1);
-    assert.equal(report.calls._sprintf, 11); assert.equal(report.calls._strcpy, 1); assert.equal(report.calls._strcat, 10);
+    assert.equal(report.calls._sprintf, 22); assert.equal(report.calls._strcpy, 2); assert.equal(report.calls._strcat, 20); assert.equal(report.calls._sscanf, 2);
+    assert.equal(report.calls._pthread_mutex_init, 4); assert.equal(report.calls._pthread_mutex_lock, 109); assert.equal(report.calls._pthread_mutex_unlock, 109);
+    assert.equal(report.calls._exp2, 378); assert.equal(report.calls._pow, 8237); assert.equal(report.calls._tan, 15);
    }
    console.log(`Arcade ${mode}: ${JSON.stringify(report)}`);
   }

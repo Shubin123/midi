@@ -1,11 +1,18 @@
 import { parseMachO, dyldFixups } from './macho-loader.js';
 import { formatGuestPrintf } from './native-vst3-printf.js';
+import { scanGuestIntegers } from './native-vst3-scanf.js';
+import { GuestMutexes } from './native-vst3-mutex.js';
 
 const IMAGE = 0x10000000, HEAP = 0x30000000, HEAP_SIZE = 32 << 20;
 const STACK = 0x40000000, STACK_SIZE = 1 << 20, IMPORTS = 0x50000000, IMPORT_SIZE = 1 << 20;
 const RETURN = IMPORTS + IMPORT_SIZE - 4096;
 const decoder = new TextDecoder();
 const hex = value => `0x${value.toString(16)}`;
+const unaryMath = new Map([
+ ['_sin', Math.sin], ['_cos', Math.cos], ['_tan', Math.tan], ['_asin', Math.asin], ['_acos', Math.acos], ['_atan', Math.atan],
+ ['_exp', Math.exp], ['_expm1', Math.expm1], ['_log', Math.log], ['_log2', Math.log2], ['_log10', Math.log10], ['_log1p', Math.log1p],
+ ['_sqrt', Math.sqrt], ['_cbrt', Math.cbrt], ['_floor', Math.floor], ['_ceil', Math.ceil], ['_trunc', Math.trunc], ['_fabs', Math.abs],
+]);
 
 export class NativeExecutionError extends Error {
  constructor(message, details = {}) { super(message); this.name = 'NativeExecutionError'; this.details = details; }
@@ -18,6 +25,7 @@ export class NativeVst3Guest {
   this.slide = IMAGE - this.image.minimum;
   this.imports = new Map(); this.importNames = new Map(); this.calls = new Map(); this.allocations = new Map(); this.destructors = []; this.uuids = new Map();
   this.heapTop = HEAP; this.initialized = false; this.initializersCompleted = 0; this.factory = 0; this.hooks = [];
+  this.mutexes = new GuestMutexes(this);
   this.engine = new uc.Unicorn(uc.ARCH_X86, uc.MODE_64);
   try {
    const engine = this.engine;
@@ -74,6 +82,17 @@ export class NativeVst3Guest {
  }
  register(name) { return Number(BigInt.asUintN(64, this.engine.reg_read_i64(this.uc[`X86_REG_${name}`]))); }
  setRegister(name, value) { this.engine.reg_write_i64(this.uc[`X86_REG_${name}`], BigInt(value)); }
+ floatingRegister(index = 0) {
+  if (!Number.isInteger(index) || index < 0 || index > 7) throw new NativeExecutionError('Invalid floating register');
+  const bytes = this.engine.reg_read(this.uc[`X86_REG_XMM${index}`], 16);
+  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getFloat64(0, true);
+ }
+ setFloatingRegister(index, value) {
+  if (!Number.isInteger(index) || index < 0 || index > 7) throw new NativeExecutionError('Invalid floating register');
+  const bytes = this.engine.reg_read(this.uc[`X86_REG_XMM${index}`], 16);
+  new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).setFloat64(0, value, true);
+  this.engine.reg_write(this.uc[`X86_REG_XMM${index}`], bytes);
+ }
  argument64(index) {
   if (!Number.isInteger(index) || index < 0 || index >= 64) throw new NativeExecutionError('Guest argument limit exceeded');
   const name = ['RDI', 'RSI', 'RDX', 'RCX', 'R8', 'R9'][index];
@@ -118,11 +137,23 @@ export class NativeVst3Guest {
   const args = ['RDI', 'RSI', 'RDX', 'RCX', 'R8', 'R9'].map(name => this.register(name));
   const [destination, source, size] = args;
   this.calls.set(entry.name, (this.calls.get(entry.name) || 0) + 1);
+  if (unaryMath.has(entry.name)) return { rax: 0, xmm0: unaryMath.get(entry.name)(this.floatingRegister()) };
+  if (entry.name.startsWith('_pthread_mutex')) {
+   try {
+    const result = this.mutexes.invoke(entry.name, destination, source);
+    if (result !== undefined) return result;
+   } catch (error) { throw new NativeExecutionError(error.message, { ...entry, kind: 'unsupported-threading' }); }
+  }
   const fill = (address, length, byte = 0) => {
    if (!Number.isSafeInteger(length) || length < 0 || length > HEAP_SIZE) throw new NativeExecutionError('Guest memory operation exceeds limit');
    this.write(address, new Uint8Array(length).fill(byte));
   };
   switch (entry.name) {
+   case '_exp2': return { rax: 0, xmm0: 2 ** this.floatingRegister() };
+   case '_pow': {
+    const base = this.floatingRegister(), exponent = this.floatingRegister(1);
+    return { rax: 0, xmm0: base === 1 || base === -1 && Math.abs(exponent) === Infinity ? 1 : base ** exponent };
+   }
    case '_malloc': case '__Znwm': case '__Znam': return this.allocate(destination);
    case '_calloc': { const address = this.allocate(destination * source); fill(address, destination * source); return address; }
    case '_free': case '__ZdlPv': case '__ZdaPv': this.allocations.delete(destination); return 0;
@@ -167,6 +198,18 @@ export class NativeVst3Guest {
     const left = this.stringBytes(destination), right = this.stringBytes(source);
     for (let index = 0; index <= Math.max(left.length, right.length); index++) { const difference = (left[index] || 0) - (right[index] || 0); if (difference) return difference; }
     return 0;
+   }
+   case '_sscanf': {
+    let index = 2;
+    try {
+     return scanGuestIntegers(this.stringBytes(destination, 1 << 20), this.stringBytes(source), (value, bits) => {
+      const pointer = Number(this.argument64(index++));
+      if (!Number.isSafeInteger(pointer)) throw new NativeExecutionError('Invalid scanf destination pointer');
+      const bytes = new Uint8Array(bits / 8);
+      for (let offset = 0; offset < bytes.length; offset++) bytes[offset] = Number(value >> BigInt(offset * 8) & 255n);
+      this.write(pointer, bytes);
+     });
+    } catch (error) { throw new NativeExecutionError(error.message, { ...entry, kind: 'unsupported-scanf' }); }
    }
    case '___cxa_guard_acquire': {
     const guard = this.read(destination, 2);
@@ -225,6 +268,7 @@ export class NativeVst3Guest {
    this.setRegister('RSP', this.register('RSP') + 8);
    this.setRegister('RAX', BigInt.asUintN(64, BigInt(typeof result === 'object' ? result.rax : result)));
    if (typeof result === 'object' && result.rdx !== undefined) this.setRegister('RDX', result.rdx);
+   if (typeof result === 'object' && result.xmm0 !== undefined) this.setFloatingRegister(0, result.xmm0);
    this.setRegister('RIP', returnAddress);
   }
   throw new NativeExecutionError('Execution limit reached; the guest did not return', { kind: 'execution-limit', address: hex(this.register('RIP')) });

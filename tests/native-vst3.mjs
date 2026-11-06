@@ -39,6 +39,31 @@ use(fixture, guest => {
 use(nativeFixture({ initializer: true }), guest => { guest.initialize(); assert.equal(guest.initialized, true); });
 use(nativeFixture({ bundleEntry: true }), guest => assert.throws(() => guest.initialize(), /CFBundle/));
 use(nativeFixture({ importName: '_malloc' }), guest => { assert.ok(guest.call(guest.export('_probe')) >= 0x30000000); assert.equal(guest.report().calls._malloc, 1); });
+use(nativeFixture({ importName: '_exp2' }), guest => {
+ guest.engine.reg_write(uc.X86_REG_XMM0, new Uint8Array(16).fill(0x77));
+ for (const [input, expected] of [[0, 1], [3, 8], [-2, 0.25], [0.5, Math.SQRT2], [-Infinity, 0]]) {
+  guest.setFloatingRegister(0, input); guest.call(guest.export('_probe'));
+  assert.equal(guest.floatingRegister(), expected);
+ }
+ assert.throws(() => guest.floatingRegister(8), /Invalid floating register/);
+ assert.deepEqual([...guest.engine.reg_read(uc.X86_REG_XMM0, 16).slice(8)], Array(8).fill(0x77));
+});
+use(nativeFixture({ importName: '_pow' }), guest => {
+ for (const [base, exponent, expected] of [[2, 3, 8], [4, -0.5, 0.5], [-2, 3, -8], [1, NaN, 1], [-1, Infinity, 1], [-2, 0.5, NaN]]) {
+  guest.setFloatingRegister(0, base); guest.setFloatingRegister(1, exponent); guest.call(guest.export('_probe'));
+  assert.equal(guest.floatingRegister(), expected);
+ }
+});
+for (const [name, input, expected] of [
+ ['_tan', 0, 0], ['_sin', Math.PI / 2, 1], ['_cos', 0, 1], ['_asin', 1, Math.PI / 2], ['_acos', 1, 0], ['_atan', 0, 0],
+ ['_exp', 0, 1], ['_expm1', 0, 0], ['_log', 1, 0], ['_log2', 8, 3], ['_log10', 100, 2], ['_log1p', 0, 0],
+ ['_sqrt', 16, 4], ['_cbrt', 8, 2], ['_floor', -1.5, -2], ['_ceil', -1.5, -1], ['_trunc', -1.5, -1], ['_fabs', -0, 0],
+]) {
+ use(nativeFixture({ importName: name }), guest => {
+  guest.setFloatingRegister(0, input); guest.call(guest.export('_probe'));
+  assert.equal(guest.floatingRegister(), expected);
+ });
+}
 use(nativeFixture({ importName: '_not_implemented' }), guest => assert.throws(() => guest.call(guest.export('_probe')), error => error.details.kind === 'unsupported-import' && error.details.name === '_not_implemented'));
 use(nativeFixture({ importName: '_unknown_data', dataImport: true }), guest => assert.throws(() => guest.call(guest.export('_probe')), /Unsupported imported data/));
 use(nativeFixture({ importName: '___stack_chk_guard', dataImport: true }), guest => { guest.call(guest.export('_probe')); assert.equal(guest.report().calls.___stack_chk_guard, undefined); });
@@ -63,6 +88,25 @@ use(fixture, guest => {
  assert.equal(guest.invokeImport({ name: '_snprintf' }), 8); assert.equal(guest.string(destination), '0000');
  guest.setRegister('RDI', 0); guest.setRegister('RSI', 0);
  assert.equal(guest.invokeImport({ name: '_snprintf' }), 8);
+});
+use(fixture, guest => {
+ const input = guest.allocate(128), format = guest.allocate(128), output = guest.allocate(64), stack = 0x40080000;
+ guest.write(input, new TextEncoder().encode('FEDCBA9876543210 1 2 3 4\0'));
+ guest.write(format, new TextEncoder().encode('%llX %hhX %hX %X %X\0'));
+ guest.write(output, new Uint8Array(64).fill(0x77));
+ guest.setRegister('RDI', input); guest.setRegister('RSI', format); guest.setRegister('RDX', output);
+ guest.setRegister('RCX', output + 8); guest.setRegister('R8', output + 16); guest.setRegister('R9', output + 24);
+ guest.setRegister('RSP', stack); guest.writePointer(stack + 8, output + 32);
+ assert.equal(guest.invokeImport({ name: '_sscanf' }), 5);
+ const bytes = guest.read(output, 64), view = new DataView(bytes.buffer);
+ assert.equal(view.getBigUint64(0, true), 0xfedcba9876543210n);
+ assert.equal(bytes[8], 1); assert.equal(view.getUint16(16, true), 2); assert.equal(view.getUint32(24, true), 3); assert.equal(view.getUint32(32, true), 4);
+ for (const offset of [9, 18, 28, 36]) assert.equal(bytes[offset], 0x77, 'scanf writes only the declared integer size');
+ guest.write(input, new TextEncoder().encode('?\0'));
+ assert.equal(guest.invokeImport({ name: '_sscanf' }), 0);
+ assert.deepEqual(guest.read(output, 64), bytes, 'matching failure does not alter destinations');
+ guest.write(format, new TextEncoder().encode('%f\0'));
+ assert.throws(() => guest.invokeImport({ name: '_sscanf' }), error => error.details.kind === 'unsupported-scanf');
 });
 use(fixture, guest => {
  guest.setRegister('RDI', 0);

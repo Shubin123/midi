@@ -65,10 +65,16 @@ In **Chrome**, with the package selected directly from disk:
    default-allocator constant and UUID bridge allow actual `CFUUIDCreate`,
    `CFUUIDGetUUIDBytes`, `CFRelease`, and `__cxa_atexit` calls.
 4. The patched emulator passes the previous Wasm memory-out-of-bounds crash.
-   Actual initialization executes eleven `sprintf`, one `strcpy`, and ten
-   `strcat` calls, then stops explicitly at the unimplemented `_sscanf` import.
-   Zero initializers have completed; the worker is discarded. This remains
-   a startup failure, not a playable conversion.
+   Integer scanning now parses the actual formatted class IDs. Initialization
+   executes 22 `sprintf`, two `strcpy`, 20 `strcat`, and two `sscanf` calls.
+5. Four mutexes are initialized; 109 lock/unlock pairs execute using tracked
+   single-threaded ownership/depth, not unconditional-success stubs. Floating
+   imports execute 378 `exp2`, 8,237 `pow`, and 15 `tan` calls through the SSE ABI.
+6. **73 of 768 initializers complete.** Startup then stops explicitly at
+   `_getrlimit`. The observed request is resource 8, Darwin `RLIMIT_NOFILE`.
+   A guest file-descriptor/resource environment is not implemented; the runtime
+   does not fabricate the host machine's limits. This remains a startup failure,
+   not a playable conversion.
 
 The old published engine faulted at last CPU entry `0x100412c3`. Source
 profiling and ASAN isolated a TCI adapter temporary-lifetime leak: helper-call
@@ -103,6 +109,21 @@ No licensing checks are patched or suppressed.
   pointer conversions with register and stack arguments. Unsupported floating,
   wide-character, positional and `%n` conversions fail explicitly. `snprintf`
   returns the untruncated byte count and honors zero capacity.
+- `sscanf` supports bounded ASCII integer conversions, field widths, assignment
+  suppression, length modifiers and literal/whitespace matching. It writes the
+  declared integer size through register/stack pointer arguments and reports
+  assignment counts or EOF. Unsupported conversions and out-of-range integers
+  fail explicitly; this is not a complete locale-aware scanning library.
+- Mutex attributes and normal/error-checking/recursive mutexes have guest-local
+  state. Static Darwin signatures are recognized, recursive depth is checked,
+  locked destruction/trylock return busy, and invalid objects return errors.
+  Normal self-deadlock fails explicitly instead of claiming a lock was acquired.
+  This only models one guest thread; it provides neither thread creation nor a
+  cross-thread scheduler. Priority-ceiling protocols remain unsupported.
+- Scalar double math imports use full 16-byte XMM register reads/writes, with
+  arguments in XMM0/XMM1 and results in XMM0. They provide numerical values, not
+  a complete macOS libm floating-exception/errno environment. Single-precision
+  and vector math entrypoints remain unsupported.
 - CPU instruction allowances and per-call elapsed-time checks are backed by
   a separate page-side worker watchdog (30 seconds by default). The watchdog
   can terminate a wedged Wasm emulator; it does not rely on guest cooperation.
@@ -113,6 +134,8 @@ No licensing checks are patched or suppressed.
 
 ```sh
 node tests/native-vst3.mjs
+node tests/native-vst3-scanf.mjs
+node tests/native-vst3-mutex.mjs
 node tests/native-vst3-browser.mjs
 ARCADE_PKG='/absolute/path/to/Arcade_OSX_Install_2.2.0.R18263.pkg' node tests/native-vst3-browser.mjs
 npm test
@@ -123,5 +146,9 @@ ZIP, xar, and cpio fixtures, not copies of commercial plugin code. They
 cover native virtual calls, dyld backward/wrapped offsets, BSS zeroing,
 SSE float processing, supported and unsupported imports, faults, limits,
 package truncation, worker cancellation, watchdog expiry, and recovery with
-a fresh worker. The optional Arcade test separately verifies factory-only
+a fresh worker. Scanning tests verify 64-bit and narrow stores, canary bytes,
+stack arguments, mismatch/EOF returns, and explicit unsupported formats. Mutex
+tests verify lifecycle errors, static initialization and recursive depth. Browser
+fixtures execute scanning and static-mutex imports from native initializers.
+The optional Arcade test separately verifies factory-only
 execution and the **known startup failure**, not audio playback.

@@ -1569,9 +1569,9 @@ The synth's existing WebAssembly plugin/audio path is unchanged.
 **Observed with Arcade 2.2.0's supplied installer:** factory-only mode executes
 `GetPluginFactory` and VST3 virtual methods and returns Output's two Arcade
 classes. It deliberately skips initialization, and both class IDs are zero.
-Normal startup passes the previous emulator crash and executes UUID and string
-formatting calls, then stops at unsupported `_sscanf` before the first of 768
-initializers completes. **Arcade does not play audio.**
+Normal startup passes the previous emulator crash, parses the class IDs, and
+executes mutex and math imports. It completes 73 of 768 initializers, then stops
+at unsupported `_getrlimit`. **Arcade does not play audio.**
 The report always says `playable: false`; passing the harness tests does not
 certify native plugin playback.
 
