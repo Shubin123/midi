@@ -512,6 +512,16 @@ the current one plays, so speech starts quickly:
 | **Supertonic 3** (Supertone) | 10: F1–F5, M1–M5 | about 400 MB | 15× real time on WebGPU; 2× on the CPU | sample code MIT; model OpenRAIL-M (use restrictions) |
 | **Piper** (Rhasspy) | 10 English: 6 female, 4 male | about 73 MB | about 7× real time on the CPU | MIT; espeak-ng GPL-3.0; each voice its data's licence (Cori and Kristin public domain; four marked non-commercial) |
 
+**Speed** (next to the voice, 0.5–2×, kept) makes the teacher talk slower or
+faster without changing the voice's pitch: the browser's voice by its own rate,
+a neural voice by time-stretching each sentence as it is made (WSOLA in
+`js/voice.js`: overlapping 25 ms frames, each taken from where it best continues
+the last, so nothing clicks or warbles). Saying or typing "talk slower",
+"speak a little faster", "voice speed 1.5" or "talk at normal speed" sets it
+too. `node tests/voice.mjs` checks that a voice-like sound stretched from 0.5×
+to 2× keeps its length, pitch (within 1%), loudness and smoothness, and that
+both kinds of voice read at the speed set.
+
 The default is **Pocket TTS · Anna**. Every engine's female voices were scored
 on the same three coaching lines with DNSMOS (Microsoft's speech-quality model):
 Anna tied for the top with Piper's Amy (3.44 overall), ahead of Supertonic's

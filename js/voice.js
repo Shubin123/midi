@@ -2,7 +2,9 @@
 // the browser's speech synthesis (the Web Speech API) or a neural voice that runs in the page: Pocket TTS,
 // Supertonic or Piper (js/tts-*.js, each downloaded once when first chosen). Listening pauses while the
 // teacher speaks, so it doesn't hear itself. Recognition runs on the device where the browser offers that;
-// otherwise the browser's own speech service does it (online, in Chrome), and the panel says which.
+// otherwise the browser's own speech service does it (online, in Chrome), and the panel says which. Any voice
+// can be sped up or slowed down without changing its pitch: the browser's by its own rate, a neural one by
+// time-stretching what it says (stretch()).
 
 const Recognition = () => globalThis.SpeechRecognition || globalThis.webkitSpeechRecognition;
 export const canListen = () => !!Recognition();
@@ -16,6 +18,57 @@ const modules = {};
 export const loadEngine = id => (modules[id] ||= import(ENGINES[id]).catch(err => { delete modules[id]; throw err; }));
 // A choice is { engine, voice }; engine 'browser' is the Web Speech voice.
 export const BROWSER = { engine: 'browser', voice: '' };
+
+// How fast the teacher talks: 1 is the voice's own speed.
+export const SPEED = { min: 0.5, max: 2, step: 0.05, normal: 1 };
+const clampSpeed = x => Math.round(Math.min(SPEED.max, Math.max(SPEED.min, Number(x) || 1)) * 100) / 100;
+
+// Plays speech faster or slower without changing its pitch (WSOLA): the sound is cut into overlapping 25 ms
+// frames, read `speed` times as far apart as they are laid down, and each frame is taken from where it best
+// continues the last one (within a few milliseconds of where it should be), so the waveform joins without
+// clicks or a warble. Returns new samples, about length / speed long.
+export function stretch(samples, sampleRate, speed) {
+ if (Math.abs(speed - 1) < 1e-3 || samples.length < 2) return samples;
+ const n = Math.max(64, Math.round(sampleRate * 0.025) & ~1), hop = n / 2, seek = Math.round(n / 4);
+ const win = Float32Array.from({ length: n }, (_, i) => 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / n)); // overlapping halves sum to 1
+ const outLen = Math.round(samples.length / speed), out = new Float32Array(outLen + n), last = samples.length - n;
+ const skip = Math.max(1, Math.round(sampleRate / 12000)); // the match is judged on every few samples: speech is band-limited enough
+ if (last < 0) return samples;
+ let prev = 0;
+ for (let k = 0; k * hop < outLen; k++) {
+  let at = Math.min(last, Math.round(k * hop * speed));
+  if (k > 0) {
+   // Where the last frame would naturally go on, and the place near `at` that sounds most like it.
+   const want = Math.min(last, prev + hop);
+   let best = -Infinity, bestAt = at;
+   for (let p = Math.max(0, at - seek); p <= Math.min(last, at + seek); p++) {
+    let c = 0;
+    for (let i = 0; i < hop; i += skip) c += samples[p + i] * samples[want + i];
+    if (c > best) { best = c; bestAt = p; }
+   }
+   at = bestAt;
+  }
+  for (let i = 0; i < n; i++) out[k * hop + i] += samples[at + i] * win[i];
+  prev = at;
+ }
+ // The first half-frame had no frame before it to overlap: it is taken as it was.
+ for (let i = 0; i < hop; i++) out[i] = samples[i];
+ return out.subarray(0, outLen);
+}
+
+// "Talk faster", "speak a little slower", "voice speed 1.5", "talk at normal speed": the new speed, or null when
+// the words aren't about how fast the teacher talks.
+export function speedFrom(text, current = 1) {
+ const s = String(text).toLowerCase();
+ if (!/\b(talk|talking|speak|speaking|speech|voice|read|reading|say|saying)\b/.test(s)) return null;
+ const n = s.match(/\b(\d(?:\.\d+)?)\s*(x|times)?\b/);
+ if (/\bnormal\b|\breset\b|\busual\b/.test(s) && /\b(speed|pace|rate|fast|slow)\b/.test(s)) return 1;
+ if (n && /\b(speed|pace|rate|at|x|times)\b/.test(s)) return clampSpeed(n[1]);
+ const by = /\b(a (little|bit|touch|tad)|slightly)\b/.test(s) ? 0.1 : /\b(much|a lot|way)\b/.test(s) ? 0.5 : 0.25;
+ if (/\b(faster|quicker|speed up|hurry)\b/.test(s)) return clampSpeed(current + by);
+ if (/\b(slower|slow down)\b/.test(s)) return clampSpeed(current - by);
+ return null;
+}
 
 // Reading one sentence at a time lets the first be heard while the rest are made; a short pause between
 // sentences sounds natural (the engines leave none at the edges).
@@ -57,8 +110,10 @@ export class Voice {
  constructor({ onHeard, onInterim, onState, lang = (globalThis.navigator?.language || 'en-US') } = {}) {
   this.onHeard = onHeard; this.onInterim = onInterim; this.onState = onState; this.lang = lang;
   this.active = false; this.speaking = false; this.rec = null; this.local = false;
-  this.choice = BROWSER; this.onProgress = null; this._token = null; this._sources = [];
+  this.choice = BROWSER; this.onProgress = null; this._token = null; this._sources = []; this.speed = SPEED.normal;
  }
+ // How fast replies are read (0.5 to 2); takes effect from the next one.
+ setSpeed(x) { this.speed = clampSpeed(x); }
 
  // Which voice reads replies. A neural voice that fails to load falls back to the browser's, once.
  setVoice(choice) { this.choice = choice?.engine ? choice : BROWSER; }
@@ -119,7 +174,7 @@ export class Voice {
   if (!browserSpeaks()) return Promise.resolve();
   return new Promise(resolve => {
    const u = new SpeechSynthesisUtterance(words);
-   u.lang = this.lang;
+   u.lang = this.lang; u.rate = this.speed;
    const voice = pickVoice(this.lang);
    if (voice) u.voice = voice;
    const done = () => {
@@ -149,9 +204,10 @@ export class Voice {
   const parts = sentences(words);
   let at = ctx.currentTime + 0.05, next = parts.length ? mod.synthesize(parts[0], voice) : null;
   for (let i = 0; i < parts.length; i++) {
-   const { samples, sampleRate } = await next;
+   const made = await next;
    if (this._token !== token) return;
    next = i + 1 < parts.length ? mod.synthesize(parts[i + 1], voice) : null;
+   const sampleRate = made.sampleRate, samples = stretch(made.samples, sampleRate, this.speed);
    const buf = ctx.createBuffer(1, samples.length, sampleRate);
    buf.copyToChannel(samples, 0);
    const src = ctx.createBufferSource();

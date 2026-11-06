@@ -30,7 +30,7 @@ import { modelCacheInfo, clearModelCache, formatBytes } from './model-cache.js';
 import { answer as systemOneAnswer, nextTip, isSoundControl } from './system-one.js';
 import { meetRequest } from './requests.js';
 import { readCommand } from './commands.js';
-import { Voice, canListen, canSpeak, ENGINES as VOICE_ENGINES, loadEngine, BROWSER } from './voice.js';
+import { Voice, canListen, canSpeak, ENGINES as VOICE_ENGINES, loadEngine, BROWSER, SPEED as VOICE_SPEED, speedFrom } from './voice.js';
 import { PROVIDERS, GROUPS, SYSTEM_ONE, NO_SYSTEM_TWO, providerById, getProviderId, setProviderId, getKey, setKey, clearKey, getModelFor, setModelFor, getBase, setBase, engineFor, listModels, pickModel, fetchOpenRouterModels } from './providers.js';
 import { signIn, completeSignIn } from './ai-auth.js';
 import { read, save } from './storage.js';
@@ -162,6 +162,8 @@ const STYLE = `
 
 #teacher-panel .tp-provider-view{overflow-y:auto;padding:12px 14px 16px}
 #teacher-panel .tp-intro{margin:0 0 4px;font-size:12px;color:var(--text-muted-color)}
+#teacher-panel .tp-speed span{display:flex;justify-content:space-between}
+#teacher-panel .tp-speed input{width:100%;margin:12px 0 10px;accent-color:var(--accent-color)}
 #teacher-panel .tp-layer-title{margin:16px 0 8px;font-size:12px;font-weight:700;color:var(--accent-color)}
 #teacher-panel .tp-group-title{margin:14px 0 6px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted-color)}
 #teacher-panel .tp-card{border:1px solid var(--border-color);border-radius:8px;margin-bottom:6px;background:color-mix(in srgb,var(--bg-color) 35%,transparent)}
@@ -220,6 +222,7 @@ export class TeacherBridge {
   this.courseDone = new Set(read('teacher-course-v1', []));
   this.convo = new Conversations();
   this.voiceChoice = read('teacher-voice-v1', DEFAULT_VOICE); // who reads replies aloud in talk mode
+  this.voiceSpeed = read('teacher-voice-speed-v1', VOICE_SPEED.normal); // and how fast
   this.enabled = read('teacher-enabled-v1', true); // switched in Settings (js/settings.js)
   window.addEventListener('pagehide', () => this.convo.save(true));
  }
@@ -923,6 +926,7 @@ export class TeacherBridge {
  // chords and mood from the words and plays an exact example at once; in Slow mode System 2 then explains it.
  // Anything else that composes goes to System 2; questions about the app go to Laya.
  async _route(q) {
+  if (this._voiceSpeedRequest(q)) return;
   const req = await meetRequest(q, { last: this._lastExample, pick: this.laya ? (...a) => this.laya.pick(...a) : null }).catch(() => null);
   if (req) return this._playRequest(q, req);
   if (this._command(q)) return;
@@ -1301,7 +1305,7 @@ export class TeacherBridge {
    onInterim: text => { this.panel.querySelector('.question-input').value = text; },
    onState: (state, note) => this._talkState(state, note),
   });
-  this.voice.setVoice(this.voiceChoice);
+  this.voice.setVoice(this.voiceChoice); this.voice.setSpeed(this.voiceSpeed);
   this.voice.onProgress = p => { const line = this.panel.querySelector('.tp-talk-note'); line.hidden = false; line.textContent = `Getting the voice ready: ${p.text || ''}${typeof p.progress === 'number' ? ` ${Math.round(p.progress * 100)}%` : ''}`; };
   return this.voice;
  }
@@ -1311,7 +1315,14 @@ export class TeacherBridge {
   const box = this.panel.querySelector('.tp-voices');
   const select = el('select'), about = el('p', { className: 'tp-note' }), status = el('p', { className: 'tp-card-status', role: 'status' });
   const test = el('button', { type: 'button', textContent: 'Test voice' });
-  box.replaceChildren(el('h3', { className: 'tp-group-title', textContent: 'Teacher\'s voice' }), el('label', { className: 'tp-field' }, 'Reads replies aloud in talk mode', select), about, el('div', { className: 'tp-row' }, test), status);
+  const speed = el('input', { type: 'range', className: 'tp-voice-speed', min: VOICE_SPEED.min, max: VOICE_SPEED.max, step: VOICE_SPEED.step, value: this.voiceSpeed });
+  const shows = el('output', { textContent: `${this.voiceSpeed.toFixed(2)}×` });
+  speed.setAttribute('aria-label', 'How fast the teacher talks');
+  speed.oninput = () => { this._setVoiceSpeed(Number(speed.value)); shows.textContent = `${this.voiceSpeed.toFixed(2)}×`; };
+  speed.ondblclick = () => { speed.value = VOICE_SPEED.normal; speed.oninput(); };
+  box.replaceChildren(el('h3', { className: 'tp-group-title', textContent: 'Teacher\'s voice' }), el('label', { className: 'tp-field' }, 'Reads replies aloud in talk mode', select), about,
+   el('label', { className: 'tp-field tp-speed' }, el('span', {}, 'Speed ', shows), speed), el('p', { className: 'tp-note', textContent: 'Slower or faster without changing the voice\'s pitch; double-click for its own speed. You can also say "talk slower" or "speak faster".' }),
+   el('div', { className: 'tp-row' }, test), status);
   select.append(el('option', { value: 'browser|', textContent: 'Browser voice (built in, no download)' }));
   const engines = {};
   for (const id of Object.keys(VOICE_ENGINES)) {
@@ -1334,6 +1345,23 @@ export class TeacherBridge {
    catch (err) { status.className = 'tp-card-status bad'; status.textContent = err.message; }
    test.disabled = false; this._makeVoice();
   };
+ }
+
+ // How fast the teacher talks (0.5–2×, kept): from the Speed slider, or asked for in words.
+ _setVoiceSpeed(x) {
+  this.voiceSpeed = Math.min(VOICE_SPEED.max, Math.max(VOICE_SPEED.min, x));
+  save('teacher-voice-speed-v1', this.voiceSpeed); this.voice?.setSpeed(this.voiceSpeed);
+  const slider = this.panel.querySelector('.tp-voice-speed');
+  if (slider && Number(slider.value) !== this.voiceSpeed) { slider.value = this.voiceSpeed; slider.oninput(); }
+ }
+ _voiceSpeedRequest(q) {
+  const x = speedFrom(q, this.voiceSpeed);
+  if (x === null) return false;
+  this._msg('user', q);
+  this._setVoiceSpeed(x);
+  this._msg('info', `I'll talk at ${this.voiceSpeed.toFixed(2).replace(/\.?0+$/, '')}× ${this.voiceSpeed === 1 ? '(my own speed)' : this.voiceSpeed > 1 ? 'faster' : 'slower'} now. The Speed slider in the Provider tab changes it too.`);
+  this._say(this.voiceSpeed === 1 ? 'Back to my own speed.' : `Like this, at ${this.voiceSpeed.toFixed(2).replace(/\.?0+$/, '')} times.`);
+  return true;
  }
 
  _talkState(state, note) {

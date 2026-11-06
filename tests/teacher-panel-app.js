@@ -152,6 +152,28 @@ export async function runTeacherPanel() {
   expect(panel().querySelector('.tp-providers .tp-card[data-id="none"] .tp-badge.on'), 'None is not marked as the choice in use');
   bridge.laya = null; bridge.mode = 'fast'; bridge._renderProviders(); bridge._renderState();
  });
+ /* ---- How fast the teacher talks ---- */
+ await check('the voice\'s Speed slider is kept and reaches the voice; "talk slower" moves it; the browser voice reads at it', async expect => {
+  panel().querySelector('#tp-tab-provider').click();
+  await wait(300); // the voice list is made as the tab opens
+  const slider = panel().querySelector('.tp-voice-speed');
+  expect(slider && slider.value === '1', `the slider is at ${slider?.value}`);
+  slider.value = '1.5'; slider.dispatchEvent(new Event('input'));
+  expect(JSON.parse(localStorage.getItem('teacher-voice-speed-v1')) === 1.5, 'the speed was not kept');
+  expect(/1\.50×/.test(slider.closest('label').textContent), 'the slider does not say 1.50×');
+  panel().querySelector('#tp-tab-lesson').click();
+  await ask('talk a little slower');
+  expect(bridge.voiceSpeed === 1.4 && slider.value === '1.4', `asked to talk a little slower, the speed is ${bridge.voiceSpeed} (slider ${slider.value})`);
+  expect(/1\.4× slower|1\.4× faster/.test(messages().at(-1).textContent), `the reply was "${messages().at(-1).textContent}"`);
+  const rates = [], speak = speechSynthesis.speak.bind(speechSynthesis);
+  speechSynthesis.speak = u => { rates.push(u.rate); setTimeout(() => u.onend?.(), 0); };
+  const v = bridge._makeVoice(); v.setVoice({ engine: 'browser', voice: '' });
+  await v.speak('Testing the speed.');
+  speechSynthesis.speak = speak;
+  expect(Math.abs(rates[0] - 1.4) < 1e-6, `the browser voice read at ${rates[0]}`); // the rate is a float32
+  await ask('talk at normal speed');
+  expect(bridge.voiceSpeed === 1, `back to normal is ${bridge.voiceSpeed}`);
+ });
  await check('a name with a slash in it is one widget: Import / Export › Audio export format', async expect => {
   const hit = ws.find('Import / Export › Audio export format');
   expect(hit?.widget.title === 'Import / Export' && hit?.control?.label === 'Audio export format', `found ${hit && ws.nameOf(hit)}`);
