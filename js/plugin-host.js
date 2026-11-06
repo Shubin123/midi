@@ -7,7 +7,7 @@ import { readArchive, writeZip } from './archive.js';
 import { testSignal, encodeWav, analyze, verdict, layout } from './capture.js';
 import { createCapturedPlugin } from './capture-engine.js';
 import { Vst3Module } from './vst3-runtime.js';
-import { identifyNative, standInFor } from './native-id.js';
+import { identifyNative, standInFor, editorFrameworkOf } from './native-id.js';
 import { fxSlot, instrumentSlot, updateVoices } from './fx-chain.js';
 import { read, save } from './storage.js';
 import { el, renderParams, card } from './plugin-ui.js';
@@ -99,9 +99,13 @@ async function readResources(rec) {
  for (const req of await cache.keys()) if (req.url.startsWith(prefix)) out.set(decodeURIComponent(req.url.slice(prefix.length)), new Uint8Array(await (await cache.match(req)).arrayBuffer()));
  return out;
 }
+// Undeclared, it is read from the binary: our VSTGUI build exports the view functions; any other framework's
+// strings name it (js/native-id.js), so the window can say which one it can't show yet.
 async function editorFramework(rec, module) {
  try { const r = await fetch(new URL(`${rec.id}/${resourcesDir(rec)}editor.json`, root)); if (r.ok) return (await r.json()).framework || 'none'; } catch { /* none declared */ }
- return WebAssembly.Module.exports(module).some(e => e.name === 'vst3web_view_open') ? 'vstgui' : 'none';
+ if (WebAssembly.Module.exports(module).some(e => e.name === 'vst3web_view_open')) return 'vstgui';
+ const found = editorFrameworkOf(new Uint8Array(await (await fetch(new URL(`${rec.id}/${rec.main}`, root))).arrayBuffer()));
+ return found && found !== 'vstgui' ? found : found === 'vstgui' ? 'vstgui-native' : 'none';
 }
 
 async function instantiateVst3(ctx, rec) {

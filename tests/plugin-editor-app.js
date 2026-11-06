@@ -98,7 +98,7 @@ export async function runPluginEditor() {
   await check(`when ${what}: the generic controls show with the notice, Gain still reaches the processor, and the sound is unchanged`, async expect => {
    const w = await load(framework);
    setGeneric(w, 1);
-   await wait(150);
+   await wait(400); // its gain ramps to the new value
    const before = await loudness();
    await wait(framework === 'test-timeout' ? 2300 : framework.endsWith('later') || framework.endsWith('crash') ? 700 : 150);
    const notice = w.querySelector('.editor-notice');
@@ -271,6 +271,27 @@ async function realEditor(check) {
   await wait(250);
   expect((await loudness()) < 0.005, 'the generic Gain did not reach the processor');
   setGenericGain(w, 1);
+ });
+ await check('a WebAssembly VST3 built with JUCE, dropped with no editor.json, falls back naming JUCE', async expect => {
+  const { readArchive, writeZip } = await import('../js/archive.js');
+  (await import('../js/plugin-editor.js')).overrides.delete('AGain Sample Accurate'); // as its binary says, not a stand-in
+  const old = [...document.querySelectorAll('.plugin-window')].find(x => x.getAttribute('aria-label') === 'AGain Sample Accurate');
+  if (old) { [...old.querySelectorAll('button')].find(b => b.textContent === 'Remove')?.click(); for (let i = 0; i < 40 && old.isConnected; i++) await wait(25); }
+  // AGain Sample Accurate's module with JUCE's version string added (as a custom section), as a JUCE build carries it.
+  const files = await readArchive(await (await fetch('plugins/vst3/AGainSampleAccurate.zip')).blob(), 'x.zip');
+  const wasm = files.get([...files.keys()].find(p => p.endsWith('.wasm')));
+  const name = new TextEncoder().encode('juce'), body = new TextEncoder().encode('JUCE v7.0.12');
+  const section = new Uint8Array([0, 1 + name.length + body.length, name.length, ...name, ...body]);
+  const juce = new Map([['JuceThing.vst3/Contents/wasm32-web/JuceThing.wasm', new Uint8Array([...wasm, ...section])]]);
+  const drop = new DataTransfer(); drop.items.add(new File([writeZip(juce)], 'JuceThing.zip'));
+  $('#plugin-host-module').dispatchEvent(new DragEvent('drop', { dataTransfer: drop, bubbles: true }));
+  let w;
+  for (let i = 0; i < 80 && !(w = [...document.querySelectorAll('.plugin-window')].find(x => x.getAttribute('aria-label') === 'AGain Sample Accurate'))?.querySelector('.editor-notice:not([hidden])'); i++) await wait(50);
+  const notice = w?.querySelector('.editor-notice');
+  expect(shows(notice) && /JUCE/.test(notice.textContent), `the notice is "${notice?.textContent}"`);
+  expect(shows(w?.querySelector('.plugin-params')), 'no generic controls');
+  [...(w?.querySelectorAll('button') || [])].find(b => b.textContent === 'Remove')?.click();
+  await wait(100);
  });
  await check('AGain Sample Accurate, which has no editor, says so and shows its generic controls', async expect => {
   const host = $('#plugin-host-module'), pick = host.querySelector('select[aria-label="Built-in effect"]');

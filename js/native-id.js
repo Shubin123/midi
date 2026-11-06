@@ -195,6 +195,14 @@ function uncpio(b) {
 // Picks the closest built-in browser effect for an identified plugin.
 const STAND_INS = [['reverb', /reverb|room|hall|plate|space|ambien/i], ['delay', /delay|echo/i], ['compressor', /dynamics|compress|limit|gate|expand|level|squash|glue|punch/i],
  ['saturator', /distort|saturat|drive|tape|amp|fuzz|crush|warm/i], ['chorus', /modulation|chorus|flang|phas|ensemble|vibrato|tremolo/i], ['air', /eq|filter|exciter|enhanc|air|master|bright|presence/i]];
+// The editor framework compiled into a binary (a WebAssembly VST3 that doesn't say in its editor.json), as the
+// adapter id js/plugin-editor.js looks for: 'juce', 'iplug2', 'dpf' or 'vstgui', or null when none shows.
+const EDITOR_FRAMEWORKS = [['juce', /JUCE v\d+\.\d+|juce::/], ['iplug2', /iPlug2|IPlug2|IGraphics/], ['dpf', /DISTRHO/], ['imgui', /Dear ImGui|ImGui::/], ['vstgui', /VSTGUI/]];
+export function editorFrameworkOf(bytes) {
+ const text = latin1.decode(bytes.subarray(0, SCAN_LIMIT * 4));
+ return EDITOR_FRAMEWORKS.find(([, re]) => re.test(text))?.[0] || null;
+}
+
 export function standInFor(item) {
  if (item.installer || item.kind === 'Instrument' || item.kind === 'Generator') return null;
  const text = [...item.categories, item.name].join(' ');

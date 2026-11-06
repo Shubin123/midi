@@ -911,7 +911,19 @@ has no VSTGUI editor; AGain is the SDK sample that does.)
 
 The adapter interface is the same for all of them (`js/plugin-editor.js`), so
 each one is a module that registers itself; a framework without one falls
-back to the generic controls, saying which framework it is.
+back to the generic controls, saying which framework it is. The adapter is
+picked from the bundle's `editor.json`, or, in a WebAssembly bundle that
+doesn't have one, from the framework strings in its binary, as native
+plug-ins are identified (`js/native-id.js`): a JUCE build says *Its JUCE
+editor can't be shown here*. The shared services every adapter gets are a
+canvas at the screen's pixel ratio (Canvas 2D, or WebGL 2 for editors drawn
+with OpenGL), its pointer, wheel, key and focus events, the frame loop, the
+blank-frame check, resize requests, the bundle's `Contents/Resources`, and
+the clipboard for copied text.
+`node tests/editor-frameworks.mjs` checks the adapter each framework gets and
+what its window says; `node tests/plugin-editor.mjs` drops a WebAssembly VST3
+carrying JUCE's strings and no `editor.json` and checks it falls back naming
+JUCE.
 
 ### Native plug-ins: identified, not run
 
@@ -1012,6 +1024,7 @@ later, nothing to install; see *Running it*):
 - `node tests/native-id.mjs`: identification (macOS; uses `clang`, `pkgbuild` and `productbuild`)
 - `node tests/vst3-wasm.mjs`: the WebAssembly VST3 builds, and their VSTGUI editors opened, drawn and dragged
 - `node tests/plugin-editor.mjs`: plug-in windows' editors and generic controls, every way an editor can fail forced, and AGain's real VSTGUI editor used (headless Chrome)
+- `node tests/editor-frameworks.mjs`: the editor adapter each framework gets, from a bundle's editor.json or its binary's strings
 - `node tests/commands.mjs` and `node tests/teacher-panel.mjs`: settings changed by the teacher when asked, tools for System 2, the panel (headless Chrome for the panel)
 - `node tests/timing.mjs` and `node tests/timing-panel.mjs`: beat, tempo and rhythm (headless Chrome for the app)
 - `tests/capture.html` in a browser: capture accuracy

@@ -11,7 +11,7 @@
 // An Editor / Generic switch in every window's title bar flips between them; the choice is kept per plug-in.
 // Edits in either reach the processor and show in the other.
 //
-// An adapter is { id, label, open({ surface, plugin, bridge }) → Promise<editor | null> }. The editor is
+// An adapter is { id, label, surface ('2d' or 'webgl2'), open({ surface, plugin, bridge }) → Promise<editor | null> }. The editor is
 // { width, height, resizable, frame() (draws; true when it drew), resize?(w, h) → bool, pointer?(e), wheel?(e),
 // key?(e), focus?(on), param?(id, value) (a generic control moved: frameworks that don't watch the controller
 // themselves redraw from it), close() }; it calls bridge.edit(id, value) (and bridge.begin/end) when the user moves a
@@ -27,6 +27,8 @@ export const FRAMEWORKS = {
  dpf: { label: 'DPF', status: 'fallback', why: 'DPF editors are not built into WebAssembly bundles yet' },
  juce: { label: 'JUCE', status: 'fallback', why: 'JUCE has no browser backend yet' },
  gl: { label: 'OpenGL / ImGui / NanoVG', status: 'fallback', why: 'GL editors are not mapped to WebGL yet' },
+ imgui: { label: 'Dear ImGui', status: 'fallback', why: 'GL editors are not mapped to WebGL yet' },
+ 'vstgui-native': { label: 'VSTGUI', status: 'fallback', why: 'this build of it has no browser platform (rebuild it with native/build.sh and GUI vstgui)' },
  native: { label: 'Cocoa, Win32 or X11 directly', status: 'fallback', why: 'editors drawn with an operating system\'s own windows can\'t run in a browser' },
 };
 const adapters = new Map();
@@ -48,12 +50,14 @@ export function adapterFor(plugin) {
 /* ---- Shared services for every adapter ---- */
 
 // A canvas the editor draws into, sized in CSS pixels and backed at the screen's pixel ratio; pointer, wheel,
-// key and text events from it; a frame loop; and a check that what was drawn isn't blank.
-export function createSurface() {
+// key and text events from it; a frame loop; and a check that what was drawn isn't blank. `kind` is the
+// adapter's: '2d' (VSTGUI's Canvas 2D drawing) or 'webgl2' (editors drawn with OpenGL: ImGui, NanoVG, DGL).
+export function createSurface(kind = '2d') {
  const canvas = Object.assign(document.createElement('canvas'), { className: 'plugin-editor-canvas', tabIndex: 0 });
  canvas.setAttribute('aria-label', 'Plug-in editor');
+ const gl = kind === 'webgl2' ? canvas.getContext('webgl2', { preserveDrawingBuffer: true, antialias: true }) : null;
  const surface = {
-  canvas, ctx: canvas.getContext('2d'), width: 0, height: 0, scale: Math.max(1, Math.round(globalThis.devicePixelRatio || 1)),
+  canvas, ctx: gl ? null : canvas.getContext('2d'), gl, width: 0, height: 0, scale: Math.max(1, Math.round(globalThis.devicePixelRatio || 1)),
   onResize: null,
   size(w, h) {
    surface.width = w; surface.height = h;
@@ -65,7 +69,9 @@ export function createSurface() {
   // Blank: every pixel the same colour (nothing drawn, or one flat fill).
   blank() {
    if (!canvas.width || !canvas.height) return true;
-   const d = surface.ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+   let d;
+   if (gl) { d = new Uint8Array(canvas.width * canvas.height * 4); gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, d); }
+   else d = surface.ctx.getImageData(0, 0, canvas.width, canvas.height).data;
    for (let i = 4; i < d.length; i += 4 * 7) if (d[i] !== d[0] || d[i + 1] !== d[1] || d[i + 2] !== d[2] || d[i + 3] !== d[3]) return false;
    return true;
   },
@@ -127,7 +133,7 @@ export function mountView({ box, header, generic, plugin, choice = 'editor', onC
  };
 
  async function open() {
-  surface = createSurface();
+  surface = createSurface(adapter.surface);
   host.replaceChildren(surface.canvas);
   surface.onResize = (w, h) => onSize?.(w, h);
   let timer;
