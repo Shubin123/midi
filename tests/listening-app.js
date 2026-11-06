@@ -653,3 +653,112 @@ export async function runChords(phase) {
 
 // Chords rendered through the app's own oscillators (the bank's sawtooths, a lowpass and a short envelope).
 async function renderChordsSynth(chords, rate) { return renderSynth(chords.flatMap(c => c.notes.map(midi => ({ midi, start: c.start, end: c.end }))), rate); }
+
+// What the microphone steers (node tests/listening-map.mjs): live mappings moving a control with loudness,
+// brightness, pitch and a tapped tempo, and back when switched off; a lane recorded from loudness over a bar;
+// the mappings kept; the input gain; and monitoring through the effects, only with headphones, switching itself
+// off on feedback.
+export async function runMap() {
+ const checks = [];
+ const check = async (name, fn) => {
+  const problems = [];
+  try { await fn((ok, why) => { if (!ok) problems.push(why); }); } catch (err) { problems.push(`threw: ${err.message}`); }
+  checks.push({ name, ok: !problems.length, problems });
+ };
+ const { listening } = await import('../js/listening.js');
+ const { mappings } = await import('../js/listen-map.js');
+ const ctx = window.synth.ensureAudio(); await ctx.resume();
+ const rate = ctx.sampleRate;
+ listening.set({ latencyMs: null, headphones: false, playThrough: false, snap: false, mode: 'melody', inputGain: 1 });
+ await listening.listenTo(new GainNode(ctx), 'a test microphone');
+ const cutoff = () => Number($('#filterCutoff').value);
+ const playing = async (samples, during) => {
+  const b = ctx.createBuffer(1, samples.length, rate); b.copyToChannel(samples, 0);
+  const src = new AudioBufferSourceNode(ctx, { buffer: b }); src.connect(listening.nodes.gain); src.start();
+  const r = await during?.(); await new Promise(res => { src.onended = res; }); await wait(100); return r;
+ };
+ const steady = (hz, secs, amp, kind = 'sine') => { const n = Math.round(secs * rate), x = new Float32Array(n); for (let i = 0; i < n; i++) { const p = (hz * i) / rate % 1; x[i] = amp * (kind === 'saw' ? 2 * p - 1 : Math.sin(2 * Math.PI * p)); } return x; };
+ const rows = () => [...document.querySelectorAll('#automation .listen-map-row')];
+
+ await check('a mapping from loudness to the filter cutoff: quiet singing keeps it low, loud opens it; switched off, the cutoff goes back', async expect => {
+  $('#filterCutoff').value = 5000; $('#filterCutoff').dispatchEvent(new Event('input', { bubbles: true }));
+  $('#listen-map-add').click();
+  const row = rows().at(-1);
+  row.querySelector('select[aria-label$="feature"]').value = 'loudness'; row.querySelector('select[aria-label$="feature"]').dispatchEvent(new Event('change'));
+  const lo = row.querySelector('input[aria-label$="from"]'), hi = row.querySelector('input[aria-label$="to"]');
+  lo.value = 300; lo.dispatchEvent(new Event('change')); hi.value = 3000; hi.dispatchEvent(new Event('change'));
+  const quiet = await playing(steady(220, 0.8, 0.01), async () => { await wait(650); return cutoff(); });
+  const loud = await playing(steady(220, 0.8, 0.5), async () => { await wait(650); return cutoff(); });
+  expect(quiet < 700 && loud > 2000, `the cutoff was ${Math.round(quiet)} quiet and ${Math.round(loud)} loud`);
+  row.querySelector('input[type=checkbox]').click();
+  expect(cutoff() === 5000, `switched off, the cutoff is ${cutoff()}`);
+  row.querySelector('button').click(); // ×
+ });
+ await check('brightness: a bright sawtooth opens the filter further than a dull sine, at the same level', async expect => {
+  const m = mappings.add({ feature: 'brightness', target: 'filterCutoff', min: 300, max: 8000 });
+  const dull = await playing(steady(220, 0.8, 0.3), async () => { await wait(650); return cutoff(); });
+  const bright = await playing(steady(220, 0.8, 0.3, 'saw'), async () => { await wait(650); return cutoff(); });
+  expect(bright > dull * 2, `dull ${Math.round(dull)} Hz, bright ${Math.round(bright)} Hz`);
+  mappings.remove(m.id);
+ });
+ await check('pitch to oscillator 1\'s level, and a tapped tempo to the tempo', async expect => {
+  const m = mappings.add({ feature: 'pitch', target: 'levelOsc1', min: 0, max: 1 });
+  const low = await playing(sing([{ midi: 50, start: 50, end: 800 }], { sampleRate: rate }), async () => { await wait(600); return Number($('#levelOsc1').value); });
+  const high = await playing(sing([{ midi: 76, start: 50, end: 800 }], { sampleRate: rate }), async () => { await wait(600); return Number($('#levelOsc1').value); });
+  expect(high > low + 0.4, `level ${low.toFixed(2)} low, ${high.toFixed(2)} high`);
+  mappings.remove(m.id);
+  listening.set({ mode: 'rhythm' });
+  const t = mappings.add({ feature: 'tempo', target: 'tempo', min: 30, max: 300 });
+  window.synth.tempo = 120;
+  await playing(claps(Array.from({ length: 10 }, (_, i) => 100 + i * 600), { sampleRate: rate }));
+  expect(Math.abs(window.synth.tempo - 100) <= 1.5, `tapping at 100, the tempo is ${window.synth.tempo}`);
+  mappings.remove(t.id); listening.set({ mode: 'melody' }); window.synth.tempo = 120;
+ });
+ await check('Record lane: loudness over one bar of the sequencer becomes the master volume lane, rising with a crescendo, and switched on', async expect => {
+  window.synth.tempo = 120;
+  const n = Math.round(2.3 * rate), x = new Float32Array(n); for (let i = 0; i < n; i++) x[i] = (0.003 + 0.5 * (i / n) ** 2) * Math.sin((2 * Math.PI * 220 * i) / rate);
+  $('#listen-lane-feature').value = 'loudness'; $('#listen-lane-target').value = 'masterVolume';
+  const b = ctx.createBuffer(1, n, rate); b.copyToChannel(x, 0);
+  const src = new AudioBufferSourceNode(ctx, { buffer: b }); src.connect(listening.nodes.gain);
+  $('#listen-lane-record').click(); src.start(ctx.currentTime + 0.05);
+  const until2 = async (fn, ms) => { const end = performance.now() + ms; while (!fn() && performance.now() < end) await wait(30); return fn(); };
+  await until2(() => /Recorded/.test($('#automation .listen-map [role=status]').textContent), 5000);
+  const lane = window.workspaceApi.sequencer.lanes.find(l => l.target === 'masterVolume');
+  expect(lane?.enabled, `the lane ${lane ? 'is off' : 'is missing'}: ${$('#automation .listen-map [role=status]').textContent}`);
+  expect(lane && lane.points[15] > lane.points[2] + 0.3 && lane.points.every((v, i) => !i || v >= lane.points[i - 1] - 0.05), `the points: ${lane?.points.map(v => v.toFixed(2)).join(' ')}`);
+ });
+ await check('mappings are kept with their switches', async expect => {
+  const m = mappings.add({ feature: 'density', target: 'filterResonance', min: 1, max: 12 });
+  mappings.set(m.id, { on: false });
+  const kept = JSON.parse(localStorage.getItem('listen-mappings-v1'));
+  expect(kept.some(k => k.feature === 'density' && k.target === 'filterResonance' && k.on === false && k.max === 12), `kept ${JSON.stringify(kept)}`);
+  mappings.remove(m.id);
+ });
+ await check('input gain: half the gain reads 6 dB quieter on the meter', async expect => {
+  const level = async () => playing(steady(330, 0.6, 0.2), async () => { await wait(400); return listening.last.db; });
+  const full = await level();
+  $('#listen-input-gain').value = 0.5; $('#listen-input-gain').dispatchEvent(new Event('input'));
+  const half = await level();
+  expect(Math.abs(full - half - 6.02) < 0.5, `${full.toFixed(1)} dB, then ${half.toFixed(1)} dB`);
+  $('#listen-input-gain').value = 1; $('#listen-input-gain').dispatchEvent(new Event('input'));
+ });
+ await check('monitoring: only with headphones; then the input is heard at the output through the effects; feedback switches it off', async expect => {
+  const box = $('#listen-monitor');
+  expect(box.disabled, 'monitoring can be switched on without headphones');
+  listening.set({ headphones: true });
+  expect(!box.disabled, 'with headphones it is still disabled');
+  box.click();
+  const meter = new AnalyserNode(ctx, { fftSize: 2048 }); window.synth.output.connect(meter);
+  const out = () => { const d = new Float32Array(2048); meter.getFloatTimeDomainData(d); return Math.sqrt(d.reduce((a, v) => a + v * v, 0) / d.length); };
+  const heard = await playing(steady(440, 0.5, 0.1), async () => { await wait(300); return out(); });
+  expect(heard > 0.02, `the output was at ${heard.toFixed(4)} while the input played`);
+  // A loud pure tone that keeps on: what feedback sounds like.
+  await playing(steady(1000, 1.6, 0.7));
+  expect(!box.checked && /Feedback/.test($('.listen-monitor-note').textContent), `after a howl: on ${box.checked}, "${$('.listen-monitor-note').textContent}"`);
+  const after = await playing(steady(440, 0.5, 0.1), async () => { await wait(300); return out(); });
+  expect(after < 0.005, `still heard at ${after.toFixed(4)}`);
+  listening.set({ headphones: false });
+ });
+ listening.stop();
+ return { checks };
+}

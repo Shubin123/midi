@@ -23,7 +23,7 @@ export const GUIDES = {
  },
  'Automation': {
   what: 'Lanes that change a setting over the 16 steps while the sequencer plays: tempo, filter cutoff, resonance, volume or detune.',
-  how: [['Pick a target and press + Add lane.', 'automation-target'], ['Tick a lane to switch it on; it only moves while the sequencer plays.', 'Automation'], ['Ramp up and Flatten reshape a whole lane; or drag single step values.', 'Automation › Ramp up'], ['Linear glides between steps; hold keeps each value until the next step.', 'Automation']],
+  how: [['Pick a target and press + Add lane.', 'automation-target'], ['Tick a lane to switch it on; it only moves while the sequencer plays.', 'Automation'], ['Ramp up and Flatten reshape a whole lane; or drag single step values.', 'Automation › Ramp up'], ['Linear glides between steps; hold keeps each value until the next step.', 'Automation'], ['From the microphone: + Add mapping lets your voice move a control as you sing (brightness opening the filter, loudness the volume); ● Record lane writes a feature of what you sing over one bar into a lane.', 'listen-map-add']],
   keywords: ['automation', 'lane', 'ramp', 'automate'],
  },
  'Oscillators': {
@@ -48,7 +48,7 @@ export const GUIDES = {
  },
  'Master & Settings': {
   what: 'Overall volume and how the app looks: the number of keyboard octaves, what the oscilloscope shows, the colour theme and the size of the interface.',
-  how: [['Volume sets the master level.', 'masterVolume'], ['Keyboard Octaves: how many octaves the on-screen keyboard shows.', 'numOctavesSelect'], ['Visualizer Source: the master output or one oscillator.', 'visualizerSourceSelect'], ['UI Theme and UI Scale change colours and size.', 'uiTheme']],
+  how: [['Volume sets the master level.', 'masterVolume'], ['Keyboard Octaves: how many octaves the on-screen keyboard shows.', 'numOctavesSelect'], ['Visualizer Source: the master output or one oscillator.', 'visualizerSourceSelect'], ['UI Theme and UI Scale change colours and size.', 'uiTheme'], ['Input gain sets how loud the Listening widget hears the microphone; with headphones, Hear the input through Air and the plug-ins lets you hear yourself through the effects.', 'listen-input-gain']],
   keywords: ['volume', 'theme', 'scale', 'settings', 'octaves', 'master'],
  },
  'Loop recorder': {

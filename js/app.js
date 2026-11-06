@@ -8,6 +8,7 @@ import { addAppSettings } from './settings.js';
 import { mountTiming } from './timing-widget.js';
 import { createListeningWidget } from './listening-widget.js';
 import { mountListenTools } from './listen-tools.js';
+import { mountMappings, mountMonitor } from './listen-map.js';
 // The oscillator bank is filled in now, before the synth (js/synth.js) reads it on load.
 window.oscillatorBank = mountBank(document.getElementById('oscillators-group'));
 window.addEventListener('load',()=>{
@@ -31,6 +32,8 @@ window.addEventListener('load',()=>{
  document.querySelector('.controls').remove();document.querySelector('.looper-toggle-bar').remove();
  const looper=workspace.querySelector('#launchpadLooperContainer');looper.classList.add('open');looper.style.display='grid';
  mountListenTools(api,workspace); // Record from audio, audio loops, and the scope's Input (Listening)
+ mountMappings(automation.querySelector('.module-content'),api); // the microphone moving controls, and recording lanes
+ mountMonitor(workspace.querySelector('#masterVolume').closest('.control-group')); // input gain, and hearing the input through the effects
  container.append(workspace);addAppSettings(setupWidgets(workspace).section);
  window.dispatchEvent(new Event('resize'));
 });

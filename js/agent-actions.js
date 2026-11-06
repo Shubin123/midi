@@ -15,6 +15,7 @@ import { listening, MODES } from './listening.js';
 import { timing } from './timing-widget.js';
 import { parseChordName, parseScaleName, NOTE_NAMES } from './pitch-analyzer.js';
 import { readPattern } from './timing.js';
+import { mappings, FEATURES, TARGETS as MAP_TARGETS, recordLane } from './listen-map.js';
 
 const $ = id => document.getElementById(id);
 const KEYS = { C: 0, 'C#': 1, DB: 1, D: 2, 'D#': 3, EB: 3, E: 4, F: 5, 'F#': 6, GB: 6, G: 7, 'G#': 8, AB: 8, A: 9, 'A#': 10, BB: 10, B: 11 };
@@ -274,6 +275,12 @@ export const ACTIONS = {
  set_listening_mode: { kind: 'change', says: 'How Listening hears: melody (one note at a time), chords, or rhythm (claps and taps).', params: { mode: str('melody, chords or rhythm', { enum: Object.keys(MODES) }) }, required: ['mode'],
   run: ({ mode }) => { const was = listening.settings.mode, sel = $('listen-mode'); if (sel) choose(sel, mode); else listening.set({ mode }); return { text: `Listening hears ${MODES[mode]}`, undo: () => (sel ? choose(sel, was) : listening.set({ mode: was })) }; } },
 
+ map_feature: { kind: 'change', says: 'While Listening hears the student, let a feature of their sound move a control between two values (brightness opening the filter, loudness the volume).',
+  params: { feature: str('loudness, pitch, brightness, density (onsets a second) or tempo (tapped)', { enum: Object.keys(FEATURES) }), target: str('The control', { enum: Object.keys(MAP_TARGETS) }), from: { type: 'number', description: 'At the feature\'s least' }, to: { type: 'number', description: 'At its most' } }, required: ['feature', 'target'],
+  run: ({ feature, target, from, to }) => { const t = MAP_TARGETS[target], m = mappings.add({ feature, target, min: from ?? t.min, max: to ?? t.max }); document.querySelector('#listen-map-add')?.dispatchEvent(new Event('mappings')); return { text: `${FEATURES[feature].label.toLowerCase()} moves ${t.label} from ${m.min} to ${m.max}`, undo: () => mappings.remove(m.id) }; } },
+ record_lane: { kind: 'change', says: 'Record an automation lane from the microphone: the sequencer plays one bar while a feature of what the student sings or plays is read at each step.',
+  params: { feature: str('loudness, pitch, brightness, density or tempo', { enum: Object.keys(FEATURES) }), target: str('The lane', { enum: Object.keys(LANES) }) }, required: ['feature', 'target'],
+  run: async ({ feature, target }) => { const s = seq(), was = s.lanes.find(l => l.target === target)?.points.slice(); const points = await recordLane(s, feature, target); return { text: `${LANES[target].label} recorded from ${FEATURES[feature].label.toLowerCase()}: ${points.map(Math.round).join(' ')}`, undo: () => { const l = s.lanes.find(x => x.target === target); if (l && was) l.points.splice(0, 16, ...was); } }; } },
  play_example_phrase: { kind: 'change', says: 'Play an example through the synth, lighting the keys: notes in order, chords one per beat, or a scale up and down.',
   params: { notes: { type: 'array', items: { type: ['string', 'integer'] }, maxItems: 32, description: 'Note names, e.g. ["C4", "E4", "G4"]' }, chords: { type: 'array', items: { type: 'string' }, maxItems: 16, description: 'Chord symbols, e.g. ["Dm7", "G7", "Cmaj7"]' }, scale: str('e.g. "A minor pentatonic"'), bpm: num('Speed', 30, 300) },
   run: ({ notes, chords, scale, bpm }, env) => {

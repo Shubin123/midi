@@ -211,6 +211,32 @@ The other widgets take it too (`js/listen-tools.js`):
   Source): the input's waveform, the note it hears with cents and frequency,
   and a tick every period of it.
 
+What the microphone hears can steer the sound too (`js/listen-map.js`):
+
+- **Automation › From the microphone**: **+ Add mapping** lets a feature of
+  what is heard (loudness, pitch, brightness, onsets a second, or the tempo
+  it is tapped at) move a control between two values as it happens (the
+  automation targets, the envelope's attack and release, oscillator 1's
+  level), smoothed over about 50 ms; the filter cutoff moves on a log
+  scale, as its slider does. Each mapping has its own on/off switch, and
+  switched off, or when listening stops, the control goes back to where it
+  was. They are kept. **● Record lane** plays the sequencer for one bar
+  while a feature is read at each of its 16 steps, and writes them into that
+  target's lane (added if there is none), switched on: filter cutoff from how
+  loud you sing, tempo from how fast you tap.
+- **Master & Settings**: **Input gain (Listening)**, and **Hear the input
+  through Air and the plug-ins**, only with headphones (on speakers the
+  microphone would hear itself and howl). A loud, pure, steady tone that
+  keeps on for most of a second is taken for feedback, and monitoring
+  switches itself off and says why.
+
+The agent's `map_feature` and `record_lane` actions do the same.
+`node tests/listening-map.mjs` checks loudness, brightness and pitch moving
+their controls and back, a tapped 100 BPM setting the tempo, a crescendo
+recorded into the volume lane, the mappings kept, half the input gain reading
+6 dB down, and monitoring: refused without headphones, heard at the output
+with them, and switched off by a howl.
+
 `node tests/listening-chords.mjs` plays C, Am, F, G from the app's own
 oscillators into the worklet in Chords (every note name, F1 at least 0.8 with
 octaves, the keys lit together, each chord named by the tuner and the
@@ -484,6 +510,10 @@ Source files:
 - `js/timing.js`, `js/timing-widget.js`: the beat clock, tempo and rhythm, the timing strip and Sync to MIDI clock
 - `js/listening.js`, `js/listening-widget.js`, `js/listen-dsp.js`, `js/listen-worklet.js`: Audio In, the Listening widget, and the pitch, onset and note tracking
 - `js/listen-tools.js`: Record from audio, audio loops and the oscilloscope's Input view
+- `js/listen-map.js`: the microphone moving controls and recording lanes, input gain and monitoring
+- `js/voice-mode.js`: talk or singing, spoken requests, sing it back
+- `js/agent-actions.js`: the teacher's actions on every widget, and what it may do
+- `js/poly-model.js`: Basic Pitch, downloaded on demand, for chords in clips
 - `js/commands.js`: requests to change a setting, read without a model
 - `js/automation.js`: automation targets, interpolation, and parameter application
 - `js/widgets.js`: responsive widget layout, dragging, and visibility

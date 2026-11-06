@@ -56,6 +56,7 @@ export async function runAgent(only = '') {
   ['set_listening_mode', { mode: 'rhythm' }, () => listening.settings.mode, [{ mode: 'jazz' }, /mode must be one of melody, chords, rhythm/]],
   ['stop_listening', {}, () => listening.active, [{ x: 1 }, /has no argument x/], () => listening.active || listening.listenTo(new GainNode(ctx))],
   ['set_exercise', { pattern: 'x...x...x.x.x...', bpm: 80 }, () => `${bridge.exercise?.pattern} ${window.synth.tempo}`, [{ pattern: 'abc' }, /"abc" isn't a pattern/]],
+  ['map_feature', { feature: 'brightness', target: 'filterCutoff', from: 300, to: 6000 }, async () => (await import('../js/listen-map.js')).mappings.list.length, [{ feature: 'smell', target: 'filterCutoff' }, /feature must be one of/]],
  ];
  await check(`every action that changes something (${TABLE.length}): a call changes it, wrong arguments are refused with the reason, and Undo puts it back`, async expect => {
   for (const [name, args, read, [bad, why], setup] of TABLE) {
