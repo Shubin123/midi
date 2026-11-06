@@ -13,8 +13,8 @@
 //
 // An adapter is { id, label, open({ surface, plugin, bridge }) → Promise<editor | null> }. The editor is
 // { width, height, resizable, frame() (draws; true when it drew), resize?(w, h) → bool, pointer?(e), wheel?(e),
-// key?(e), param?(id, value) (a generic control moved: frameworks that don't watch the controller themselves
-// redraw from it), close() }; it calls bridge.edit(id, value) (and bridge.begin/end) when the user moves a
+// key?(e), focus?(on), param?(id, value) (a generic control moved: frameworks that don't watch the controller
+// themselves redraw from it), close() }; it calls bridge.edit(id, value) (and bridge.begin/end) when the user moves a
 // control, bridge.fail(reason) when it breaks, and surface.resize(w, h) when it asks to be another size.
 
 export const NOTICE = 'Editor unavailable, showing generic controls';
@@ -154,8 +154,13 @@ export function mountView({ box, header, generic, plugin, choice = 'editor', onC
   c.onpointerup = guarded(ev => editor.pointer?.({ type: 'up', ...surface.point(ev), button: ev.button, buttons: ev.buttons, ...mods(ev) }));
   c.onpointerleave = guarded(ev => editor.pointer?.({ type: 'leave', ...surface.point(ev), ...mods(ev) }));
   c.onwheel = guarded(ev => { ev.preventDefault(); editor.wheel?.({ ...surface.point(ev), dx: ev.deltaX, dy: ev.deltaY, ...mods(ev) }); });
-  c.onkeydown = guarded(ev => { if (editor.key?.({ type: 'down', key: ev.key, code: ev.code, ...mods(ev) })) ev.preventDefault(); });
-  c.onkeyup = guarded(ev => { if (editor.key?.({ type: 'up', key: ev.key, code: ev.code, ...mods(ev) })) ev.preventDefault(); });
+  // Focus in and out of the editor: frameworks that track whether their window is active (VSTGUI commits an
+  // open text edit when it isn't) are told.
+  c.onfocus = guarded(() => editor.focus?.(true));
+  c.onblur = guarded(() => editor.focus?.(false));
+  // Keys typed into the editor are its own: they don't also play the synth from the computer keyboard.
+  c.onkeydown = guarded(ev => { ev.stopPropagation(); if (editor.key?.({ type: 'down', key: ev.key, code: ev.code, ...mods(ev) })) ev.preventDefault(); });
+  c.onkeyup = guarded(ev => { ev.stopPropagation(); if (editor.key?.({ type: 'up', key: ev.key, code: ev.code, ...mods(ev) })) ev.preventDefault(); });
   const loop = guarded(() => { editor.frame(false); if (editor) raf = requestAnimationFrame(loop); });
   raf = requestAnimationFrame(loop);
   onSize?.(editor.width, editor.height);

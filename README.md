@@ -810,6 +810,8 @@ to `native/CMakeLists.txt` or to a file passed as
 
 The bundled builds are listed under **Add built-in**:
 
+- **Steinberg AGain (with its own editor)**: a gain with a VU meter, and its
+  VSTGUI editor (see *Plug-in editors* below)
 - **Steinberg ADelay**
 - **Steinberg AGain Sample Accurate**: sample-accurate gain, plus the SDK's
   Advanced Tutorial class
@@ -819,14 +821,97 @@ The bundled builds are listed under **Add built-in**:
 - **VST3 instrument: MDA JX10, DX10, Piano, ePiano**: the collection's
   instruments as their own entries, ready to play.
 
-`node tests/vst3-wasm.mjs` opens all 38 classes, processes audio through
-each one or plays a note on it, and checks the output. AGain Sample
+`node tests/vst3-wasm.mjs` opens all 40 classes, processes audio through
+each one or plays a note on it, and checks the output. Every bundle must say
+which editor it has, and for every class with a VSTGUI editor it opens the
+editor, draws a frame that must not be blank, drags across it until a control
+moves, and checks the processor hears it (AGain's output falls to silence).
+`node tests/plugin-editor.mjs` does it all in Chrome with AGain's real editor:
+drawn at its size, its slider dragged (the sound and the generic Gain follow,
+and its VU meter moves with the level), the generic Gain moving its slider,
+−6 dB typed into its field (the keys don't play the synth), its **Send!**
+message reaching the processor in the worklet, the fallback forced, and again
+at a 2× pixel ratio. AGain Sample
 Accurate starts at 0% gain, SyncDelay's default whole-note delay is longer
 than the test, and TestTone starts switched off, so those three are silent
 until their parameters are changed.
 
-Plug-in editors (VSTGUI or other native GUI code) are not compiled in. The
-widget shows generic controls for every parameter.
+#### Plug-in editors
+
+A plug-in with an editor shows it in its window, drawn and played as on a
+desktop, with its generic controls always behind it (see *The plug-in's own
+editor, or its generic controls* below). **VST3: Steinberg AGain (with its own
+editor)** under **Add built-in** is Steinberg's AGain sample with its VSTGUI
+editor: the gain slider, a dB field you can type into, a VU meter fed by the
+processor, and a text field and **Send!** button that send a message from the
+controller to the processor.
+
+How it works:
+
+- **VSTGUI in the browser.** VSTGUI has backends for macOS, Windows and Linux
+  (X11 or Wayland with Cairo). `native/vstgui-web` adds one for the browser:
+  a platform factory, frame, drawing context, paths, gradients, bitmaps,
+  fonts, timers and resources, about 1,000 lines. It draws with the page's
+  Canvas 2D (`js/vstgui-web.js`) rather than Cairo compiled to WebAssembly:
+  Cairo would bring pixman, FreeType, fontconfig and Pango (several MB, and
+  fonts to ship), where the browser already draws antialiased paths,
+  gradients, images and text. VSTGUI's own state (clip, transform, colours,
+  line style) is kept on its side and set on the canvas around each call, as
+  its Cairo backend does around each Cairo call, with the same pixel
+  alignment. Bitmaps are the PNGs in the bundle's `Contents/Resources`,
+  decoded by the browser before the editor opens; the `.uidesc` is read from
+  there too. Text edits and option menus are VSTGUI's own generic ones, typed
+  into from the page's keys. The editor draws at the screen's pixel ratio
+  (a 2× screen gets twice the pixels) and can ask to be resized.
+- **The host.** `vst3web.cpp` calls `createView`, offers the platform type
+  `HTMLCanvas` (and, for VSTGUI editors that only know desktop types, the X11
+  one, which the web platform stands in for), `attached`, `onSize` and
+  `removed`, gives the view an `IPlugFrame` for resize requests, and forwards
+  pointer, wheel and keyboard events and window activation.
+- **Controller and processor apart.** The processor runs in the AudioWorklet
+  (role *audio*); the editor runs in its own instance of the same module on
+  the page's thread (role *editor*), so an editor that fails takes nothing
+  else with it. The controller's edits (`IComponentHandler`'s `beginEdit`,
+  `performEdit`, `endEdit`) go to the processor and move the generic
+  controls; the processor's output parameters (meters) come back about 30
+  times a second; and `IConnectionPoint` messages cross between the two,
+  serialized with all their attributes. The editor's controller starts from
+  the processor's state and the current values.
+
+Building one: list its sources, then `GUI vstgui` and its `RESOURCES` (the
+`.uidesc` and its bitmaps):
+
+```cmake
+vst3web_add_plugin(AGain
+    ${S}/again/source/again.cpp ${S}/again/source/againcontroller.cpp
+    ${S}/again/source/againentry.cpp ${S}/again/source/againsidechain.cpp
+    GUI vstgui
+    RESOURCES ${R}/again.uidesc ${R}/background.png ${R}/slider_background.png ...
+)
+```
+
+`native/build.sh` fetches the SDK's `vstgui4` submodule with the rest, and
+`native/CMakeLists.txt` compiles VSTGUI's own sources (all but its platform
+folder) with the web platform. Every bundle says which editor it has in
+`Contents/Resources/editor.json` (`{"framework": "vstgui"}` or `"none"`),
+which is how the page picks the adapter that shows it, and a bundle with a
+VSTGUI editor carries VSTGUI's license (`VSTGUI-LICENSE.txt`). Plug-ins with
+no editor keep building as before: AGain Sample Accurate, SyncDelay and the
+MDA plug-ins have none, and ADelay's is for iOS only. (AGain Sample Accurate
+has no VSTGUI editor; AGain is the SDK sample that does.)
+
+| Editor framework | Status here | How it would be built | What it needs, and limits |
+| --- | --- | --- | --- |
+| **VSTGUI** (Steinberg's samples, many open-source plug-ins) | Supported | `GUI vstgui` | Text edits and option menus are VSTGUI's generic ones; no OpenGL views, drag and drop, or file selectors; the clipboard takes copied text; bitmaps packed inside a compressed `.uidesc` aren't decoded (ship them as files in Resources) |
+| **iPlug2** | Generic controls | not yet | Its IGraphics already draws to a canvas in its WAM builds (NanoVG over WebGL, or Canvas); an adapter would link that backend into the vst3web module in place of its WAM glue and route its parameter calls through `IComponentHandler` |
+| **DPF** | Generic controls | not yet | DGL has an Emscripten and WebGL path; its VST3 wrapper would be built with vst3web, and its UI-to-DSP calls (`setParameterValue`, `editParameter`, `sendNote`, `setState`) bridged as the editor's edits and messages are |
+| **JUCE** | Generic controls | not yet | No browser backend upstream: an Emscripten `ComponentPeer` (JUCE's software renderer into an image put on a canvas), browser events mapped to JUCE's mouse and key events, and a message loop driven by `requestAnimationFrame`. JUCE is GPL or commercial, which decides which plug-ins may be built and shipped |
+| **Dear ImGui, NanoVG, raw OpenGL** | Generic controls | not yet | Their GL calls mapped to WebGL2 through Emscripten's GLES3 support |
+| **Cocoa, Win32 or X11 directly** | Generic controls only | — | Drawn with an operating system's own windows: can't be ported generically |
+
+The adapter interface is the same for all of them (`js/plugin-editor.js`), so
+each one is a module that registers itself; a framework without one falls
+back to the generic controls, saying which framework it is.
 
 ### Native plug-ins: identified, not run
 
@@ -878,8 +963,11 @@ and compressor timing are approximated, and the score says so.
 ### Licensing
 
 The VST3 SDK is MIT-licensed (`LICENSES/VST3-SDK.txt`), and its license
-ships inside every built bundle. The MDA plug-ins, ADelay, AGain Sample
-Accurate and SyncDelay are SDK samples under the same license. VST is a
+ships inside every built bundle. The MDA plug-ins, ADelay, AGain, AGain Sample
+Accurate and SyncDelay are SDK samples under the same license. VSTGUI, which
+draws AGain's editor, is under the BSD 3-Clause license (`LICENSES/VSTGUI.txt`),
+which ships inside every bundle built with a VSTGUI editor;
+`native/vstgui-web`, its browser platform, is under the same license. VST is a
 trademark of Steinberg Media Technologies GmbH; this project only uses the
 name to describe the format.
 
@@ -922,7 +1010,10 @@ later, nothing to install; see *Running it*):
 - `node tests/voice.mjs`: how talk mode reads music notation aloud
 - `node tests/teacher.mjs`: the AI teacher's analysis and API requests
 - `node tests/native-id.mjs`: identification (macOS; uses `clang`, `pkgbuild` and `productbuild`)
-- `node tests/vst3-wasm.mjs`: the WebAssembly VST3 builds
+- `node tests/vst3-wasm.mjs`: the WebAssembly VST3 builds, and their VSTGUI editors opened, drawn and dragged
+- `node tests/plugin-editor.mjs`: plug-in windows' editors and generic controls, every way an editor can fail forced, and AGain's real VSTGUI editor used (headless Chrome)
+- `node tests/commands.mjs` and `node tests/teacher-panel.mjs`: settings changed by the teacher when asked, tools for System 2, the panel (headless Chrome for the panel)
+- `node tests/timing.mjs` and `node tests/timing-panel.mjs`: beat, tempo and rhythm (headless Chrome for the app)
 - `tests/capture.html` in a browser: capture accuracy
 
 ## Running it
@@ -953,7 +1044,7 @@ js/            synthesis, sequencer, automation, widgets, plugins, and persisten
 plugin-sw.js   service worker that serves files from loaded plugin archives
 plugins/       built-in effects (source and zip)
 tools/         plugin packaging script
-native/        VST3 SDK host shim and WebAssembly build script
+native/        VST3 SDK host shim, VSTGUI's browser platform (vstgui-web) and WebAssembly build script
 LICENSES/      third-party licenses
 stylemain.css  themeable synth styling
 workspace.css  responsive modular workspace

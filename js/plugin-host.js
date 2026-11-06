@@ -1,6 +1,8 @@
-// Loads browser-native plugins straight from archives: our web-plugin contract or Web Audio Modules 2.0.
+// Loads browser-native plugins straight from archives: our web-plugin contract, Web Audio Modules 2.0, and VST3
+// bundles built for WebAssembly (with their own editors where they have one: js/plugin-editor.js).
 // Archives are unpacked in memory and served by plugin-sw.js so relative imports keep working.
-// Native plugins (VST3, AU, ...) cannot run in a browser; they are identified and matched to a built-in effect.
+// Native machine-code plugins (VST3, AU, ...) can't run in a browser; they are identified and offered a rebuild,
+// a capture or a built-in stand-in.
 import { readArchive, writeZip } from './archive.js';
 import { testSignal, encodeWav, analyze, verdict, layout } from './capture.js';
 import { createCapturedPlugin } from './capture-engine.js';
@@ -11,11 +13,12 @@ import { read, save } from './storage.js';
 import { el, renderParams, card } from './plugin-ui.js';
 import { pluginWindow } from './plugin-window.js';
 import { mountView } from './plugin-editor.js';
+import './vstgui-web.js'; // the adapter for VSTGUI editors
 import { initializeWamHost } from './vendor/webaudiomodules-sdk.js';
 
 const CACHE = 'zip-plugins-v1';
 const BUILT_INS = { air: 'Air', reverb: 'Reverb', delay: 'Delay', compressor: 'Compressor', saturator: 'Saturator', chorus: 'Chorus',
- 'vst3/mda-vst3': 'VST3: MDA collection (34 plug-ins)', 'vst3/ADelay': 'VST3: Steinberg ADelay',
+ 'vst3/mda-vst3': 'VST3: MDA collection (34 plug-ins)', 'vst3/AGain': 'VST3: Steinberg AGain (with its own editor)', 'vst3/ADelay': 'VST3: Steinberg ADelay',
  'vst3/AGainSampleAccurate': 'VST3: Steinberg AGain Sample Accurate', 'vst3/SyncDelay': 'VST3: Steinberg SyncDelay',
  // One class of a module, loaded as its own plug-in: the MDA instruments play from the keyboard, sequencer and looper.
  'vst3/mda-vst3#mda JX10': 'VST3 instrument: MDA JX10 synth', 'vst3/mda-vst3#mda DX10': 'VST3 instrument: MDA DX10 FM synth',
@@ -88,16 +91,39 @@ const WASM_BUNDLE = /^(?:.*\/)?[^/]+\.vst3\/Contents\/wasm32-web\/[^/]+\.wasm$/i
 const wasmBinary = files => [...files.keys()].find(p => WASM_BUNDLE.test(p));
 const worklets = new WeakSet();
 
+// The files in a VST3 bundle's Contents/Resources, by name (an editor's .uidesc and bitmaps), and which editor
+// it says it has (editor.json: {"framework": "vstgui" | "none" | ...}).
+const resourcesDir = rec => rec.main.replace(/wasm32-web\/[^/]+$/, 'Resources/');
+async function readResources(rec) {
+ const cache = await caches.open(CACHE), prefix = new URL(`${rec.id}/${resourcesDir(rec)}`, root).href, out = new Map();
+ for (const req of await cache.keys()) if (req.url.startsWith(prefix)) out.set(decodeURIComponent(req.url.slice(prefix.length)), new Uint8Array(await (await cache.match(req)).arrayBuffer()));
+ return out;
+}
+async function editorFramework(rec, module) {
+ try { const r = await fetch(new URL(`${rec.id}/${resourcesDir(rec)}editor.json`, root)); if (r.ok) return (await r.json()).framework || 'none'; } catch { /* none declared */ }
+ return WebAssembly.Module.exports(module).some(e => e.name === 'vst3web_view_open') ? 'vstgui' : 'none';
+}
+
 async function instantiateVst3(ctx, rec) {
  const module = await WebAssembly.compileStreaming(fetch(new URL(`${rec.id}/${rec.main}`, root)));
- const control = new Vst3Module(module), classes = control.classes();
+ // This instance is the controller half (role 2): parameters and their text here, the processor in the worklet,
+ // their messages crossing through its port. An open editor runs in an instance of its own (js/vstgui-web.js).
+ let node = null, plugin = null;
+ const editors = new Set();
+ const control = new Vst3Module(module, m => ({ vst3web: { message: (ptr, length) => node?.port.postMessage({ message: m.bytes(ptr, length) }) } }));
+ const classes = control.classes();
  const info = (rec.className && classes.find(c => c.name === rec.className)) || classes[rec.classIndex] || classes[0];
  if (!info) throw new Error('This VST3 module contains no audio plug-in classes.');
- const io = control.open(info.index, ctx.sampleRate);
+ const io = control.open(info.index, ctx.sampleRate, 128, 2);
  if (!worklets.has(ctx)) { await ctx.audioWorklet.addModule(new URL('./vst3-worklet.js', import.meta.url)); worklets.add(ctx); }
- const node = new AudioWorkletNode(ctx, 'vst3-wasm', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+ node = new AudioWorkletNode(ctx, 'vst3-wasm', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
   processorOptions: { module, classIndex: info.index, values: rec.values, tempo: window.synth.tempo } });
  await new Promise((resolve, reject) => { node.port.onmessage = ({ data }) => (data.error ? reject(new Error(data.error)) : resolve()); });
+ // What the processor sends back: its output parameters (meters) and messages for the controller.
+ node.port.onmessage = ({ data }) => {
+  if (data.out) for (const [id, v] of data.out) { control.controllerSet(id, v); editors.forEach(e => e.output(id, v)); plugin?.onOutput?.(id, v); }
+  if (data.message) { control.deliver(data.message); editors.forEach(e => e.message(data.message)); }
+ };
  const input = ctx.createGain(), output = ctx.createGain();
  if (io.inputs && !info.instrument) input.connect(node);
  node.connect(output);
@@ -109,8 +135,13 @@ async function instantiateVst3(ctx, rec) {
  if (io.events) { window.addEventListener('synth:note', onNote); window.addEventListener('synth:panic', onPanic); }
  const params = control.params().map(p => ({ id: p.id, label: p.title, min: 0, max: 1, step: p.steps > 0 ? 1 / p.steps : 0.001, value: p.value,
   format: v => `${control.text(p.id, v)}${p.units ? ' ' + p.units : ''}`.trim() }));
- const plugin = {
+ const framework = await editorFramework(rec, module);
+ plugin = {
   name: info.name, input, output, params, classes, classIndex: info.index, instrument: info.instrument, events: io.events, layer: !!rec.layer,
+  editor: { framework }, module,
+  values: () => control.values(), resources: () => readResources(rec),
+  send: bytes => node.port.postMessage({ message: bytes }),
+  connect: hooks => { editors.add(hooks); return () => editors.delete(hooks); },
   setLayer: on => { plugin.layer = on; updateVoices(); },
   setParam: (id, value) => { control.set(Number(id), value); node.port.postMessage({ param: Number(id), value }); },
   destroy: () => { window.removeEventListener('synth:tempo', onTempo); window.removeEventListener('synth:note', onNote); window.removeEventListener('synth:panic', onPanic); node.disconnect(); input.disconnect(); control.close(); }
@@ -169,7 +200,7 @@ export function createPluginHost() {
   el('div', { className: 'sequence-toolbar' }, el('button', { textContent: '+ Load file…', onclick: () => picker.click() }), builtIn,
    el('button', { textContent: 'Add built-in', onclick: () => addBuiltIn(builtIn.value) }),
    el('button', { textContent: 'Capture a plugin…', onclick: () => openCapture('') }), status, picker),
-  el('p', { className: 'module-hint' }, 'Loads Web Audio Modules 2.0 and web-plugin archives (.zip, .tar, .tar.gz). Native plugins (.vst3, .component, .dll, .pkg installers, or archives of them) are identified instead: browsers cannot run compiled code, so the closest built-in effect is offered.'),
+  el('p', { className: 'module-hint' }, 'Loads Web Audio Modules 2.0 and web-plugin archives (.zip, .tar, .tar.gz). VST3 plug-ins built for WebAssembly run here, with their own editors. Plug-ins that only contain macOS, Windows or Linux machine code are identified and offered a rebuild from source, a sound capture, or a built-in stand-in.'),
   capturePanel, found, list);
  const live = new Map();
  const teardown = id => { const item = live.get(id); if (!item) return; item.view?.close(); item.slot.clear(); item.plugin?.destroy?.(); item.box.remove(); item.win.remove(); live.delete(id); };

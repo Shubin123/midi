@@ -11,6 +11,14 @@ try {
  checks.push({ name: 'no errors in the page', ok: !unexpected(browser.errors).length, problems: unexpected(browser.errors) });
  print(`Plug-in editors: ${checks.filter(c => c.ok).length} of ${checks.length}`, checks);
  failed += checks.filter(c => !c.ok).length;
+// Again at a 2x pixel ratio, in a fresh page.
+ await browser.page('Emulation.setDeviceMetricsOverride', { width: 1500, height: 1000, deviceScaleFactor: 2, mobile: false });
+ await browser.open('index.html');
+ await browser.evaluate('new Promise(r => { const go = () => (document.querySelector("#plugin-host-module select") && document.querySelector("#workspace > .widget") ? r() : setTimeout(go, 50)); go(); })');
+ const hi = await browser.evaluate(`import('./tests/plugin-editor-app.js').then(m => m.runHiDpi())`, { timeout: 60000 });
+ hi.checks.push({ name: 'no errors in the page', ok: !unexpected(browser.errors).length, problems: unexpected(browser.errors) });
+ print(`At a 2x pixel ratio: ${hi.checks.filter(c => c.ok).length} of ${hi.checks.length}`, hi.checks);
+ failed += hi.checks.filter(c => !c.ok).length;
 } catch (err) {
  console.error(`\nThe run stopped: ${err.message}`);
  failed++;
