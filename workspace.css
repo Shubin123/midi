@@ -31,6 +31,7 @@ body{padding:24px}h1{font-size:1.5rem;letter-spacing:.3px;text-align:left;margin
 /* Dragging a module: it lifts and follows the pointer; outlines mark the liftoff point and the landing spot. */
 .widget.dragging{opacity:.94;outline:2px solid var(--accent-color);position:relative;z-index:60;box-shadow:0 22px 48px #0008;cursor:grabbing}
 .widget.settling{transition:transform .2s ease}
+.widget.dragging{transition:none!important} /* it follows the pointer exactly, and its space can be measured at once (control groups ease their transform) */
 .drag-marker{position:absolute;z-index:40;box-sizing:border-box;border:2px dashed var(--text-muted-color);border-radius:12px;pointer-events:none;display:flex;justify-content:center;align-items:flex-start;font-size:11px;font-weight:600;letter-spacing:.03em;color:var(--text-color)}
 .drag-marker::before{content:attr(data-label);margin-top:-11px;padding:2px 8px;border-radius:10px;background:var(--secondary-surface-color);border:1px solid var(--border-color)}
 .drag-marker{font-size:0}.drag-marker::before{font-size:11px}

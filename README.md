@@ -74,8 +74,9 @@ seconds.
 
 ### Checking for regressions
 
-`node tests/all.mjs` runs every suite in parallel (about ten seconds) and fails
-if any does. The waveform checks don't just look for "about right": each one
+`node tests/all.mjs` runs every suite in parallel (about twenty-five seconds,
+most of it the widget drags) and fails if any does. The browser suites share
+`tests/support/browser.mjs`, which serves the repo and drives headless Chrome. The waveform checks don't just look for "about right": each one
 also leaves a **fingerprint** in `tests/waveforms.golden.json`, so a change
 anywhere in the sound shows up even when it stays inside the checks' own
 tolerances. A fingerprint is the first harmonics' amplitudes and the RMS, and
@@ -178,9 +179,17 @@ The original loop recorder still uses recorded event durations; tempo automation
 does not time-stretch those recordings.
 
 Drag a module by its header with a mouse or finger: it lifts and follows the
-pointer, a dashed outline marks the liftoff point, and a highlighted outline
-shows where it will land as the other modules make room; Escape puts it back.
+pointer exactly, a dashed outline marks the liftoff point, and the space it
+will drop into is already open and highlighted (**Drops here**) as the other
+modules make room; Escape puts it back. Carried past the middle of another
+module, the space moves to that module's far side, and back only when carried
+back past the middle, so resting on a module never makes the space jump back
+and forth. While a module is held the page doesn't scroll or shrink under it.
 Plug-in windows show their liftoff point the same way while they move.
+`node tests/widgets.mjs` carries every module onto every other one, at four,
+two and one columns, and checks at each step that the space is open, outlined
+exactly where the module lands, empty of other modules and steady, and that
+every place can be reached and no two modules overlap.
 
 Every widget and plug-in window has a **resize grip** in its bottom-right corner.
 A widget's width snaps to whole columns (one to four) and its height is free: a
@@ -702,6 +711,7 @@ The service worker needs `https://` or `http://localhost`. Tests:
 
 - `node tests/all.mjs`: every suite below, in parallel, with one answer (see *Checking for regressions*)
 - `node tests/waveforms.mjs`: every waveform rendered by the browser's own Web Audio and measured, then the Oscillators widget used and played through the synth in the app, all compared with recorded fingerprints (headless Chrome, no dependencies; see *Testing the waveforms*)
+- `node tests/widgets.mjs`: every widget dragged onto every other one, at three widths: the space it will drop into is open, outlined, empty and steady, and it lands there (headless Chrome)
 - `node tests/oscillators.mjs`: the oscillator bank's settings
 - `node tests/archive.mjs`: archive reading and writing
 - `node tests/formats.mjs`: WAV, AIFF and MIDI reading and writing

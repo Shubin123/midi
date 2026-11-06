@@ -44,8 +44,12 @@ export function setupWidgets(workspace) {
   const bottoms = Array(cols).fill(0);
   const items = [...workspace.children].filter(el => !el.hidden && el.classList.contains('widget'))
    .map(el => ({ el, span: el.classList.contains('minimized') ? 1 : Math.max(1, Math.min(cols, Number(el.dataset.span) || (el.classList.contains('wide') ? 2 : 1))) }));
-  // Give each module its final width first, then measure, so heights match the columns they will sit in.
-  items.forEach(({ el, span }) => { el.style.gridColumn = `span ${span}`; });
+  // Give each module its final width first, then measure, so heights match the columns they will sit in. Rows
+  // are cleared too: an old row with a new span can push a module into an extra, implicit column of another
+  // width, and it would be measured at the wrong height (and overlap its neighbours once placed). Meanwhile the
+  // workspace keeps its height, or the page would be clamped to the collapsed grid and jump its scroll.
+  workspace.style.minHeight = `${workspace.offsetHeight}px`;
+  items.forEach(({ el, span }) => { el.style.gridColumn = `span ${span}`; el.style.gridRow = 'auto'; });
   items.forEach(item => { item.rows = Math.max(1, Math.ceil((item.el.getBoundingClientRect().height + gap) / ROW)); });
   for (const { el, span, rows } of items) {
    let at = 0, top = Infinity;
@@ -54,7 +58,10 @@ export function setupWidgets(workspace) {
    el.style.gridRow = `${top + 1} / span ${rows}`;
    bottoms.fill(top + rows, at, at + span);
   }
+  workspace.style.minHeight = '';
+  refollow?.(); // a module being dragged stays under the pointer, and its outline on its new space
  };
+ let refollow = null;
  const observer = new ResizeObserver(layout);
  window.addEventListener('resize', layout); // column count and gap change at the breakpoints
 
@@ -84,17 +91,40 @@ export function setupWidgets(workspace) {
   // cancelled touch) puts it back where it was. A press that doesn't move stays a click.
   let drag=null;
   // Moving the module in the page drops the handle's pointer capture, so the drag listens on the window.
-  handle.onpointerdown=e=>{if(e.button!==0)return;const r=el.getBoundingClientRect();drag={x:e.clientX,y:e.clientY,ox:e.clientX-r.left,oy:e.clientY-r.top,from:r,scrollY,order:[...workspace.children],lifted:false};addEventListener('pointermove',dragMove);addEventListener('pointerup',up);addEventListener('pointercancel',cancel);};
-  const follow=e=>{el.style.transform='none';const r=el.getBoundingClientRect();placeMarker(drag.landing,r);drag.liftoff.hidden=Math.abs(r.left-drag.from.left)+Math.abs(r.top+scrollY-drag.from.top-drag.scrollY)<4;/* until it moves, both outlines are one */el.style.transform=`translate(${e.clientX-drag.ox-r.left}px,${e.clientY-drag.oy-r.top}px)`;};
+  handle.onpointerdown=e=>{if(e.button!==0)return;const r=el.getBoundingClientRect();drag={x:e.clientX,y:e.clientY,ox:e.clientX-r.left,oy:e.clientY-r.top,order:[...workspace.children],lifted:false,swappedAt:null,last:e,tx:0,ty:0};addEventListener('pointermove',dragMove);addEventListener('pointerup',up);addEventListener('pointercancel',cancel);};
+  // Its space is where it sits less the translation it is carried by: measured without taking the translation
+  // off, which would shorten a page the module is carried past the end of, and shift what is measured.
+  const follow=e=>{
+   const r=el.getBoundingClientRect(),space={left:r.left-drag.tx,top:r.top-drag.ty,width:r.width,height:r.height};
+   placeMarker(drag.landing,space);
+   drag.liftoff.hidden=Math.abs(space.left+scrollX-drag.from.left)+Math.abs(space.top+scrollY-drag.from.top)<4; // until it moves, both outlines are one
+   drag.tx=e.clientX-drag.ox-space.left;drag.ty=e.clientY-drag.oy-space.top;
+   el.style.transform=`translate(${drag.tx}px,${drag.ty}px)`;
+   // The page may grow while a module is carried down it, but not shrink until the drop: shrinking would scroll
+   // the page under the pointer.
+   const page=document.documentElement,h=page.scrollHeight;if(h>(drag.pageHeight||0)){drag.pageHeight=h;page.style.minHeight=`${h}px`;}
+  };
   const dragMove=e=>{
    if(!drag)return;
-   if(!drag.lifted){if(Math.hypot(e.clientX-drag.x,e.clientY-drag.y)<5)return;drag.lifted=true;drag.liftoff=marker(drag.from,'liftoff','Lifted from here');drag.landing=marker(drag.from,'landing','Drops here');el.classList.add('dragging');}
-   // The module under the pointer, looking past the lifted one.
+   if(!drag.lifted){
+    if(Math.hypot(e.clientX-drag.x,e.clientY-drag.y)<5)return;
+    drag.lifted=true;
+    el.classList.add('dragging');el.classList.remove('settling');el.style.transform=''; // picked up again while still settling from a drop
+    const r=el.getBoundingClientRect();drag.from={left:r.left+scrollX,top:r.top+scrollY,width:r.width,height:r.height};
+    drag.liftoff=marker(r,'liftoff','Lifted from here');drag.landing=marker(r,'landing','Drops here');
+    document.documentElement.style.overflowAnchor='none'; // the page must not scroll itself as modules make room
+    refollow=()=>follow(drag.last);
+   }
+   drag.last=e;
+   // The module under the pointer, looking past the lifted one. Carried past its middle (in reading order: down
+   // and to the right), the space moves to its far side, and back only when carried back past the middle; so
+   // the module moves away from the pointer as it makes room, and resting near an edge can't make the space
+   // swap back and forth. After a move the pointer must travel a few px before the next, against a hand's tremor.
    const target=document.elementsFromPoint(e.clientX,e.clientY).map(n=>n.closest?.('.widget')).find(w=>w&&w!==el&&w.parentElement===workspace);
-   if(target){
-    const current=[...workspace.children];
-    workspace.insertBefore(el,current.indexOf(el)<current.indexOf(target)?target.nextSibling:target);
-    layout();
+   if(target&&(!drag.swappedAt||Math.hypot(e.clientX-drag.swappedAt.x,e.clientY-drag.swappedAt.y)>6)){
+    const t=target.getBoundingClientRect(),current=[...workspace.children],before=current.indexOf(el)<current.indexOf(target);
+    const past=(e.clientY-t.top-t.height/2)/t.height+(e.clientX-t.left-t.width/2)/t.width;
+    if(before?past>0:past<0){workspace.insertBefore(el,before?target.nextSibling:target);drag.swappedAt={x:e.clientX,y:e.clientY};layout();}
    }
    follow(e);
    if(e.clientY<70)window.scrollBy(0,-14);else if(e.clientY>innerHeight-70)window.scrollBy(0,14);
@@ -102,6 +132,7 @@ export function setupWidgets(workspace) {
   const end=restore=>{
    const d=drag;drag=null;removeEventListener('pointermove',dragMove);removeEventListener('pointerup',up);removeEventListener('pointercancel',cancel);
    if(!d?.lifted)return;
+   refollow=null;Object.assign(document.documentElement.style,{overflowAnchor:'',minHeight:''});
    if(restore){d.order.forEach(n=>workspace.append(n));layout();}
    d.liftoff.remove();d.landing.remove();el.classList.remove('dragging');
    // Settle into the slot from wherever it was dropped.
