@@ -522,9 +522,10 @@ smallest. If a voice can't load, the browser's voice reads replies instead.
 
 ### The panel
 
-The panel has three tabs. **Lesson** is the conversation: a live strip shows the
-note you just played and the chord under your fingers, local analysis and the
-teacher's replies stack below it, each labelled with who answered (System 1 ·
+The panel has three tabs. **Lesson** is the conversation: until it starts, a
+live strip shows the note you just played and the chord under your fingers
+(it makes way once there is anything in the conversation, and comes back with
+**New**); local analysis and the teacher's replies stack below it, each labelled with who answered (System 1 ·
 Laya, or System 2 with how long it thought), and the bottom holds the **Fast /
 Slow** switch (once Laya is loaded), the **Coach each phrase I play** switch and
 the ask box. **Course** lists the lessons (above). **Provider** is where answers come from.

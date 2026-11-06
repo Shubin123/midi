@@ -27,6 +27,23 @@ export async function runTeacherPanel() {
  const bridge = await import('../js/teacher-bridge.js').then(m => m.initTeacher());
  const ws = await import('../js/workspace.js');
 
+ /* ---- The live strip ---- */
+ await check('the live strip shows until the conversation starts, then makes way; a new conversation brings it back', async expect => {
+  const live = panel().querySelector('.tp-live'), shown = () => live.getClientRects().length > 0;
+  expect(shown() && /Play something/.test(live.textContent), 'the empty conversation has no live strip');
+  window.dispatchEvent(new CustomEvent('synth:note', { detail: { midi: 60, velocity: 0.7, on: true, source: 'computer' } }));
+  window.dispatchEvent(new CustomEvent('synth:note', { detail: { midi: 60, velocity: 0.7, on: false, source: 'computer' } }));
+  expect(shown() && /MIDI 60/.test(live.textContent), 'a note played before the chat does not show in it');
+  await ask('louder');
+  expect(!shown(), 'the strip still shows once the chat has started');
+  buttonIn(lastChange(), 'Undo')?.click();
+  panel().querySelector('.clear-btn').click();
+  expect(shown(), 'a new conversation did not bring the strip back');
+  await ask('set the tempo to 120');
+  bridge._loadConversation();
+  expect(!shown(), 'reopened with messages in it, the strip shows again');
+ });
+
  /* ---- Changing settings when asked (System 1, no model) ---- */
  await check('"set the cutoff to 800" changes the filter, says so, and Undo puts it back', async expect => {
   await ask('set the cutoff to 800');

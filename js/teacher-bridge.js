@@ -94,6 +94,7 @@ const STYLE = `
 #teacher-panel .tp-live{display:flex;align-items:baseline;gap:8px;padding:8px 14px;background:var(--secondary-surface-color);border-bottom:1px solid var(--border-color);min-height:38px}
 #teacher-panel .tp-live-note{font-size:18px;font-weight:700;min-width:26px}
 #teacher-panel .tp-live-detail{font:11px monospace;color:var(--text-muted-color);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#teacher-panel .tp-live[hidden]{display:none}
 #teacher-panel .tp-chip{font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;background:var(--accent-color);color:var(--bg-color)}
 #teacher-panel .tp-chip[hidden]{display:none}
 #teacher-panel .tp-messages{flex:1;overflow-y:auto;padding:12px 14px}
@@ -503,7 +504,11 @@ export class TeacherBridge {
   const system2 = this._active?.id === 'local' ? 'Qwen' : providerById(this._active?.id)?.name || 'the model';
   box.querySelector('.tp-mode-note').textContent = mode === 'slow' ? `Laya coaches at once, then ${system2} ${system2 === 'Qwen' ? 'thinks it through' : 'explains it'}.` : `Laya coaches each phrase at once.${slowOk ? ' Tap "Explain why" for more.' : ''}`;
  }
+ // The live strip ("♪ Play something…", then the note just played and the chord held) is for before the
+ // conversation starts; once there is anything in it, the strip makes way.
+ _renderLive() { this.panel.querySelector('.tp-live').hidden = !!this.panel.querySelector('.tp-messages .teacher-msg'); }
  _renderEmpty() {
+  this._renderLive();
   const box = this.panel.querySelector('.tp-messages');
   box.querySelector('.tp-empty')?.remove();
   if (box.querySelector('.teacher-msg')) return;
@@ -848,6 +853,7 @@ export class TeacherBridge {
   if (!c || !node) return;
   c.querySelector('.tp-empty')?.remove();
   c.append(node);
+  this._renderLive();
   while (c.querySelectorAll('.teacher-msg').length > MAX_MESSAGES) c.querySelector('.teacher-msg').remove();
   c.scrollTop = c.scrollHeight;
  }
