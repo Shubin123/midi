@@ -286,6 +286,7 @@ export function createPluginHost() {
      ...(!item.installer && item.kind !== 'Instrument' ? [el('button', { textContent: 'Capture its sound', onclick: () => openCapture(item.name) })] : []),
      ...(stand ? [el('button', { textContent: `Quick stand-in: ${BUILT_INS[stand]}`, onclick: () => addBuiltIn(stand) })] : []),
      el('a', { href: 'https://www.webaudiomodules.com/community/', target: '_blank', rel: 'noopener', textContent: 'Find web plugins ↗' }),
+     ...(item.format === 'VST3' && item.platforms.some(platform => /macOS.*x86_64/.test(platform)) ? [el('a', { href: 'tools/native-vst3.html', target: '_blank', rel: 'noopener', textContent: 'Native execution experiment ↗' })] : []),
      el('button', { textContent: 'Dismiss', onclick: () => box.remove() })),
     el('dl', {}, ...rows.flatMap(([k, v]) => [el('dt', { textContent: k }), el('dd', { textContent: v })])),
     ...notes.map(n => el('p', { className: 'module-hint', textContent: n })));

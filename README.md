@@ -75,8 +75,9 @@ seconds.
 
 ### Checking for regressions
 
-`node tests/all.mjs` runs every suite in parallel (about thirty seconds, most
-of it the widget drags), the ones that drive headless Chrome at most three at
+Run `npm ci --ignore-scripts` first to install the pinned emulator used by the
+native-execution tests. Then `npm test` (or `node tests/all.mjs`) runs every
+suite in parallel, the ones that drive headless Chrome at most three at
 a time, and fails if any does. The browser suites share
 `tests/support/browser.mjs`, which serves the repo and drives headless Chrome. The waveform checks don't just look for "about right": each one
 also leaves a **fingerprint** in `tests/waveforms.golden.json`, so a change
@@ -1557,6 +1558,38 @@ Each card then offers three routes: rebuild from source with
 `native/build.sh` (`vst3web_add_plugin`), **Capture its sound**, or a
 quick built-in stand-in.
 
+### Native VST3 execution experiment
+
+The **Native execution experiment** link on an Intel macOS VST3 card opens
+`tools/native-vst3.html`. This is a browser-only research harness, **not a
+working native plugin player or a decompiler**. It extracts an executable
+from a `.pkg` or ZIP without installing anything and runs x86_64 machine code
+in the Emscripten-built Unicorn.js emulator inside a disposable worker.
+The synth's existing WebAssembly plugin/audio path is unchanged.
+
+**Observed with Arcade 2.2.0's supplied installer:** factory-only mode executes
+`GetPluginFactory` and VST3 virtual methods and returns Output's two Arcade
+classes. It deliberately skips initialization, and both class IDs are zero.
+Normal startup reaches CoreFoundation UUID calls, then the emulator faults
+before the first of 768 initializers completes. **Arcade does not play audio.**
+The report always says `playable: false`; passing the harness tests does not
+certify native plugin playback.
+
+Run `npm ci --ignore-scripts`, serve the repository root on localhost or HTTPS,
+and open the experiment page. Unicorn.js 2.1.4 is loaded from `node_modules`,
+or from a pinned jsDelivr URL if not installed locally, and checked against
+a fixed SHA-256 before execution. Plugin bytes stay local. The engine is
+GPL-2.0; its license is in the installed dependency. No proprietary binary,
+installer, sample content, or license-bypass code is included.
+
+`node tests/native-vst3.mjs` checks the loader, CPU execution (including SSE),
+imports, failures, and package extraction. `node tests/native-vst3-browser.mjs`
+checks execution in Chrome workers, cancellation and watchdogs. Both are
+automatically discovered by the existing `node tests/all.mjs` runner (`npm test`).
+Set `ARCADE_PKG` to the local installer path when running the browser suite to
+also reproduce the actual Arcade factory and startup failure. See
+[`native/EXPERIMENT.md`](native/EXPERIMENT.md) for limitations and investigation notes.
+
 ### Capturing a plug-in's sound
 
 When there's no source code, a plug-in's behavior can be measured instead.
@@ -1640,6 +1673,8 @@ later, nothing to install; see *Running it*):
 - `node tests/voice.mjs`: how talk mode reads music notation aloud
 - `node tests/teacher.mjs`: the AI teacher's analysis and API requests
 - `node tests/native-id.mjs`: identification, including an installer streamed past 256 MB of samples to its plug-in (macOS; uses `clang`, `pkgbuild` and `productbuild`)
+- `node tests/native-vst3.mjs`: experimental Mach-O loading and native CPU execution, dyld fixups, package extraction, dependency integrity and explicit failures
+- `node tests/native-vst3-browser.mjs`: the native experiment in Chrome workers; optional `ARCADE_PKG` verifies the supplied target's factory and known startup failure, not playback
 - `node tests/vst3-wasm.mjs`: the WebAssembly VST3 builds, and their VSTGUI editors opened, drawn and dragged
 - `node tests/plugin-editor.mjs`: plug-in windows' editors and generic controls, every way an editor can fail forced, and AGain's real VSTGUI editor used (headless Chrome)
 - `node tests/editor-frameworks.mjs`: the editor adapter each framework gets, from a bundle's editor.json or its binary's strings
@@ -1659,9 +1694,10 @@ python -m http.server 8000
 ```
 
 Node is not needed to run the app. It is used only by the test suites in
-`tests/`, which need Node 22 or later (for its built-in WebSocket) and import
-nothing but Node's own modules, so there is nothing to `npm install`. There is
-no `package.json`; the committed `package-lock.json` is empty and unused.
+`tests/`, which need Node 22 or later (for its built-in WebSocket). Run
+`npm ci --ignore-scripts` before the complete suite: `package.json` and its
+lockfile pin Unicorn.js for the new native-execution tests. The other suites
+still use Node's own modules without additional packages.
 
 Browsers require a user gesture before audio can start, so the `AudioContext`
 is created lazily on the first interaction and resumed if it is suspended. Web

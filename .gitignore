@@ -2,3 +2,4 @@
 Thumbs.db
 native/.sdk
 native/build/
+node_modules/
