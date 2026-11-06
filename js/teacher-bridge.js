@@ -37,6 +37,8 @@ import { PROVIDERS, GROUPS, SYSTEM_ONE, NO_SYSTEM_TWO, providerById, getProvider
 import { signIn, completeSignIn } from './ai-auth.js';
 import { read, save } from './storage.js';
 import { CLAP, listening } from './listening.js';
+import { Agent, ACTIONS, definitions as agentTools } from './agent-actions.js';
+import { chordMidi, scaleRunMidi } from './pitch-analyzer.js';
 
 // Notes the player struck or sang; the sequencer, looper and the teacher's own playback are not analysed.
 const PLAYED = /^(midi|computer|mouse|touch|audio)/; // audio: sung or played into the microphone (js/listening.js)
@@ -59,6 +61,10 @@ const ABOUT_APP = /widget|plug-?in|effect|knob|slider|button|setting|sound|patch
 const DEFAULT_VOICE = { engine: 'pocket', voice: 'anna' };
 // Requests System 1 can't meet, since it only chooses from what is written: composing or playing something
 // particular, or changing the last example. With System 2 connected these go straight to it.
+// Requests for the teacher to run something as an agent (set up a lesson, an exercise, a practice track): with
+// System 2 connected they go straight to it, whose tools can do several things at once, before System 1 reads a
+// single setting out of them.
+const AGENT = /\b(lessons?|exercises?|practi[cs]e|backing (track|loop)|coach me|set (it |everything |this )?up|set up|how did i do)\b/i;
 const COMPOSE = /\b(play|make|write|compose|improvise|give me|create|show me)\b[^.?!]*\b(lick|riff|melody|progression|chords?|song|tune|groove|bass ?line|arpeggio|scale|example|it|that|this|something)\b|\b(longer|shorter|faster|slower|again|same|another|instead|variation)\b/i;
 
 
@@ -171,6 +177,9 @@ const STYLE = `
 #teacher-panel .tp-habits{font-size:11px;color:var(--text-muted-color);margin:4px 0 8px}
 #teacher-panel .teacher-msg.s1{border-left-color:#f4a261;white-space:normal}
 #teacher-panel .teacher-msg.change{font-size:12px;border-left-color:var(--accent-color);white-space:normal}
+#teacher-panel .teacher-msg.agent{font-size:12px;white-space:normal}
+#teacher-panel .teacher-msg.agent.suggest{border-left-color:#9aa5b1;border-left-style:dashed}
+#teacher-panel .teacher-msg.agent.confirm{border-left-color:#f4a261}
 #teacher-panel .tp-history{width:auto;max-width:150px;font-size:11px;padding:4px 6px}
 #teacher-panel .tp-storage{margin-top:16px;border-top:1px solid var(--border-color);padding-top:4px;display:flex;flex-direction:column;gap:6px}
 #teacher-panel .tp-storage .tp-row{justify-content:space-between}
@@ -226,6 +235,16 @@ export class TeacherBridge {
   this.tracker = new PhraseTracker(a => this._onPhrase(a), { gapMs: 800 });
   this.panel = null;
   this.autoAnalyze = read('teacher-auto-v1', true);
+  // The teacher as an agent (js/agent-actions.js): its changes are made at once while "Agent can act" is on,
+  // and offered to the student as suggestions while it is off. Undo for each is kept here, by entry, for the
+  // session (a reloaded conversation shows what was done, without Undo).
+  this.agentActs = read('teacher-agent-acts-v1', true);
+  this._undos = new Map();
+  this.agent = new Agent({ canAct: () => this.agentActs, show: e => this._agentShow(e), env: {
+   play: (steps, bpm, label) => this._playSteps(steps, bpm, label), chordMidi: c => chordMidi(c), scaleRun: sc => scaleRunMidi(sc.tonic, sc.scaleName),
+   exercise: () => this.exercise, setExercise: ex => this._setExercise(ex),
+   performance: () => this.convo.current.entries.filter(e => e.kind === 'local' || e.kind === 'rhythm').slice(-4).map(e => (e.kind === 'local' ? `phrase: ${e.title}${e.chords ? `, chords ${e.chords}` : ''} (${e.detail})` : `rhythm: ${e.bars.join(' | ')}; ${e.text} ${e.fix}`)),
+  } });
   this._phraseQueue = []; this._processing = false;
   this._timers = []; this._sounding = new Set();
   this._keysLow = KEYS_LOW; // the bottom C of the student's 25 keys; examples play there
@@ -287,7 +306,8 @@ export class TeacherBridge {
    this.tracker.noteOn(midi, vel, now); this.attempt.noteOn(midi, now);
    if (clap) this._showClap(vel); else this._showLive(midi, vel, source === 'audio' && listening.settings.mode === 'chords');
   });
-  window.addEventListener('synth:panic', () => { this._stopPlayback(); this.tracker.reset(); this.attempt.reset(); });
+  // PANIC stops the agent too: nothing more changes this turn, and the model's answer is dropped.
+  window.addEventListener('synth:panic', () => { this._stopPlayback(); this.tracker.reset(); this.attempt.reset(); if (this.agent.batch.length || this._agentBusy) { this.agent.halt(); this.teacher.stop(); this._setStatus?.(null); } });
  }
 
  _onPhrase(a) {
@@ -472,7 +492,7 @@ export class TeacherBridge {
     <div class="tp-messages" role="log" aria-live="polite"></div>
     <div class="tp-foot">
      <div class="tp-mode" hidden><span class="tp-seg" role="radiogroup" aria-label="Teaching speed"><button type="button" role="radio" data-mode="fast">Fast</button><button type="button" role="radio" data-mode="slow">Slow</button></span><span class="tp-mode-note"></span></div>
-     <div class="tp-foot-row"><label><input type="checkbox" class="auto-check"/>Coach each phrase I play</label><span class="tp-row"><select class="tp-history" aria-label="Conversation history"></select><button type="button" class="clear-btn" title="Start a new conversation; this one stays in the history">New</button></span></div>
+     <div class="tp-foot-row"><label><input type="checkbox" class="auto-check"/>Coach each phrase I play</label><label title="On: the teacher changes the workspace itself when you ask (each change listed with Undo; clearing or saving asks first). Off: it suggests, and you apply."><input type="checkbox" class="agent-check"/>Agent can act</label><span class="tp-row"><select class="tp-history" aria-label="Conversation history"></select><button type="button" class="clear-btn" title="Start a new conversation; this one stays in the history">New</button></span></div>
      <form class="tp-ask"><input type="text" class="question-input" placeholder="Ask about theory…" aria-label="Ask the teacher"/><button type="button" class="tp-talk" aria-pressed="false" title="Talk mode: speak to the teacher and hear it answer">🎙 Talk</button><button type="submit" class="tp-primary tp-ask-btn">Ask</button></form>
      <p class="tp-talk-note" role="status" hidden></p>
     </div>
@@ -504,6 +524,9 @@ export class TeacherBridge {
   const auto = p.querySelector('.auto-check');
   auto.checked = this.autoAnalyze;
   auto.onchange = () => { this.autoAnalyze = auto.checked; save('teacher-auto-v1', this.autoAnalyze); };
+  const acts = p.querySelector('.agent-check');
+  acts.checked = this.agentActs;
+  acts.onchange = () => { this.agentActs = acts.checked; save('teacher-agent-acts-v1', this.agentActs); };
   p.querySelector('.clear-btn').onclick = () => { this.convo.startNew(); this._loadConversation(); };
   p.querySelector('.tp-history').onchange = e => { if (e.target.value && this.convo.open(e.target.value)) this._loadConversation(); };
   p.querySelectorAll('.tp-seg button').forEach(b => { b.onclick = () => { this.mode = b.dataset.mode; save('teacher-mode-v1', this.mode); this._renderMode(); }; });
@@ -987,6 +1010,31 @@ export class TeacherBridge {
      lesson && button(`Lesson: ${lesson.title}`, () => this._startLesson(lesson), true),
      e.q && this.teacher.isConfigured && button(`Ask ${this._who()}`, () => { this._msg('user', e.q); this._toSystem2(e.q); })));
   }
+  // The agent's own entries: done (with Undo), suggested (Apply), waiting to be confirmed (Do it / Cancel),
+  // refused (why), and Undo all for a turn's changes. After a reload the buttons are gone: the undo isn't kept.
+  if (e.kind?.startsWith('agent-')) {
+   const who = e.who ? el('span', { className: 'tp-who', textContent: e.who }) : '';
+   const label = e.action ? e.action.replace(/_/g, ' ') : '';
+   const once = (b, f, doneText) => { b.onclick = async () => { b.disabled = true; try { await f(); b.textContent = doneText; } catch (err) { b.textContent = 'Failed'; this._msg('info', err.message); } }; return b; };
+   if (e.kind === 'agent-done') {
+    const undo = this._undos.get(e.id);
+    return el('div', { className: 'teacher-msg change agent' }, who, `Did: ${e.text}.`, undo ? actions(once(button('Undo'), undo, 'Undone')) : '');
+   }
+   if (e.kind === 'agent-batch') {
+    const undo = this._undos.get(e.id);
+    return el('div', { className: 'teacher-msg change agent' }, who, `${e.count} changes in this answer.`, undo ? actions(once(button(`Undo all ${e.count}`), undo, 'All undone')) : '');
+   }
+   if (e.kind === 'agent-suggest' || e.kind === 'agent-confirm') {
+    const apply = this._undos.get(`${e.id}:apply`), row = actions();
+    if (apply) {
+     const go = once(button(e.kind === 'agent-confirm' ? 'Do it' : 'Apply', null, true), async () => { await apply(); row.querySelectorAll('button').forEach(x => { x.disabled = true; }); }, e.kind === 'agent-confirm' ? 'Done' : 'Applied');
+     const no = button(e.kind === 'agent-confirm' ? 'Cancel' : 'Dismiss', () => { row.querySelectorAll('button').forEach(x => { x.disabled = true; }); no.textContent = 'Left as it was'; this._undos.delete(`${e.id}:apply`); });
+     row.append(go, no);
+    }
+    return el('div', { className: `teacher-msg agent ${e.kind === 'agent-confirm' ? 'confirm' : 'suggest'}` }, who, e.kind === 'agent-confirm' ? `Asks first: ${label}?` : `Suggests: ${e.text}`, row);
+   }
+   return el('div', { className: 'teacher-msg info agent' }, who, `Couldn't ${label}: ${e.text}.`);
+  }
   if (e.kind === 'change') {
    const undo = button('Undo', () => { if (ws.restore(e.name, e.raw)) { undo.disabled = true; undo.textContent = 'Undone'; } });
    const text = ws.LAYOUTS.includes(e.raw) ? `${e.name} is ${e.to} (it was ${e.fromText}).` : `Changed ${e.name} from ${e.fromText} to ${e.to}.`;
@@ -1052,6 +1100,7 @@ export class TeacherBridge {
   const req = await meetRequest(q, { last: this._lastExample, pick: this.laya ? (...a) => this.laya.pick(...a) : null }).catch(() => null);
   if (req) return this._playRequest(q, req);
   await this._learnAll(); // what each plug-in's controls are for, so "more reverb" finds the reverb's mix
+  if (AGENT.test(q) && this.teacher.isConfigured) return this._question(q);
   if (this._command(q)) return;
   const compose = COMPOSE.test(q);
   if (compose && this.teacher.isConfigured) return this._question(q, [], { compose });
@@ -1074,7 +1123,12 @@ export class TeacherBridge {
  _toSystem2(q, focus = [], { compose = false, quick = '', onConfirm = null, note = '' } = {}) {
   this._askedAt = performance.now();
   const context = [this._workspaceContext(q, focus, compose), note && `[ALREADY PLAYED] The app has just played this for the student: ${note} Explain in two or three sentences what it is and why it fits the request.`].filter(Boolean).join('\n\n');
-  this.teacher.ask(q, { think: this.mode === 'slow', context, quick, onConfirm, tools: this._tools() });
+  this.agent.begin(); this._agentBusy = true;
+  return this.teacher.ask(q, { think: this.mode === 'slow', context, quick, onConfirm, tools: this._tools() }).finally(() => {
+   this._agentBusy = false;
+   const done = this.agent.end().filter(r => r.undo);
+   if (done.length > 1) { const id = `undo-${Date.now()}`; this._undos.set(id, () => done.reverse().forEach(r => r.undo())); this._add({ kind: 'agent-batch', id, count: done.length, who: `System 2 · ${this._who()}` }); }
+  });
  }
  // The tools a hosted System 2 model may call while it answers (js/providers.js): read the widgets, a
  // widget's or plug-in's controls and what each does, change a control, hide, show or minimise a widget, and
@@ -1090,8 +1144,10 @@ export class TeacherBridge {
    fn('arrange_widget', 'Hide, show or minimise a whole widget.', { widget: { type: 'string' }, state: { type: 'string', enum: ['hidden', 'shown', 'minimised'] } }, ['widget', 'state']),
    fn('show_control', 'Point at a control: it is brought into view and pulses for a moment.', { control: name }, ['control']),
   ];
+  definitions.push(...agentTools());
   const who = `System 2 · ${this._who()}`;
   const run = async (tool, a = {}) => {
+   if (ACTIONS[tool]) return this.agent.call(tool, a, who);
    await this._learnAll();
    if (tool === 'list_widgets') return ws.describe([]);
    if (tool === 'get_controls' || tool === 'describe_plugin') {
@@ -1103,7 +1159,10 @@ export class TeacherBridge {
     return lines.join('\n');
    }
    if (tool === 'set_control' || tool === 'arrange_widget') {
-    const done = this._apply([{ name: a.control ?? a.widget, value: a.value ?? a.state }], who);
+    const change = { name: a.control ?? a.widget, value: a.value ?? a.state };
+    if (this.agent.halted) return 'Stopped: the student pressed PANIC, so nothing more changes this turn.';
+    if (!this.agentActs) { this._agentShow({ kind: 'suggest', action: tool, args: a, text: `${change.name} → ${change.value}`, who, apply: () => this._apply([change], who) }); return `Suggested to the student, who can apply it with one click: ${change.name} → ${change.value}.`; }
+    const done = this._apply([change], who);
     return done.length ? `Done: ${done.join(', ')}.` : `Not changed. ${done.failed.join(' ')}`;
    }
    if (tool === 'show_control') { const shown = ws.show(a.control); return shown ? `Pointing at ${shown}.` : `There is no control called "${a.control}".`; }
@@ -1124,9 +1183,22 @@ export class TeacherBridge {
  }
 
  // A reply's "show" points at controls one after another; "set" changes them, each with an Undo.
- _act({ show = [], set = [] }) {
+ // A model without tools writes its actions as { "do": [{ "action": …, …args }] }: they go through the agent, as a
+ // tool call would. Its "set"s are suggested instead of made while the agent may not act.
+ _act({ show = [], set = [], do: steps = [] }) {
   show.forEach((name, i) => setTimeout(() => ws.show(name), 600 + i * 1500));
-  this._apply(set.map(([name, value]) => ({ name, value })));
+  const who = `System 2 · ${this._who()}`;
+  if (this.agentActs) this._apply(set.map(([name, value]) => ({ name, value })));
+  else set.forEach(([name, value]) => this._agentShow({ kind: 'suggest', action: 'set_control', args: { control: name, value }, text: `${name} → ${value}`, who, apply: () => this._apply([{ name, value }], who) }));
+  (async () => { for (const { action, ...args } of steps) await this.agent.call(action, args, who); })();
+ }
+ // What the agent did, suggests, or asks the student to confirm, in the conversation (js/agent-actions.js).
+ _agentShow(e) {
+  const id = `agent-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  if (e.undo) this._undos.set(id, e.undo);
+  if (e.apply) this._undos.set(`${id}:apply`, e.apply);
+  this._add({ kind: `agent-${e.kind}`, id, action: e.action, text: e.text, who: e.who });
+  if (e.kind === 'done') this._say?.(e.text);
  }
  // Makes changes as the student would, each listed with Show and Undo: a control is set, a whole widget is
  // hidden, shown or minimised. Returns what was done and what couldn't be, in words.

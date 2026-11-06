@@ -195,12 +195,13 @@ class FakeEngine {
  assert.equal(requests[1].body.messages.at(-1).content, 'Done: Cutoff (Hz) 800.');
  assert.equal(requests[1].body.messages.at(-1).tool_call_id, 'c1');
 
- // A model that keeps calling tools gets four rounds, then must answer without them.
+ // A model that keeps calling tools gets six rounds (a lesson set up as an agent takes a few), then must answer
+ // without them.
  requests.length = 0;
- respond = () => ({ ok: true, status: 200, body: requests.length <= 4 ? { choices: [{ message: { tool_calls: [{ id: 'x', function: { name: 'set_control', arguments: '{}' } }] } }] } : { choices: [{ message: { content: 'done' } }] } });
+ respond = () => ({ ok: true, status: 200, body: requests.length <= 6 ? { choices: [{ message: { tool_calls: [{ id: 'x', function: { name: 'set_control', arguments: '{}' } }] } }] } : { choices: [{ message: { content: 'done' } }] } });
  assert.equal(await engine.generate([], { tools }), 'done');
- assert.equal(requests.length, 5);
- assert.ok(!requests[4].body.tools, 'the last request has no tools');
+ assert.equal(requests.length, 7);
+ assert.ok(!requests[6].body.tools, 'the last request has no tools');
 
  // A provider that won't take tools is asked again without them, and not offered them again.
  requests.length = 0;

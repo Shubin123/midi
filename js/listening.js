@@ -290,4 +290,5 @@ window.addEventListener('synth:note', ({ detail: { midi, on, source = '', silent
  const release = (window.synth?.params?.().adsr.release ?? 0.5) * 1000;
  listening._app.set(midi, on ? Infinity : performance.now() + release + 150 + listening.latencyMs);
 });
-window.addEventListener('synth:panic', () => listening._releaseAll(performance.now()));
+// A panic cuts every note without its note-off: none of them is sounding any more.
+window.addEventListener('synth:panic', () => { listening._releaseAll(performance.now()); listening._app.clear(); });

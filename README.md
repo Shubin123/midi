@@ -666,7 +666,7 @@ calling, `js/providers.js`) while it answers: `list_widgets`, `get_controls`
 (a widget's or plug-in's controls with values and ranges), `describe_plugin`
 (what the plug-in is and what each control does), `set_control`,
 `arrange_widget` (hide, show, minimise) and `show_control`. It may call them in
-up to four rounds before it replies, and every change it makes is listed with
+up to six rounds before it replies, and every change it makes is listed with
 Show and Undo, marked as System 2's. A model or provider that won't take tools
 is asked again without them, and the JSON line (`{"set": …}`) is how it changes
 things from then on; Qwen on the device always uses the JSON line. A change made
@@ -676,10 +676,65 @@ teacher's own switch in Settings is the one setting it leaves to you.
 `node tests/commands.mjs` reads over a hundred requests against the app's real
 controls and the built-in Delay and Reverb (and the ones that must change
 nothing); `node tests/teacher.mjs` runs the tool loop against a stubbed provider
-(four rounds, then an answer; a provider that refuses tools); and
+(six rounds, then an answer; a provider that refuses tools); and
 `node tests/teacher-panel.mjs` types requests into the panel in headless Chrome
 with real plug-ins loaded, and has a stubbed hosted model call every tool,
 checking the controls, the synth and Undo.
+
+### The teacher as an agent
+
+Beyond single settings, the teacher can operate the whole workspace
+(`js/agent-actions.js`). Its actions are typed and documented, one tool each
+for a hosted model: **get_state** (the patch, tempo and metronome, the step
+sequencer's key, scale, rows and steps, automation lanes, loop slots,
+plug-ins, widgets, listening, and the latest phrase and rhythm summaries),
+**set_tempo**, **start_metronome**, **stop_metronome**, **set_key_scale**,
+**write_sequencer_pattern**, **clear_sequencer**, **play_sequencer**,
+**stop_sequencer**, **set_param** (any control: oscillators, envelope,
+filter, master, Air, plug-ins), **set_oscillator**, **add_automation_lane**,
+**write_automation** (16 values or a ramp), **arm_loop_slot** (and record,
+as notes or audio), **stop_loop_recording**, **play_loop_slot**,
+**clear_loop_slot**, **load_plugin**, **set_plugin_param**,
+**bypass_plugin**, **import_file** (it can only point at the button: the
+student chooses the file), **export_midi**, **render_audio**,
+**show_widget**, **hide_widget**, **focus_widget**, **start_listening**,
+**stop_listening**, **set_listening_mode**, **play_example_phrase** and
+**set_exercise**. Arguments are checked before anything changes, and a wrong
+call is refused with the reason ("bpm must be from 30 to 300, not 500",
+"none of D#5 is on the sequencer's rows"), which the model reads and the
+panel shows. A model without tools (Qwen on the device, or a provider that
+refuses them) writes the same actions as its JSON line,
+`{"do": [{"action": "set_tempo", "bpm": 90}]}`.
+
+What happens to each call is the student's to decide:
+
+- **Agent can act** (the switch under the conversation, kept, on by
+  default): on, each change is made at once and listed as it happens with
+  **Undo**, and an answer that made several has **Undo all**; off, each is
+  offered as a suggestion with **Apply** and **Dismiss**, and nothing changes
+  until the student applies it. A setting System 2 changes with
+  `set_control` or a `set` line follows the same switch.
+- Anything destructive asks first, whatever the switch: clearing the
+  pattern, writing over a pattern that has notes, clearing a loop, saving a
+  file, and opening the microphone wait for **Do it** (or **Cancel**).
+- At most eight changes an answer and twelve in ten seconds; **PANIC** stops
+  the agent for the rest of the answer and drops the answer being made.
+- With System 2 connected, requests about lessons, exercises and practice
+  ("set up a lesson", "how did I do?") go straight to it, since it can do
+  several things at once; System 1 still meets single settings at once.
+
+So a hosted model can set up a lesson (tempo, key, metronome, the exercise in
+the sequencer), hear it sung back through the Listening widget, read the
+rhythm card from get_state, and set a slower exercise, all from tool calls.
+
+`node tests/agent.mjs` calls every action as a model would: each changes what
+it says, a wrong call is refused with its reason and changes nothing, and
+Undo puts it back. It then checks what the agent decides (acting, suggesting
+with Apply and Dismiss, asking first, the limits, PANIC), Undo all for an
+answer, the JSON line from a model without tools, a whole lesson run by a
+scripted model (set up, sung back through Chrome's fake microphone input,
+coached, and the next exercise set at 80 BPM), and that with no model the
+teacher still meets a request at once.
 
 ### The teacher and the workspace
 

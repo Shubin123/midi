@@ -196,7 +196,7 @@ export async function runTeacherPanel() {
  await check('a hosted model\'s tool calls: it reads a plug-in, sets a control and hides a widget, each listed with Undo', async expect => {
   const results = {};
   bridge.teacher.setEngine({ generate: async (messages, opts) => {
-   expect(opts.tools?.definitions.map(d => d.function.name).join() === 'list_widgets,get_controls,describe_plugin,set_control,arrange_widget,show_control', 'the tools were not offered');
+   expect(opts.tools?.definitions.map(d => d.function.name).join().startsWith('list_widgets,get_controls,describe_plugin,set_control,arrange_widget,show_control,get_state,set_tempo'), 'the tools were not offered (the workspace\'s, then the agent\'s actions)');
    results.describe = await opts.tools.run('describe_plugin', { plugin: 'Reverb' });
    results.controls = await opts.tools.run('get_controls', { widget: 'Filter' });
    results.set = await opts.tools.run('set_control', { control: 'Reverb › Decay', value: 6 });

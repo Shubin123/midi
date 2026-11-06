@@ -87,7 +87,7 @@ const apiError = (status, data) => Object.assign(new Error(httpError(status, dat
 // answer sent back before it replies; the teacher's tools read and change the workspace (js/teacher-bridge.js).
 // A model or provider that won't take tools is asked again without them, and from then on the teacher's JSON
 // line is how it changes things (js/ai-teacher.js).
-export const TOOL_ROUNDS = 4;
+export const TOOL_ROUNDS = 6; // a lesson set up as an agent takes a few rounds of actions
 const refusesTools = err => [400, 404, 405, 422].includes(err.status) && /tool|function/i.test(err.message);
 export function openAiEngine({ base, apiKey, model, headers = {} }) {
  const url = base.replace(/\/$/, '') + '/chat/completions';

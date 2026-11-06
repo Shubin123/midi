@@ -25,11 +25,11 @@ To play an example, add one last line of JSON naming exactly what your reply is 
 {"notes": ["<note name and octave>"]} plays single notes in order (C4 is middle C; the student's 25 keys run from C3 to C5)
 Leave the line out if there is nothing worth playing.
 
-The app is also a synth workspace with widgets (oscillators, envelope, filter, step sequencer, loop recorder, automation, plug-ins, import and export) and a Settings menu. When the student asks about one, a [WORKSPACE] block lists the widgets and the current settings of the relevant ones; teach from those real names and values. In the same JSON line you can add "show" to point at a control, e.g. {"show": "Filter › Cutoff (Hz)"}, and, only when the student asks you to change something, "set" with the new value, e.g. {"set": {"Filter › Cutoff (Hz)": 800}}; a whole widget can be set to "hidden", "shown" or "minimised", and the tempo is "Step sequencer › Base BPM". Never claim to press buttons; tell the student which one to press.`;
+The app is also a synth workspace with widgets (oscillators, envelope, filter, step sequencer, loop recorder, automation, plug-ins, import and export) and a Settings menu. When the student asks about one, a [WORKSPACE] block lists the widgets and the current settings of the relevant ones; teach from those real names and values. In the same JSON line you can add "show" to point at a control, e.g. {"show": "Filter › Cutoff (Hz)"}, and, only when the student asks you to change something, "set" with the new value, e.g. {"set": {"Filter › Cutoff (Hz)": 800}}; a whole widget can be set to "hidden", "shown" or "minimised", and the tempo is "Step sequencer › Base BPM". For more than a setting, add "do" with the app's actions, e.g. {"do": [{"action": "set_tempo", "bpm": 90}, {"action": "start_metronome"}, {"action": "write_sequencer_pattern", "notes": [{"note": "C4", "step": 0}]}]}. Never claim to press buttons; tell the student which one to press.`;
 
 // Said too when the teacher's tools are offered (hosted models; js/providers.js). A change made with a tool is
 // not made again from the JSON line.
-export const TOOLS_PROMPT = 'You also have tools that read and change the workspace. Use get_controls or describe_plugin to read a widget or plug-in before teaching it, and set_control or arrange_widget when the student asks you to change something; then say in a sentence what you changed. Use the exact names the tools give.';
+export const TOOLS_PROMPT = 'You also have tools that read and change the workspace. Use get_controls or describe_plugin to read a widget or plug-in before teaching it, and set_control or arrange_widget when the student asks you to change something; then say in a sentence what you changed. Use the exact names the tools give. You can also operate the whole workspace as an agent: get_state reads the patch, tempo, sequencer, loops, plug-ins and the latest performance; set_tempo, start_metronome, set_key_scale, write_sequencer_pattern, play_sequencer, set_oscillator, set_param, write_automation, arm_loop_slot, play_loop_slot, load_plugin, set_exercise, play_example_phrase, start_listening and the rest change it. To set up a lesson: set the tempo and key, start the metronome, write the exercise into the sequencer, play it once, then listen. Clearing, saving a file and opening the microphone wait for the student to confirm; if the student has not let you act, your changes are offered to them as suggestions. Make only the changes asked for.';
 
 // Reasoning models write their thinking inline; only the answer after it is shown. A reply that is still
 // inside an unfinished <think> block (it ran out of room) has no answer yet.
@@ -40,7 +40,7 @@ export function stripThinking(text) {
  return s.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 }
 
-const KEYS = ['chords', 'scale', 'notes', 'play', 'show', 'set', 'exercise'];
+const KEYS = ['chords', 'scale', 'notes', 'play', 'show', 'set', 'exercise', 'do'];
 // The last balanced {...} in the reply that parses as JSON and names something to play.
 function findExample(reply) {
  for (let start = reply.lastIndexOf('{'); start >= 0; start = reply.lastIndexOf('{', start - 1)) {
@@ -117,12 +117,14 @@ export function parsePlayCommand(raw) {
  const text = clean(reply.slice(0, found.start) + reply.slice(found.end));
  const show = (Array.isArray(obj.show) ? obj.show : [obj.show]).filter(x => typeof x === 'string' && x.trim()).slice(0, 4);
  const set = obj.set && typeof obj.set === 'object' && !Array.isArray(obj.set) ? Object.entries(obj.set).filter(([k, v]) => k.trim() && ['string', 'number', 'boolean'].includes(typeof v)).slice(0, 6) : [];
- const prose = !steps.length && !obj.show && !obj.set && SUGGESTS.test(text) ? exampleFromProse(text) : null;
+ // The app's actions (js/agent-actions.js), for a model without tools: [{ action, …args }], at most eight.
+ const todo = (Array.isArray(obj.do) ? obj.do : []).filter(d => d && typeof d === 'object' && typeof d.action === 'string').slice(0, 8);
+ const prose = !steps.length && !obj.show && !obj.set && !obj.do && SUGGESTS.test(text) ? exampleFromProse(text) : null;
  const out = { text, play: steps.length ? { steps, bpm, label: labels.join(', ') || `${steps.flat().length} notes` } : prose };
  // A rhythm exercise: a pattern of one or two bars on the sixteenth grid, at a tempo.
  const pattern = readPattern(obj.exercise?.pattern);
  if (pattern) { const at = Number.isFinite(Number(obj.exercise.bpm)) ? Math.max(40, Math.min(220, Math.round(Number(obj.exercise.bpm)))) : 90; out.exercise = { id: 'model', pattern, bpm: at, label: `${pattern.match(/.{16}/g).join(' | ')} at ${at} BPM` }; }
- if (show.length || set.length) out.actions = { show, set };
+ if (show.length || set.length || todo.length) out.actions = { show, set, ...(todo.length ? { do: todo } : {}) };
  return out;
 }
 
@@ -152,6 +154,8 @@ export class AiTeacher {
  analyzePhrase(a, opts = {}) { return this._send(`${phraseMessage(a, opts.coach)}${opts.rhythm ? `\n${opts.rhythm}` : ''}`, opts); }
  ask(q, opts = {}) { return this._send(q, opts); }
  reset() { this._generation++; this.conversationHistory = []; this.engine?.interrupt?.(); }
+ // Drops the answer being made (PANIC), keeping the conversation.
+ stop() { this._generation++; this.engine?.interrupt?.(); this.onStatus?.('ready'); }
 
  // One request at a time, so the history always alternates user and assistant turns.
  // Requests queued before a reset() are skipped.

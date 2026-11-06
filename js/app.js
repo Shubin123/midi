@@ -22,6 +22,7 @@ window.addEventListener('load',()=>{
  mountTiming(keyboard,document.getElementById('metronome-tempo-group')); // the timing strip under the keys, and Sync to MIDI clock
  workspace.append(createListeningWidget()); // Audio In: singing or playing into the microphone, played as from a keyboard
  const {sequence,automation,api}=createSequencer();workspace.append(sequence,automation);
+ window.workspaceApi={sequencer:api}; // for the teacher's actions (js/agent-actions.js)
  document.querySelectorAll('.controls > .control-group').forEach((el,i)=>{el.id ||= 'settings-module-'+i;workspace.append(el);});
  const wrap=(selector,id,title)=>{const content=document.querySelector(selector);const panel=document.createElement('section');panel.id=id;panel.dataset.title=title;panel.dataset.wide='true';panel.className='wide';panel.append(content);workspace.append(panel);};
  wrap('.launchpad-looper-container','looper-module','Loop recorder');
