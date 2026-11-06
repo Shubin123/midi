@@ -325,7 +325,17 @@ The **Course** tab starts with 14 lessons on **using the workspace** (widgets,
 oscillators, the envelope, the filter, tempo, the sequencer, the loop recorder,
 automation, effect and instrument plug-ins, Air, the oscilloscope and export),
 each checked from the workspace itself as you work: a slider moved below a
-value, a plug-in loaded, a loop recorded. Then come 24 short lessons adapted from
+value, a plug-in loaded, a loop recorded. Two lessons on **tempo and rhythm**
+follow (`js/rhythm-lessons.js`): tempo is speed and rhythm is pattern, so the
+same rhythm is recognizable at any tempo; and the teacher splits its work the
+same way, with System 1 keeping the tempo (answering every beat at once) and
+System 2 shaping the rhythm (the moments that deserve a pause, careful
+reasoning or emphasis). Their tasks are checked from when each key goes down:
+play a rhythm with long and short notes, then the same rhythm at least a third
+faster or slower; and play a steady beat of eight with the first and fifth
+lower than the rest. Laya sends questions such as "what's the difference
+between tempo and rhythm?" or "what are System 1 and System 2?" to these
+lessons. Then come 24 short lessons adapted from
 [Open Music Theory](https://openmusictheory.github.io) (`js/lessons.js`), in
 three units: **Fundamentals** (the keyboard, enharmonic names, half steps, the
 major and minor scales, scale degrees, key signatures, relative keys,
@@ -637,7 +647,7 @@ The service worker needs `https://` or `http://localhost`. Tests:
 - `node tests/formats.mjs`: WAV, AIFF and MIDI reading and writing
 - `node tests/sequencer.mjs`: sequencer scales and pattern transposition
 - `node tests/coach.mjs`: chord and scale names to notes, every coaching step in every key, and fitting examples onto 25 keys
-- `node tests/lessons.mjs`: every course lesson's task, played right and wrong
+- `node tests/lessons.mjs`: every course lesson's task, played right and wrong, including the rhythm lessons' timing
 - `node tests/workspace.mjs`: widget guides, workspace lessons, System 1's answers and tips, plug-in learning, System 2 supervising, saved conversations, clearing downloaded models
 - `node tests/requests.mjs`: requests to play something met by System 1, and System 2's examples read reliably
 - `node tests/voice.mjs`: how talk mode reads music notation aloud

@@ -4,8 +4,10 @@
 // (widgets, controls, values), so all of this runs and is tested without a browser.
 import { guideFor } from './workspace-guide.js';
 import { LESSONS } from './lessons.js';
+import { RHYTHM_LESSONS } from './rhythm-lessons.js';
 
-const THEORY = 'music theory: notes, scales, keys, intervals, chords, harmony and chord progressions';
+const THEORY = 'music theory: notes, tempo and rhythm, scales, keys, intervals, chords, harmony and chord progressions; and how the teacher\'s fast System 1 and slow System 2 share the work';
+const TAUGHT = [...RHYTHM_LESSONS, ...LESSONS];
 const brief = s => s.split(/(?<=\.)\s/)[0]; // the first sentence
 // Words in common between a question and an option, so the plain cases need no model at all: a stem match
 // scores 1 and two question words side by side in the option ("record a loop") score 1 more.
@@ -37,12 +39,16 @@ export async function answer(q, { pick: choose, widgets, hint = [] }) {
  const situation = `A student using a synth and music-theory app asks: "${q}"`;
  const pool = hint.length ? widgets.filter(w => hint.includes(w.id)) : widgets;
  const areas = Object.fromEntries(pool.map(w => [w.id, `${w.title}${w.plugin ? ' (plug-in)' : ''}: ${brief(guideFor(w)?.what || 'a widget')}`]));
- if (!hint.length) areas.theory = THEORY;
+ // A question can name a widget and a lesson at once ("tempo or rhythm?"): a word from a lesson's title that
+ // the named widgets' guides never use (numbers like the "1" in "System 1" aside) keeps theory among the choices.
+ const covered = new Set(pool.flatMap(w => words([w.title, guideFor(w)?.what, ...(guideFor(w)?.how || []).map(([text]) => text)].join(' '))));
+ const asked = words(q);
+ if (!hint.length || TAUGHT.some(l => words(l.title).some(w => w.length > 2 && asked.includes(w) && !covered.has(w)))) areas.theory = THEORY;
  const first = await pick(situation, 'Which part of the app, or which subject, is the question about?', areas);
  if (first.choice === 'theory') {
-  const lessons = Object.fromEntries(LESSONS.map(l => [l.id, `${l.title}: ${brief(l.text)}`]));
-  const second = await pick(situation, 'Which lesson answers the question?', shortlist(q, lessons, Object.fromEntries(LESSONS.map(l => [l.id, `${l.title} ${l.text}`]))));
-  return { lesson: LESSONS.find(l => l.id === second.choice), confidence: first.confidence, ms: first.ms + second.ms };
+  const lessons = Object.fromEntries(TAUGHT.map(l => [l.id, `${l.title}: ${brief(l.text)}`]));
+  const second = await pick(situation, 'Which lesson answers the question?', shortlist(q, lessons, Object.fromEntries(TAUGHT.map(l => [l.id, `${l.title} ${l.text}`]))));
+  return { lesson: TAUGHT.find(l => l.id === second.choice), confidence: first.confidence, ms: first.ms + second.ms };
  }
  const widget = pool.find(w => w.id === first.choice), how = guideFor(widget)?.how || [];
  if (!how.length) return { widget, step: null, confidence: first.confidence, ms: first.ms };

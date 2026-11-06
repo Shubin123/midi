@@ -79,6 +79,21 @@ assert.match(guideFor(win('mda Thing', 'VST3 · Instrument')).what, /instrument/
  const theory = await answer('what is a relative key?', { pick: async (s, i, o) => ({ choice: 'theory' in o ? 'theory' : Object.keys(o).find(k => /relative/.test(k)), confidence: 0.6, ms: 20 }), widgets });
  assert.equal(theory.lesson.id, 'relative_minor', 'theory goes to the lesson that answers it');
 
+ // "Tempo" names the metronome widget, but its guide says nothing about rhythm, so the lesson stays a choice.
+ const more = [...widgets, { id: 'tempo-group', title: 'Metronome & Tempo', plugin: false }, { id: 'looper', title: 'Loop recorder', plugin: false }];
+ const offered = [];
+ const toLesson = async (s, i, o) => { offered.push(Object.keys(o)); return { choice: 'theory' in o ? 'theory' : Object.keys(o).find(k => /tempo_rhythm/.test(k)) || Object.keys(o)[0], confidence: 0.7, ms: 10 }; };
+ const both = await answer('what is the difference between tempo and rhythm?', { pick: toLesson, widgets: more, hint: ['tempo-group'] });
+ assert.deepEqual(offered[0], ['tempo-group', 'theory'], 'the widget the question names, and theory');
+ assert.equal(both.lesson.id, 'tempo_rhythm');
+ offered.length = 0;
+ assert.equal((await answer('how do I set the tempo?', { pick: toLesson, widgets: more, hint: ['tempo-group'] })).widget.title, 'Metronome & Tempo', 'a question its guide covers stays with the widget');
+ assert.ok(offered.every(o => !o.includes('theory')), 'theory is not offered');
+ assert.equal((await answer('how do I record in slot 1?', { pick: toLesson, widgets: more, hint: ['looper'] })).widget.title, 'Loop recorder', 'the "1" of "System 1" brings no lesson in');
+ assert.ok(offered.every(o => !o.includes('theory')));
+ const systems = await answer('what are System 1 and System 2?', { pick: toLesson, widgets: more });
+ assert.equal(systems.lesson.id, 'two_systems', 'the teacher\'s two systems have a lesson too');
+
  const controls = [{ label: 'Time', kind: 'number', value: '0.3', min: '0', max: '1' }, { label: 'Feedback', kind: 'number', value: '0.2', min: '0', max: '0.95' }, { label: 'Bypass', kind: 'checkbox', value: 'off' }, { label: 'Remove', kind: 'button' }];
  const first = await nextTip(widgets[1], { pick, controls, given: [] });
  assert.equal(first.label, 'Feedback');

@@ -8,8 +8,9 @@
 // step; Slow mode also has the System 2 model think each phrase through. Suggested notes and chords play
 // through the synth and light up the keyboard. The Talk button turns on voice: speak a question and hear the
 // teacher answer (js/voice.js). The Course tab teaches lessons adapted from Open Music Theory (js/lessons.js):
-// each one explains an idea, plays an example and checks a task from what you play, and a first unit teaches
-// the workspace itself. Every widget and plug-in window gets a 🎓 button that opens its guide, and the model
+// each one explains an idea, plays an example and checks a task from what you play. A first unit teaches the
+// workspace itself, and a second tempo and rhythm, and how System 1 and System 2 split the work the same way
+// (js/rhythm-lessons.js). Every widget and plug-in window gets a 🎓 button that opens its guide, and the model
 // sees the widgets and their settings (js/workspace.js) so it can point at controls and change them when
 // asked. Conversations are kept in the browser (js/conversations.js). The panel only needs the synth's `synth:note`
 // events and `window.synth`, so loading this module is the whole integration.
@@ -20,6 +21,7 @@ import { LocalEngine, MODELS as LOCAL_MODELS, DEFAULT_MODEL as LOCAL_DEFAULT, we
 import { LayaCoach, LAYA_MB } from './laya.js';
 import { buildMove, describePlayed } from './coach.js';
 import { LESSONS, UNITS, OMT, Attempt, explainPrompt } from './lessons.js';
+import { RHYTHM_UNIT, RHYTHM_LESSONS } from './rhythm-lessons.js';
 import { WORKSPACE_UNIT, WORKSPACE_LESSONS, guideFor, KEYWORDS, profiles } from './workspace-guide.js';
 import { learnPlugin, cachedProfile, keepProfile, summarize, KINDS } from './plugin-profile.js';
 import * as ws from './workspace.js';
@@ -37,8 +39,8 @@ const PLAYED = /^(midi|computer|mouse|touch)/;
 const toNote = midi => NOTE_NAMES[midi % 12] + Math.floor(midi / 12); // the synth calls MIDI 60 "C5"
 const MAX_MESSAGES = 200;
 const host = url => url.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
-// The course: the workspace first, then music theory from Open Music Theory.
-const COURSE = [...WORKSPACE_LESSONS, ...LESSONS], COURSE_UNITS = [WORKSPACE_UNIT, ...UNITS];
+// The course: the workspace first, then tempo and rhythm, then music theory from Open Music Theory.
+const COURSE = [...WORKSPACE_LESSONS, ...RHYTHM_LESSONS, ...LESSONS], COURSE_UNITS = [WORKSPACE_UNIT, RHYTHM_UNIT, ...UNITS];
 const courseLesson = id => COURSE.find(l => l.id === id) || null;
 const nextInCourse = id => COURSE[COURSE.findIndex(l => l.id === id) + 1] || null;
 const isWorkspace = l => l?.unit === WORKSPACE_UNIT;
@@ -251,7 +253,7 @@ export class TeacherBridge {
    const vel = Math.round(velocity * 127);
    this._lastNoteAt = now; this._keysLow = followKeys(this._keysLow, midi); clearTimeout(this._missTimer);
    if (this.voice?.speaking) this.voice.cancelSpeech(); // the student's turn: stop talking
-   this.tracker.noteOn(midi, vel, now); this.attempt.noteOn(midi); this._showLive(midi, vel);
+   this.tracker.noteOn(midi, vel, now); this.attempt.noteOn(midi, now); this._showLive(midi, vel);
   });
   window.addEventListener('synth:panic', () => { this._stopPlayback(); this.tracker.reset(); this.attempt.reset(); });
  }
@@ -367,7 +369,7 @@ export class TeacherBridge {
     </div>
    </section>
    <section class="tp-view tp-course-view" id="tp-view-course" role="tabpanel" aria-labelledby="tp-tab-course" hidden>
-    <p class="tp-intro">Short lessons, first on using this workspace, then music theory from Open Music Theory played on your keys. Each one explains an idea and gives you something to do or play: the teacher watches and tells you when you have it. Every widget also has a 🎓 button with its guide.</p>
+    <p class="tp-intro">Short lessons, first on using this workspace, then on tempo and rhythm (and how the teacher's two systems keep time), then music theory from Open Music Theory played on your keys. Each one explains an idea and gives you something to do or play: the teacher watches and tells you when you have it. Every widget also has a 🎓 button with its guide.</p>
     <div class="tp-course"></div>
     <p class="tp-credit">Music theory lessons adapted from <a href="${OMT.url}" target="_blank" rel="noopener">Open Music Theory</a> by Kris Shaffer, Bryn Hughes, Brian Moseley and contributors, licensed <a href="${OMT.licenseUrl}" target="_blank" rel="noopener">${OMT.license}</a>.</p>
    </section>

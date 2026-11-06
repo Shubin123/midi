@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { LESSONS, UNITS, OMT, Attempt, findRun, findProgression, lessonById, nextLesson } from '../js/lessons.js';
+import { LESSONS, UNITS, OMT, Attempt, findRun, findProgression, lessonById, nextLesson, explainPrompt } from '../js/lessons.js';
+import { RHYTHM_LESSONS, RHYTHM_UNIT, events, findSameRhythm, findMarkedBeat } from '../js/rhythm-lessons.js';
 import { chordMidi, parseChordName, SCALE_TEMPLATES, fitToKeys } from '../js/pitch-analyzer.js';
 
 // Plays steps as a student would: each step's keys go down together, then come up.
@@ -81,5 +82,60 @@ assert.equal(check('plagal', play(...chords('Eb', 'Bb', 'F'))), '♭VII–IV–I
 assert.equal(check('lament', play(...chords('Dm', 'C', 'Bb', 'A'))), 'the lament, i–VII–VI–V, in D minor');
 assert.equal(check('cadences', play([55, 59, 62], [48, 52, 55, 60])), 'a perfect authentic cadence in C');
 assert.equal(check('cadences', play([59, 62, 67], [48, 52, 55, 60])), false, 'V in inversion: not a perfect authentic cadence');
+
+/* ---- Tempo and rhythm: checked from when each key goes down ---- */
+
+// Plays [time in ms, ...keys] hits as a student would: the keys go down together at that time, then come up.
+const timed = hits => { const p = new Attempt(); for (const [t, ...ns] of hits) { ns.forEach(n => p.noteOn(n, t)); ns.forEach(n => p.noteOff(n)); } return p; };
+// A rhythm as gaps between notes (ms), from `start`, one key per hit.
+const at = (gaps, start = 0, key = 60) => gaps.reduce((hits, g) => [...hits, [hits.at(-1)[0] + g, key]], [[start, key]]);
+// An example played as written: each step one beat at its tempo, rests included.
+const asPlayed = ({ steps, bpm }) => timed(steps.map((s, i) => [i * 60000 / bpm, ...s]).filter(h => h.length > 1));
+const rhythm = id => RHYTHM_LESSONS.find(l => l.id === id).check;
+
+assert.equal(new Set([...RHYTHM_LESSONS, ...LESSONS].map(l => l.id)).size, RHYTHM_LESSONS.length + LESSONS.length, 'ids are unique across the course');
+for (const l of RHYTHM_LESSONS) {
+ assert.equal(l.unit, RHYTHM_UNIT, `${l.id}: its unit`);
+ assert.equal(l.page, undefined, `${l.id}: not from Open Music Theory, so no chapter link`);
+ for (const k of ['title', 'text', 'task', 'hint']) assert.ok(l[k]?.length > 5, `${l.id}: has a ${k}`);
+ assert.ok(l.example.steps.some(s => s.length) && l.example.steps.every(s => s.every(Number.isInteger)), `${l.id}: example notes (an empty step is a rest)`);
+ assert.deepEqual(fitToKeys(l.example.steps), l.example.steps, `${l.id}: the example already sits on C3-C5`);
+ assert.equal(l.check(new Attempt()), false, `${l.id}: nothing played, nothing passed`);
+ assert.ok(l.check(asPlayed(l.example)), `${l.id}: playing the example passes`);
+ assert.doesNotMatch(explainPrompt(l), /Open Music Theory/, `${l.id}: Explain more doesn't credit Open Music Theory`);
+}
+assert.match(explainPrompt(LESSONS[0]), /adapted from Open Music Theory \(https:/, 'the other lessons still do');
+
+{
+ const p = new Attempt(); p.noteOn(60, 0); p.noteOn(64, 20); p.noteOn(67, 35); p.noteOn(62, 500);
+ assert.deepEqual(p.times, [0, 20, 35, 500], 'the attempt keeps when each key went down');
+ assert.deepEqual(events(p.notes, p.times), [{ t: 0, low: 60 }, { t: 500, low: 62 }], 'keys struck together are one event, on the lowest');
+}
+
+// Long, short, short, long at 60 BPM, then at 90 BPM, with a pause between.
+const slow = at([1000, 500, 500]), fast = at([667, 333, 333], 4000);
+assert.equal(rhythm('tempo_rhythm')(timed([...slow, ...fast])), 'the same rhythm, 1.5 times faster');
+assert.equal(rhythm('tempo_rhythm')(timed([...fast.map(([t, n]) => [t - 4000, n]), ...slow.map(([t, n]) => [t + 3000, n])])), 'the same rhythm, 1.5 times slower');
+assert.ok(rhythm('tempo_rhythm')(timed([...slow, ...at([620, 370, 300], 4000)])), 'human timing, a little uneven, still counts');
+assert.ok(rhythm('tempo_rhythm')(timed([...at([1000, 500, 500], 0, 48), ...at([500, 250, 250], 4000, 67)])), 'on any keys');
+assert.ok(findSameRhythm(...Object.values(timed([[0, 48, 52, 55], [1000, 60], [1500, 60], [2000, 60], [4000, 48, 52, 55], [4500, 60], [4750, 60], [5000, 60]])).slice(0, 2)), 'a chord is one note of the rhythm');
+assert.equal(rhythm('tempo_rhythm')(timed([...slow, ...at([1000, 500, 500], 4000)])), false, 'the same rhythm at the same tempo');
+assert.equal(rhythm('tempo_rhythm')(timed([...at([500, 500, 500]), ...at([250, 250, 250], 3000)])), false, 'a steady pulse at two speeds is not yet a rhythm');
+assert.equal(rhythm('tempo_rhythm')(timed([...slow, ...at([333, 333, 667], 4000)])), false, 'a different rhythm, faster');
+assert.equal(rhythm('tempo_rhythm')(timed(at([1000, 500, 500, 2000, 500, 250]))), false, 'too few notes the second time');
+
+// Eight even beats at 90 BPM with the first and fifth low.
+const beat = (lows, gap = 667, jitter = () => 0) => timed(lows.map((n, i) => [i * gap + jitter(i), n]));
+const MARKED = [48, 60, 64, 60, 55, 60, 64, 60];
+assert.equal(rhythm('two_systems')(beat(MARKED)), 'a steady beat at 90 BPM, with its downbeats marked');
+assert.ok(rhythm('two_systems')(beat(MARKED, 500, i => [0, 40, -30, 50, 0, -40, 30, -20][i])), 'a little human wobble is still steady');
+assert.ok(rhythm('two_systems')(timed([[0, 48, 60], [500, 64], [1000, 67], [1500, 64], [2000, 48, 60], [2500, 64], [3000, 67], [3500, 64]])), 'chords with a low note mark the downbeats');
+assert.ok(rhythm('two_systems')(beat([72, 70, ...MARKED, 40])), 'among other notes');
+assert.equal(rhythm('two_systems')(beat(MARKED, 500, i => (i === 5 ? 300 : 0))), false, 'one beat late is not steady');
+assert.equal(rhythm('two_systems')(beat([48, 60, 64, 60, 64, 60, 64, 60])), false, 'the fifth not marked');
+assert.equal(rhythm('two_systems')(beat([60, 48, 64, 60, 55, 60, 64, 60])), false, 'the mark on the wrong beat');
+assert.equal(rhythm('two_systems')(beat(MARKED.slice(0, 7))), false, 'seven beats are not eight');
+assert.equal(rhythm('two_systems')(beat(MARKED, 2000)), false, 'too slow to be a groove');
+assert.equal(findMarkedBeat([], []), null);
 
 console.log('lessons: all checks passed');

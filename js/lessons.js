@@ -11,14 +11,15 @@ const page = name => `${OMT.url}/${name}.html`;
 /* ---- What the student played: notes in order, and each set of keys held down together as a chord ---- */
 
 // Chords come from the keys held at once, not from timing, so a slowly rolled chord still counts. A chord is
-// recorded when its first key is released; holding a common tone into the next chord is fine.
+// recorded when its first key is released; holding a common tone into the next chord is fine. `times` holds
+// when each note went down (ms), for the rhythm lessons (js/rhythm-lessons.js).
 export class Attempt {
  constructor() { this.reset(); }
- reset() { this.notes = []; this.chords = []; this.held = new Set(); this._peak = []; }
- noteOn(n) {
-  this.notes.push(n); this.held.add(n);
+ reset() { this.notes = []; this.times = []; this.chords = []; this.held = new Set(); this._peak = []; }
+ noteOn(n, t = performance.now()) {
+  this.notes.push(n); this.times.push(t); this.held.add(n);
   if (this.held.size >= this._peak.length) this._peak = [...this.held];
-  if (this.notes.length > 64) this.notes.shift();
+  if (this.notes.length > 64) { this.notes.shift(); this.times.shift(); }
  }
  noteOff(n) {
   if (!this.held.delete(n)) return;
@@ -284,4 +285,4 @@ export const lessonById = id => LESSONS.find(l => l.id === id);
 export const nextLesson = id => LESSONS[LESSONS.findIndex(l => l.id === id) + 1] || null;
 
 // What the model is asked when the student wants more than the lesson says.
-export const explainPrompt = l => `The student is on the lesson "${l.title}", adapted from Open Music Theory (${l.page}). The lesson says: ${l.text} Their task: ${l.task} Explain this idea a little more deeply in your own words, and give one example to play.`;
+export const explainPrompt = l => `The student is on the lesson "${l.title}"${l.page ? `, adapted from Open Music Theory (${l.page})` : ''}. The lesson says: ${l.text} Their task: ${l.task} Explain this idea a little more deeply in your own words, and give one example to play.`;
