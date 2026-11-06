@@ -12,7 +12,7 @@
 // Feedback: on speakers, the microphone hears the app too. Notes the app is sounding itself (the keyboard, the
 // sequencer, a loop, the teacher's examples) are followed but not sent, and what you sing stays silent. With
 // headphones on there is nothing to hear back, so what you sing can also play through the synth.
-import { NoteTracker, OnsetDetector, frameSizes, timed, snapToScale, roundTrip } from './listen-dsp.js';
+import { NoteTracker, OnsetDetector, PolyTracker, PolyPitch, frameSizes, timed, snapToScale, roundTrip } from './listen-dsp.js';
 import { SCALES } from './sequencer.js';
 import { timing } from './timing-widget.js';
 import { read, save } from './storage.js';
@@ -20,9 +20,11 @@ import { read, save } from './storage.js';
 const KEY = 'listening-v1';
 // Melody: notes, as a keyboard sends them. Rhythm only: every clap, tap or hit is an onset with no pitch (source
 // 'audio-clap'), for rhythm exercises: the beat clock grades it and the teacher reads the phrase's rhythm.
-export const MODES = { melody: 'Melody (one note at a time)', rhythm: 'Rhythm only (claps and taps)' };
+// Chords: several notes at once, for a piano or a guitar (PolyPitch: approximate, about a fifth of a second
+// behind, each note stamped from its onset).
+export const MODES = { melody: 'Melody (one note at a time)', chords: 'Chords (several notes, approximate)', rhythm: 'Rhythm only (claps and taps)' };
 export const CLAP = 0; // the note number a clap is sent as: nothing plays it, and the teacher reads it as a clap
-const DEFAULTS = { deviceId: '', mode: 'melody', snap: false, headphones: false, playThrough: false, gateDb: -50, latencyMs: null, inputGain: 1, clapTempo: false, clickDb: null };
+const DEFAULTS = { deviceId: '', mode: 'melody', snap: false, headphones: false, playThrough: false, gateDb: -50, latencyMs: null, inputGain: 1, clapTempo: false, clickDb: null, chordEngine: 'builtin' };
 const listeners = new Set();
 const emit = (type, detail) => listeners.forEach(fn => { try { fn(type, detail); } catch (err) { console.error(err); } });
 
@@ -101,8 +103,12 @@ export const listening = {
   this.sizes = frameSizes(ctx.sampleRate);
   this.tracker = new NoteTracker({ gateDb: this.settings.gateDb });
   this.claps = new OnsetDetector({ gateDb: this.settings.gateDb, minGapMs: 70 });
+  this.strikes = new OnsetDetector({ gateDb: this.settings.gateDb, minGapMs: 120 }); // when chords are struck: an attack can read as two
+  this.chords = new PolyTracker({ gateDb: this.settings.gateDb });
+  const poly = new PolyPitch(ctx.sampleRate);
+  this.polySizes = { size: poly.size, hop: poly.hop };
   this._configure();
-  worklet.port.onmessage = ({ data }) => this._frames(data);
+  worklet.port.onmessage = ({ data }) => (data.chords ? this._chordFrames(data.chords) : this._frames(data));
   Object.assign(this, { active: true, kind, label, error: '' });
   emit('state', this.state());
   return true;
@@ -128,7 +134,8 @@ export const listening = {
   const s = this.settings;
   if (this.nodes) this.nodes.gain.gain.value = s.inputGain;
   if (!this.tracker) return;
-  this.tracker.gateDb = this.tracker.onsets.gateDb = this.claps.gateDb = s.gateDb;
+  this.tracker.gateDb = this.tracker.onsets.gateDb = this.claps.gateDb = this.strikes.gateDb = this.chords.gateDb = s.gateDb;
+  this.nodes?.worklet.port.postMessage({ chords: s.mode === 'chords' });
   this.tracker.snap = s.snap ? semis => { const { key, intervals } = keyAndScale(); return snapToScale(semis, key, intervals); } : null;
   this.tracker.ignore = midi => !s.headphones && this._sounding(midi);
  },
@@ -149,11 +156,16 @@ export const listening = {
   // the round trip.
   const ref = frames[0].end, rate = ctx.sampleRate, refMs = window.synth.perfTimeOf(ref / rate - this.latencyMs / 1000);
   const toMs = frame => refMs + ((frame - ref) / rate) * 1000;
-  const rhythm = this.settings.mode === 'rhythm';
+  const rhythm = this.settings.mode === 'rhythm', chords = this.settings.mode === 'chords';
   for (const raw of frames) {
    const f = timed(raw, this.sizes, toMs);
    let onset = null;
-   if (rhythm) { onset = this.claps.push(f); if (onset !== null) this._clap(onset, f); this.tracker.pitch = { semis: null, midi: null, cents: 0, clarity: f.clarity, voiced: false, hz: 0, db: f.db }; }
+   if (rhythm || chords) {
+    // Rhythm only: each onset is a clap. Chords: the onsets say when the chords heard (_chordFrames) began.
+    onset = (rhythm ? this.claps : this.strikes).push(f);
+    if (onset !== null) { if (rhythm) this._clap(onset, f); else this._chordOnset = onset; }
+    this.tracker.pitch = { semis: null, midi: null, cents: 0, clarity: f.clarity, voiced: false, hz: 0, db: f.db };
+   }
    else { for (const e of this.tracker.push(f)) this._send(e); onset = this.tracker.onset; }
    if (onset !== null && this.settings.clapTempo && !this._isClick(onset, f)) window.synth.tap(onset);
    const p = this.tracker.pitch;
@@ -162,6 +174,22 @@ export const listening = {
   }
   while (this.trail.length && this.trail.at(-1).t - this.trail[0].t > 4000) this.trail.shift();
   emit('frame', this.last);
+ },
+
+ // Chords heard: each note on and off as a keyboard would send it, from the onset it came with. On speakers, notes
+ // the app is sounding itself are left out.
+ _chordFrames(frames) {
+  const ctx = this.nodes?.ctx;
+  if (!ctx || this.settings.mode !== 'chords') return;
+  const rate = ctx.sampleRate, ref = frames[0].end, refMs = window.synth.perfTimeOf(ref / rate - this.latencyMs / 1000);
+  const toMs = frame => refMs + ((frame - ref) / rate) * 1000, hopMs = (this.polySizes.hop / rate) * 1000, windowMs = (this.polySizes.size / rate) * 1000;
+  for (const f of frames) {
+   const onset = this._chordOnset ?? null; this._chordOnset = null;
+   const notes = f.notes.filter(n => this.settings.headphones || !this._sounding(n.midi));
+   for (const e of this.chords.push({ t: toMs(f.end - this.polySizes.size / 2), notes, db: f.db, hopMs, windowMs }, onset)) this._send(e);
+  }
+  this.heldChord = [...this.chords.held.keys()].sort((a, b) => a - b);
+  emit('chord', this.heldChord);
  },
 
  _send(e) {
@@ -175,7 +203,8 @@ export const listening = {
  _releaseAll(time) {
   if (this.tracker) for (const e of this.tracker.flush(time)) this._send(e);
   for (const midi of [...this.held]) this._send({ type: 'off', midi, velocity: 0, time });
-  this.tracker?.reset(); this.claps?.reset();
+  if (this.chords) for (const e of this.chords.flush(time)) this._send(e);
+  this.tracker?.reset(); this.claps?.reset(); this.strikes?.reset();
  },
 
  // A clap (rhythm only): sent as a note the synth doesn't play or show, held for 80 ms, from the time it was
@@ -204,7 +233,7 @@ export const listening = {
   const rate = ctx.sampleRate, sizes = this.sizes;
   const ctxMs = frame => (frame / rate) * 1000; // on the audio clock, with no latency taken off
   const levels = [];
-  const tap = ({ data }) => { for (const raw of data) { const t = detector.push(timed(raw, sizes, ctxMs)); if (t !== null) { heard.push(t); levels.push(raw.db); } } };
+  const tap = ({ data }) => { if (!Array.isArray(data)) return; for (const raw of data) { const t = detector.push(timed(raw, sizes, ctxMs)); if (t !== null) { heard.push(t); levels.push(raw.db); } } };
   this.nodes.worklet.port.addEventListener('message', tap);
   const out = this.clickOut(ctx), start = ctx.currentTime + 0.3, times = [];
   const buffer = ctx.createBuffer(1, Math.round(rate * 0.02), rate), d = buffer.getChannelData(0);

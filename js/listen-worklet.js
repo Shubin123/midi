@@ -1,7 +1,8 @@
 // AudioWorklet that listens: every 5 ms it sends the main thread a frame of what the input sounds like (level,
 // pitch and its clarity, spectral flux, brightness), stamped with the audio clock's frame number, from the same
-// arithmetic as offline analysis (js/listen-dsp.js). It outputs silence; it is connected only so it is pulled.
-import { Analyzer } from './listen-dsp.js';
+// arithmetic as offline analysis (js/listen-dsp.js); for chords ({ chords: true }) also, every 21 ms, the
+// notes sounding together. It outputs silence; it is connected only so it is pulled.
+import { Analyzer, PolyAnalyzer } from './listen-dsp.js';
 
 class ListenProcessor extends AudioWorkletProcessor {
  constructor({ processorOptions = {} }) {
@@ -9,7 +10,8 @@ class ListenProcessor extends AudioWorkletProcessor {
   this.analyzer = new Analyzer(sampleRate, processorOptions);
   this.running = true;
   this.mono = new Float32Array(128);
-  this.port.onmessage = ({ data }) => { if (data === 'stop') this.running = false; };
+  this.poly = null;
+  this.port.onmessage = ({ data }) => { if (data === 'stop') this.running = false; if (data?.chords !== undefined) this.poly = data.chords ? this.poly || new PolyAnalyzer(sampleRate) : null; };
  }
  process([input]) {
   if (!this.running) return false;
@@ -22,6 +24,8 @@ class ListenProcessor extends AudioWorkletProcessor {
   }
   const frames = this.analyzer.push(x, currentFrame);
   if (frames.length) this.port.postMessage(frames);
+  const chords = this.poly?.push(x, currentFrame);
+  if (chords?.length) this.port.postMessage({ chords });
   return true;
  }
 }

@@ -10,7 +10,8 @@ Part of the [project-demos](https://github.com/Shubin123/project-demos) collecti
 
 Entirely self-contained; the only external requests are the Poppins webfont and,
 once you set up the AI teacher, calls to the provider you pick (or a one-time
-model download for the on-device option).
+model download for the on-device option), and Basic Pitch if you choose it to
+transcribe chords.
 Hardware MIDI input is Chromium-only; everything else works everywhere.
 
 *Verified 2026-08-20 by requesting every external dependency this project uses over the network. The demo itself was not opened in a browser, so this reflects dependency health rather than a full functional test.*
@@ -165,8 +166,33 @@ teacher and graded by the beat clock, with nothing in those changed.
   AudioWorklet, says so in the widget; MIDI and the keyboard carry on. All
   of it runs on the device; no sound leaves the page.
 
-**Mode** is **Melody** (one note at a time) or **Rhythm only** (claps and
+**Mode** is **Melody** (one note at a time), **Chords** (several notes at
+once, for a piano or a guitar; approximate) or **Rhythm only** (claps and
 taps, for rhythm exercises; see Beat, tempo and rhythm).
+
+**Chords** (`PolyPitch` and `PolyTracker` in `js/listen-dsp.js`, in the same
+worklet) take the spectrum's peaks over a 170 ms window every 21 ms (long
+enough to tell semitones apart low down), then, one note at a time, the note
+whose harmonics carry most of what is left, only with its fundamental there,
+taking off its partials as its own smoothed series says (so a partial it
+shares with another note keeps that note's part). A weak note an octave,
+an octave and a fifth or two octaves above one found is taken for its
+partials. A note is on after three frames and off after three missing,
+stamped from the onset it came with; a chord struck again sends the notes it
+shares with the last one again. The tuner names the chord, the keys light
+together, and the teacher's live strip names it too, marked *heard,
+approximate*. On a piano-like and a sawtooth progression with common tones,
+inversions and sevenths it finds every note (F1 1.0) with onsets within
+20 ms; on the synth's own exactly harmonic sawtooths, F3 under F4 can hide
+the F4 and an F5 be heard for it, so the octave of a note can be out while
+its name is right. **Clips transcribed by** chooses how Transcribe to MIDI
+hears chords in clips: this built-in ear, or **Basic Pitch**
+([Spotify](https://github.com/spotify/basic-pitch), Apache-2.0, `js/poly-model.js`),
+a small neural network run with TensorFlow.js, downloaded on first use
+(about 2.6 MB from jsdelivr) and kept by the browser, on WebGPU where the
+browser has it, else WebAssembly, WebGL or plain JavaScript. It is never
+required: if it can't be downloaded, the built-in ear transcribes the clip
+and says so.
 
 The other widgets take it too (`js/listen-tools.js`):
 
@@ -185,6 +211,12 @@ The other widgets take it too (`js/listen-tools.js`):
   Source): the input's waveform, the note it hears with cents and frequency,
   and a tick every period of it.
 
+`node tests/listening-chords.mjs` plays C, Am, F, G from the app's own
+oscillators into the worklet in Chords (every note name, F1 at least 0.8 with
+octaves, the keys lit together, each chord named by the tuner and the
+teacher), then transcribes a clip of piano chords with the CDN blocked (the
+built-in ear does it, with a message) and allowed (Basic Pitch, F1 at least
+0.9; skipped, and said, with no network).
 `node tests/listening-tools.mjs` transcribes a dropped WAV of a sung melody
 into a loop slot (every note, each gap within 25 ms) and the step sequencer,
 exports a performance sung against the metronome as a .mid (the notes, at
@@ -1144,6 +1176,12 @@ run through pocket-tts-js (MIT); Supertonic 3 by Supertone (sample code MIT,
 weights OpenRAIL-M); Piper voices from rhasspy/piper-voices (MIT, each voice
 under its training data's licence) with espeak-ng (GPL-3.0) for phonemes.
 
+Basic Pitch, which can transcribe chords from clips, loads at runtime from
+jsDelivr when first chosen and is not bundled: the model by Spotify (Apache-2.0,
+`@spotify/basic-pitch` 1.0.1) and TensorFlow.js with its WebGPU and
+WebAssembly backends (Apache-2.0, 4.22.0). Its note decoding in
+`js/poly-model.js` follows Basic Pitch's own (`outputToNotesPoly`).
+
 The course's lesson texts are adapted from *Open Music Theory* by Kris Shaffer,
 Bryn Hughes, Brian Moseley and contributors (Hybrid Pedagogy Publishing),
 licensed [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/); the
@@ -1155,6 +1193,7 @@ later, nothing to install; see *Running it*):
 
 - `node tests/all.mjs`: every suite below, in parallel, with one answer (see *Checking for regressions*)
 - `node tests/waveforms.mjs`: every waveform rendered by the browser's own Web Audio and measured, then the Oscillators widget used and played through the synth in the app, all compared with recorded fingerprints (headless Chrome, no dependencies; see *Testing the waveforms*)
+- `node tests/listening.mjs`, `tests/listening-panel.mjs`, `tests/listening-timing.mjs`, `tests/listening-tools.mjs`, `tests/listening-chords.mjs`: listening to the microphone (see *Listening*)
 - `node tests/widgets.mjs`: every widget dragged onto every other one, at three widths: the space it will drop into is open, outlined, empty and steady, and it lands there (headless Chrome)
 - `node tests/settings.mjs`: the Settings menu (clicking off closes it); the PANIC and 🎓 buttons off by default and switched on; switching the AI teacher off and on; stopping every sound from Settings or the PANIC button; the panic on coming back to the tab; and every switch kept after a reload (headless Chrome)
 - `node tests/themes.mjs`: every UI theme, and the UI scale, chosen and then back after a reload by the time the page is parsed and at its first frame; switching back to the default; a retired theme name (headless Chrome)

@@ -156,3 +156,6 @@ html:not(.teach-buttons-on) .teach-btn{display:none!important}
 #seq-record-undo[hidden]{display:none}
 .looper-kind{margin:0 0 10px}
 .looper-kind select{width:auto;max-width:100%;margin:0}
+.listen-engine{display:flex;align-items:center;gap:6px;margin:0}
+.listen-engine[hidden]{display:none}
+#listening-module .listen-engine select{width:auto;max-width:100%;margin:0}

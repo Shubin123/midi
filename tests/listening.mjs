@@ -3,8 +3,9 @@
 // with no fundamental at all; a sung melody with vibrato, scoops, breaths and re-sung notes transcribed note
 // for note, each on time; no extra notes from wide vibrato; snapping to a scale; the latency arithmetic.
 import assert from 'node:assert/strict';
-import { analyze, Analyzer, transcribe, noteF1, toSemis, snapToScale, roundTrip, NoteTracker, timed, frameSizes } from '../js/listen-dsp.js';
-import { tone, sing, melody } from './support/signals.js';
+import { analyze, Analyzer, transcribe, transcribeChords, PolyPitch, noteF1, toSemis, snapToScale, roundTrip, NoteTracker, timed, frameSizes } from '../js/listen-dsp.js';
+import { decode } from '../js/poly-model.js';
+import { tone, sing, melody, strum, chordsAt } from './support/signals.js';
 
 let failed = 0;
 const check = (name, fn) => { try { fn(); } catch (err) { failed++; console.log(`FAIL ${name}\n     ${err.message.split('\n')[0]}`); } };
@@ -103,6 +104,32 @@ check('every note-on is answered by a note-off, and none overlap', () => {
  }
  t.flush(1e9).forEach(e => held.delete(e.midi));
  assert.equal(held.size, 0);
+});
+
+/* ---- Chords (approximate) ---- */
+check('chords: a progression with common tones, inversions and sevenths, on a piano and a sawtooth: F1 at least 0.95, onsets within 20 ms', () => {
+ const chords = chordsAt(), ref = chords.flatMap(c => c.notes.map(midi => ({ midi, start: c.start, end: c.end })));
+ for (const kind of ['piano', 'saw']) for (const sampleRate of [44100, 48000]) {
+  const got = transcribeChords(strum(chords, { kind, sampleRate }), sampleRate), s = noteF1(ref, got);
+  assert.ok(s.f1 >= 0.95, `${kind} at ${sampleRate}: F1 ${s.f1.toFixed(2)} (precision ${s.precision.toFixed(2)}, recall ${s.recall.toFixed(2)}): ${show(got)}`);
+  assert.ok(Math.max(...s.onsetErrors.map(Math.abs)) < 20, `${kind}: onsets ${s.onsetErrors.map(Math.round).join(' ')}`);
+ }
+});
+check('chords: one window of C E G finds the three notes, not their octaves; a single note is one note', () => {
+ const p = new PolyPitch(48000), x = strum([{ notes: [60, 64, 67], start: 0, end: 400 }], { kind: 'saw' });
+ assert.deepEqual(p.detect(x.subarray(4800, 4800 + p.size)).map(n => n.midi).sort((a, b) => a - b), [60, 64, 67]);
+ const one = strum([{ notes: [57], start: 0, end: 400 }]);
+ assert.deepEqual(p.detect(one.subarray(2400, 2400 + p.size)).map(n => n.midi), [57]);
+});
+check('Basic Pitch\'s activations decode into notes: an onset peak held by its note, and nothing from a note that never starts', () => {
+ const frames = Array.from({ length: 120 }, () => Array(88).fill(0)), onsets = Array.from({ length: 120 }, () => Array(88).fill(0));
+ for (let t = 10; t < 60; t++) frames[t][39] = 0.8; // C4 (MIDI 60) from frame 10 to 60
+ onsets[10][39] = 0.9;
+ for (let t = 30; t < 34; t++) frames[t][50] = 0.6; // too short to keep
+ const got = decode({ notes: frames, onsets });
+ assert.equal(got.length, 1, JSON.stringify(got));
+ assert.equal(got[0].midi, 60);
+ assert.ok(Math.abs(got[0].start - (10 * 256 / 22050) * 1000) < 1 && Math.abs(got[0].end - (60 * 256 / 22050) * 1000) < 1, `${got[0].start}-${got[0].end} ms`);
 });
 
 /* ---- Latency ---- */

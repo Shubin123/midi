@@ -372,3 +372,164 @@ export function roundTrip(clicks, onsets, maxMs = 400) {
  const mid = median(gaps);
  return { ms: mid, spread: median(gaps.map(g => Math.abs(g - mid))), heard: gaps.length };
 }
+
+/* ---- Chords: several notes at once (approximate) ---- */
+
+// The notes sounding together in one window, for chords on a piano or a guitar: the spectrum's peaks (Hann
+// window of about 170 ms, so neighbouring semitones a few Hz apart low down are told apart), then, one note at a
+// time, the note whose harmonics carry most of what is left (each partial weighted down the higher it is, and
+// only with its fundamental there, so a note an octave below isn't found in a chord's upper partials), and its
+// partials taken off before the next is looked for. It stops at `maxNotes`, or when what is left is under a
+// fifth of the first note's weight. Returns [{ midi, salience (0-1 of the first) }], strongest first.
+export class PolyPitch {
+ constructor(sampleRate, { lo = 36, hi = 96, harmonics = 10, maxNotes = 6, stop = 0.2 } = {}) {
+  this.size = 2 ** Math.round(Math.log2(sampleRate * 0.17)); this.hop = this.size / 8;
+  Object.assign(this, { sampleRate, lo, hi, harmonics, maxNotes, stop });
+  this.fft = new FFT(this.size); this.re = new Float64Array(this.size); this.im = new Float64Array(this.size);
+  this.hann = Float64Array.from({ length: this.size }, (_, i) => 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / this.size));
+  this.top = Math.min(this.size / 2 - 2, Math.round((5000 / sampleRate) * this.size));
+ }
+ // Peaks of the magnitude spectrum: { hz, amp }, refined by a parabola through the log magnitudes.
+ peaks(x) {
+  const { size, re, im, hann, top, sampleRate } = this;
+  for (let i = 0; i < size; i++) { re[i] = x[i] * hann[i]; im[i] = 0; }
+  this.fft.transform(re, im);
+  const mag = new Float64Array(top + 2);
+  let max = 0;
+  for (let k = 1; k <= top + 1; k++) { mag[k] = Math.hypot(re[k], im[k]); max = Math.max(max, mag[k]); }
+  const out = [], floor = max * 0.01;
+  for (let k = 2; k <= top; k++) {
+   if (mag[k] < floor || mag[k] < mag[k - 1] || mag[k] < mag[k + 1]) continue;
+   const a = Math.log(mag[k - 1] + 1e-12), b = Math.log(mag[k] + 1e-12), c = Math.log(mag[k + 1] + 1e-12), d = a - 2 * b + c;
+   const shift = d < 0 ? (a - c) / (2 * d) : 0;
+   out.push({ hz: ((k + shift) * sampleRate) / size, amp: Math.exp(b - ((a - c) * shift) / 4) });
+  }
+  return out;
+ }
+ detect(x) {
+  const peaks = this.peaks(x);
+  if (!peaks.length) return [];
+  const left = peaks.map(p => p.amp), found = [];
+  // The peak nearest each harmonic of f0, within half a semitone.
+  const partials = f0 => {
+   const out = [];
+   for (let h = 1; h <= this.harmonics; h++) {
+    const want = f0 * h;
+    if (want > (this.top * this.sampleRate) / this.size) break;
+    let best = -1, err = 0.029;
+    peaks.forEach((p, i) => { const e = Math.abs(p.hz / want - 1); if (e < err) { err = e; best = i; } });
+    out.push(best);
+   }
+   return out;
+  };
+  const cache = new Map();
+  for (let m = this.lo; m <= this.hi; m++) cache.set(m, partials(440 * 2 ** ((m - 69) / 12)));
+  let first = 0;
+  while (found.length < this.maxNotes) {
+   let best = null;
+   for (let m = this.lo; m <= this.hi; m++) {
+    if (found.some(n => n.midi === m)) continue;
+    const idx = cache.get(m);
+    if (idx[0] < 0) continue; // no fundamental: not this note
+    let s = 0;
+    idx.forEach((i, h) => { if (i >= 0) s += left[i] / (h + 1) ** 0.8; });
+    if (left[idx[0]] < 0.15 * Math.max(...idx.filter(i => i >= 0).map(i => left[i]))) continue; // its fundamental was taken by a note already found
+    if (!best || s > best.s) best = { midi: m, s, idx };
+   }
+   if (!best || best.s <= 0 || (found.length && best.s < first * this.stop)) break;
+   // A weak note an octave, an octave and a fifth, or two octaves above one already found is most likely its
+   // partials (with exact harmonics, as synths have, two notes an octave apart share theirs): not counted.
+   if (found.length && best.s < first * 0.5 && found.some(n => [12, 19, 24].includes(best.midi - n.midi))) { cache.set(best.midi, cache.get(best.midi).map(() => -1)); continue; }
+   if (!found.length) first = best.s;
+   found.push({ midi: best.midi, salience: best.s / first });
+   // Take its partials off, each as loud as the note's own smoothed series says (the least of it and its two
+   // neighbours), so a partial it shares with another note (its octave, its fifth) keeps that note's part.
+   const amps = best.idx.map(i => (i >= 0 ? left[i] : 0));
+   best.idx.forEach((i, h) => { if (i < 0) return; const near = [amps[h - 1], amps[h], amps[h + 1]].filter(a => a !== undefined && a > 0); left[i] = Math.max(0, left[i] - (h === 0 ? left[i] : Math.min(...near))); });
+  }
+  return found;
+ }
+}
+
+// PolyPitch over a stream, as Analyzer does for one note: push(samples, start) returns a frame every hop
+// (21 ms at 48 kHz): { end, notes, db }.
+export class PolyAnalyzer {
+ constructor(sampleRate, opts = {}) { this.poly = new PolyPitch(sampleRate, opts); this.ring = new Float32Array(this.poly.size); this.window = new Float32Array(this.poly.size); this.filled = 0; this.since = 0; this.count = 0; }
+ push(samples, start = null) {
+  if (start !== null) this.count = start;
+  const out = [], n = this.poly.size;
+  for (let i = 0; i < samples.length; i++) {
+   this.ring[this.filled % n] = samples[i]; this.filled++; this.count++;
+   if (++this.since >= this.poly.hop && this.filled >= n) {
+    this.since = 0;
+    const at = this.filled % n; let e2 = 0;
+    for (let j = 0; j < n; j++) { const v = this.ring[(at + j) % n]; this.window[j] = v; e2 += v * v; }
+    const db = dbOf(Math.sqrt(e2 / n));
+    out.push({ end: this.count, notes: db > -70 ? this.poly.detect(this.window) : [], db });
+   }
+  }
+  return out;
+ }
+}
+
+// Notes from PolyPitch frames, with hysteresis: a note is on once it is found in three frames running, off once
+// it has been missing for three; it starts at the latest onset heard within 500 ms before it was first found
+// (the window is long, so it is found late, and a note masked by louder ones only once they fade), else at that
+// frame's middle. A chord struck again keeps notes it
+// shares with the last one: once the window is wholly past the onset, every note still sounding is sent again
+// from the onset, and a note gone by then ended at it. push({ t (the window's middle, ms), notes, db, hopMs,
+// windowMs }, onset) returns { type, midi, velocity, time } events; `held` maps the notes sounding now to their
+// start.
+export class PolyTracker {
+ constructor({ gateDb = -50, minSalience = 0.25 } = {}) { Object.assign(this, { gateDb, minSalience }); this.reset(); }
+ reset() { this.held = new Map(); this.seen = new Map(); this.lastOnset = -Infinity; this.strike = null; }
+ push(f, onset = null) {
+  const events = [], velocity = Math.max(0.1, Math.min(1, 0.2 + ((f.db - this.gateDb) / 45) * 0.8));
+  if (onset !== null) { this.lastOnset = onset; this.strike = onset; }
+  const now = new Set(f.db >= this.gateDb ? f.notes.filter(n => n.salience >= this.minSalience).map(n => n.midi) : []);
+  const off = (m, time) => { this.held.delete(m); events.push({ type: 'off', midi: m, velocity: 0, time }); };
+  // The window is past the last onset: what sounds now was struck then.
+  if (this.strike !== null && f.t - f.windowMs / 2 >= this.strike) {
+   const at = this.strike; this.strike = null;
+   for (const [m, start] of [...this.held]) {
+    if (!now.has(m)) { off(m, at); this.seen.delete(m); }
+    else if (start < at - 150) { off(m, at); this.held.set(m, at); events.push({ type: 'on', midi: m, velocity, time: at }); } // not just begun
+   }
+  }
+  for (const m of now) {
+   const s = this.seen.get(m) || { count: 0, first: f.t, miss: 0 };
+   if (!s.count) s.first = f.t;
+   s.count++; s.miss = 0; this.seen.set(m, s);
+   if (!this.held.has(m) && s.count >= 3) {
+    const time = this.lastOnset >= s.first - 500 && this.lastOnset <= f.t + f.windowMs / 2 ? this.lastOnset : s.first; // a note of the chord struck last, found once others faded
+    this.held.set(m, time); events.push({ type: 'on', midi: m, velocity, time });
+   }
+  }
+  for (const [m, s] of this.seen) {
+   if (now.has(m)) continue;
+   s.miss++; s.count = 0;
+   if (s.miss >= 3) { this.seen.delete(m); if (this.held.has(m)) off(m, this.strike ?? f.t - 2 * f.hopMs); }
+  }
+  return events;
+ }
+ flush(time) { const events = [...this.held.keys()].map(midi => ({ type: 'off', midi, velocity: 0, time })); this.reset(); return events; }
+}
+
+// Several notes at once from a whole clip: [{ midi, velocity, start, end }] in ms from its first sample.
+export function transcribeChords(samples, sampleRate, opts = {}) {
+ const poly = new PolyPitch(sampleRate, opts), tracker = new PolyTracker(opts), onsets = new OnsetDetector({ gateDb: opts.gateDb ?? -50, minGapMs: 120 }); // a chord's attack can read as two onsets
+ const sizes = frameSizes(sampleRate), toMs = x => (x / sampleRate) * 1000, hopMs = toMs(poly.hop);
+ const mono = analyze(samples, sampleRate), notes = [], open = new Map();
+ let k = 0, onset = null;
+ const take = events => events.forEach(e => { if (e.type === 'on') open.set(e.midi, { midi: e.midi, velocity: e.velocity, start: e.time }); else { const n = open.get(e.midi); if (n) { n.end = e.time; notes.push(n); open.delete(e.midi); } } });
+ for (let end = poly.size; end <= samples.length; end += poly.hop) {
+  // The onsets heard up to the end of this window.
+  while (k < mono.length && mono[k].end <= end) { const o = onsets.push(timed(mono[k], sizes, toMs)); if (o !== null) onset = o; k++; }
+  const x = samples.subarray(end - poly.size, end);
+  let e2 = 0; for (let i = 0; i < x.length; i++) e2 += x[i] * x[i];
+  take(tracker.push({ t: toMs(end - poly.size / 2), notes: poly.detect(x), db: dbOf(Math.sqrt(e2 / x.length)), hopMs, windowMs: toMs(poly.size) }, onset));
+  onset = null;
+ }
+ take(tracker.flush(toMs(samples.length)));
+ return notes.sort((a, b) => a.start - b.start || a.midi - b.midi);
+}

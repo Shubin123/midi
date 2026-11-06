@@ -6,6 +6,7 @@
 // the nearest note it is. Everything is kept (js/listening.js).
 import { listening, MODES, keyAndScale } from './listening.js';
 import { el, card } from './plugin-ui.js';
+import { detectChord } from './pitch-analyzer.js';
 
 const NAMES = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
 const SCI = midi => `${NAMES[((midi % 12) + 12) % 12]}${Math.floor(midi / 12) - 1}`; // scientific pitch: 60 is C4
@@ -30,6 +31,11 @@ export function createListeningWidget() {
  const note = el('span', { className: 'listen-note', textContent: '–' }), cents = el('span', { className: 'listen-cents', textContent: '' }), hz = el('span', { className: 'listen-hz', textContent: '' });
  const needle = el('div', { className: 'listen-needle' });
  const tuner = el('div', { className: 'listen-tuner' }, el('div', { className: 'listen-tuner-read' }, note, cents, hz), el('div', { className: 'listen-scale' }, el('span', { textContent: '−50' }), el('span', { textContent: '0' }), el('span', { textContent: '+50' }), needle));
+ // Chords: how a clip is transcribed (live listening always uses the built-in one, which keeps up).
+ const engine = el('select', { id: 'listen-chord-engine' }, el('option', { value: 'builtin', textContent: 'Built in (instant)' }), el('option', { value: 'basic-pitch', textContent: 'Basic Pitch (machine learning, 2.6 MB download)' }));
+ engine.setAttribute('aria-label', 'How clips are transcribed in Chords'); engine.value = s.chordEngine;
+ const engineRow = el('label', { className: 'listen-engine' }, 'Clips transcribed by ', engine);
+ engine.onchange = () => listening.set({ chordEngine: engine.value });
  const [snapBox, snapLabel] = check('listen-snap', 'Snap to the sequencer\'s key and scale', s.snap);
  const keyName = el('span', { className: 'module-hint listen-key' });
  snapLabel.append(' ', keyName);
@@ -48,7 +54,7 @@ export function createListeningWidget() {
  const hint = el('p', { className: 'module-hint listen-hint' });
  content.append(
   el('div', { className: 'sequence-toolbar' }, toggle, device),
-  el('div', { className: 'sequence-toolbar' }, el('label', {}, 'Mode ', mode)),
+  el('div', { className: 'sequence-toolbar' }, el('label', {}, 'Mode ', mode), engineRow),
   el('div', { className: 'listen-level' }, meter, db),
   tuner,
   el('div', { className: 'listen-options' }, snapLabel, phonesLabel, playLabel,
@@ -69,7 +75,8 @@ export function createListeningWidget() {
   status.classList.toggle('error', !!st.error);
   playBox.disabled = !st.headphones; playLabel.classList.toggle('disabled', !st.headphones);
   latency.textContent = `Latency ${st.latencyMs} ms${st.measured ? ' (measured)' : ' (estimated)'}`;
-  hint.textContent = st.mode === 'rhythm' ? `Rhythm only: every clap or tap is graded on the beat, with no pitch.${st.headphones ? '' : ' On speakers a metronome click is told from a clap by its level; headphones work best.'}` : st.headphones ? 'Headphones: nothing the app plays can reach the microphone.' : 'On speakers, notes the app plays itself are ignored. Headphones work best.';
+  engineRow.hidden = st.mode !== 'chords';
+  hint.textContent = st.mode === 'chords' ? `Chords: several notes at once, for a piano or a guitar. Approximate: a note can be missed or one heard an octave out, and each is found a fifth of a second late (but stamped from when it was struck).${st.headphones ? '' : ' On speakers, notes the app plays are left out.'}` : st.mode === 'rhythm' ? `Rhythm only: every clap or tap is graded on the beat, with no pitch.${st.headphones ? '' : ' On speakers a metronome click is told from a clap by its level; headphones work best.'}` : st.headphones ? 'Headphones: nothing the app plays can reach the microphone.' : 'On speakers, notes the app plays itself are ignored. Headphones work best.';
   gateMark.style.left = `${((st.gateDb + 80) / 80) * 100}%`;
   mic.hidden = !(st.active && st.kind === 'mic');
   describeKey();
@@ -108,6 +115,13 @@ export function createListeningWidget() {
  const show = () => {
   drawn = false;
   const f = listening.last;
+  if (f && s.mode === 'chords') { // the tuner names the chord instead
+   fill.style.width = `${Math.max(0, Math.min(100, ((f.db + 80) / 80) * 100))}%`; db.textContent = `${Math.max(-80, Math.round(f.db))} dB`;
+   const held = listening.heldChord || [], name = held.length >= 3 ? detectChord(held, held[0])[0]?.chordName : '';
+   note.textContent = name || (held.length ? held.map(SCI).join(' ') : '–'); cents.textContent = held.length ? `${held.length} note${held.length === 1 ? '' : 's'} · approximate` : ''; hz.textContent = '';
+   tuner.classList.toggle('voiced', held.length > 0);
+   return;
+  }
   if (f && s.mode === 'rhythm') { // the tuner counts claps instead
    fill.style.width = `${Math.max(0, Math.min(100, ((f.db + 80) / 80) * 100))}%`; db.textContent = `${Math.max(-80, Math.round(f.db))} dB`;
    note.textContent = performance.now() - clapShown < 150 ? '👏' : '·'; cents.textContent = `${claps} clap${claps === 1 ? '' : 's'}`; hz.textContent = ''; tuner.classList.toggle('voiced', performance.now() - clapShown < 400);

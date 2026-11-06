@@ -2,7 +2,7 @@
 // and imports audio clips that can be auditioned, run through the effect chain and converted.
 import { FORMATS, AUDIO_EXTENSIONS, encodeAudio, decodeAudioFile } from './audio-files.js';
 import { writeMidi, readMidi, songFromNotes } from './midi-file.js';
-import { transcribe } from './listen-dsp.js';
+import { transcribe, transcribeChords } from './listen-dsp.js';
 import { pulseFromOnsets } from './timing.js';
 import { listening } from './listening.js';
 import { timing } from './timing-widget.js';
@@ -240,17 +240,23 @@ export function createIoWidget(sequencer) {
  const addClip = (name, audio) => {
   const { channels, sampleRate } = audio, seconds = channels[0].length / sampleRate;
   const play = el('button', { textContent: '▶ Play' });
-  // Transcribe to MIDI: the clip's notes, heard as the Listening widget hears a voice, into wherever MIDI goes
-  // (a loop slot or the step sequencer), and a .mid to download.
+  // Transcribe to MIDI: the clip's notes, heard as the Listening widget hears them (one at a time, or chords in
+  // its Chords mode, by its built-in ear or Basic Pitch), into wherever MIDI goes (a loop slot or the step
+  // sequencer), and a .mid to download.
   const midiLink = el('button', { textContent: 'Download .mid', hidden: true });
-  const toMidi = el('button', { textContent: 'Transcribe to MIDI', title: 'Hear the notes in this clip (one at a time) and put them where MIDI goes' });
+  const toMidi = el('button', { textContent: 'Transcribe to MIDI', title: 'Hear the notes in this clip (as the Listening widget\'s mode says: one at a time, or chords) and put them where MIDI goes' });
   toMidi.onclick = async () => {
    toMidi.disabled = true;
    try {
     say(`Listening to ${name}…`);
     await new Promise(r => setTimeout(r, 20));
     const mono = channels.length > 1 ? Float32Array.from(channels[0], (v, i) => channels.reduce((a, c) => a + c[i], 0) / channels.length) : channels[0];
-    const heard = transcribe(mono, sampleRate);
+    const chords = listening.settings.mode === 'chords', model = chords && listening.settings.chordEngine === 'basic-pitch';
+    let heard;
+    if (model) {
+     try { heard = await (await import('./poly-model.js')).transcribeWithModel(mono, sampleRate, text => say(text)); }
+     catch (e) { say(`Basic Pitch couldn't load (${e.message}), so the built-in ear transcribed ${name} instead.`, true); heard = transcribeChords(mono, sampleRate); }
+    } else heard = chords ? transcribeChords(mono, sampleRate) : transcribe(mono, sampleRate);
     if (!heard.length) throw new Error(`No notes were heard in ${name}.`);
     const blob = writeMidi(songOf(heard, name));
     importMidi(new Uint8Array(await blob.arrayBuffer()), `${name} (transcribed)`);

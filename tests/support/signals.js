@@ -77,3 +77,22 @@ export function claps(times, { sampleRate = 48000, amp = 0.5, decayMs = 60, nois
  for (let i = 0; i < N; i++) out[i] += noise * (r() * 2 - 1);
  return out;
 }
+
+// Chords: { notes: [midi…], start, end } (ms), each note a piano-like string (partials falling 1/h^1.3, a little
+// stretched, dying away) or a sustained sawtooth. Returns mono samples.
+export function strum(chords, { sampleRate = 48000, kind = 'piano', amp = 0.12, tail = 500 } = {}) {
+ const end = Math.max(...chords.map(c => c.end)) + tail, N = Math.round((end / 1000) * sampleRate), x = new Float32Array(N);
+ for (const c of chords) for (const m of c.notes) {
+  const f = 440 * 2 ** ((m - 69) / 12), i0 = Math.round((c.start / 1000) * sampleRate), i1 = Math.round((c.end / 1000) * sampleRate), fade = sampleRate * 0.05;
+  const partials = []; for (let h = 1; h * f < 6000 && h <= 20; h++) partials.push([2 * Math.PI * h * f * Math.sqrt(1 + 0.0004 * h * h), 1 / h ** (kind === 'piano' ? 1.3 : 1)]);
+  for (let i = i0; i < Math.min(N, i1 + fade); i++) {
+   const t = (i - i0) / sampleRate, env = Math.min(1, t / 0.005) * (kind === 'piano' ? Math.exp(-t * 1.5) : 1) * (i > i1 ? Math.max(0, 1 - (i - i1) / fade) : 1);
+   let v = 0; for (const [w, a] of partials) v += a * Math.sin(w * t);
+   x[i] += amp * env * v;
+  }
+ }
+ return x;
+}
+// A progression with common tones, inversions and sevenths: C, Am, F/C… as { notes, start, end }.
+export const PROGRESSION = [[60, 64, 67], [57, 60, 64], [53, 57, 60, 65], [55, 59, 62, 67], [48, 55, 64], [62, 65, 69, 72], [50, 57, 62, 66], [55, 59, 62, 65]];
+export const chordsAt = (prog = PROGRESSION, start = 200, every = 700, length = 600) => prog.map((notes, i) => ({ notes, start: start + i * every, end: start + i * every + length }));

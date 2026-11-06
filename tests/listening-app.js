@@ -4,7 +4,7 @@
 // beat clock, and silent on speakers. The tuner, latency calibration on a loopback with a known delay, the
 // app's own notes heard back on speakers, snapping to the sequencer's scale, a microphone that is refused, and
 // the settings being kept. Returns { checks: [{ name, ok, problems }] }.
-import { sing, melody, claps } from './support/signals.js';
+import { sing, melody, claps, strum, chordsAt } from './support/signals.js';
 import { noteF1 } from '../js/listen-dsp.js';
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -548,3 +548,108 @@ export async function runTools() {
  listening.stop();
  return { checks };
 }
+
+// Chords (node tests/listening-chords.mjs): heard live through the worklet from the app's own oscillators, each
+// note lit and sent, the chord named in the tuner and by the teacher, said to be approximate; and a clip
+// transcribed by Basic Pitch, or, when it can't be downloaded (`phase` 'offline': the runner blocks the CDN),
+// by the built-in ear with a message saying so.
+export async function runChords(phase) {
+ const checks = [];
+ const check = async (name, fn) => {
+  const problems = [];
+  try { await fn((ok, why) => { if (!ok) problems.push(why); }); } catch (err) { problems.push(`threw: ${err.message}`); }
+  checks.push({ name, ok: !problems.length, problems });
+ };
+ const { listening } = await import('../js/listening.js');
+ const ctx = window.synth.ensureAudio();
+ await ctx.resume();
+ const rate = ctx.sampleRate, until = async (fn, ms = 8000) => { const end = performance.now() + ms; while (!fn() && performance.now() < end) await wait(20); return fn(); };
+ const mode = m => { $('#listen-mode').value = m; $('#listen-mode').dispatchEvent(new Event('change')); };
+ const engine = e => { $('#listen-chord-engine').value = e; $('#listen-chord-engine').dispatchEvent(new Event('change')); };
+ listening.set({ latencyMs: null, headphones: false, playThrough: false, snap: false });
+ const chords = chordsAt([[60, 64, 67], [57, 60, 64], [53, 57, 60, 65], [55, 59, 62, 67]], 300, 800, 700);
+ const ref = chords.flatMap(c => c.notes.map(midi => ({ midi, start: c.start, end: c.end })));
+ // A clip in Import / Export, transcribed into loop slot 4; returns its notes (ms from the start).
+ const transcribeClip = async (name, samples) => {
+  const { encodeAudio } = await import('../js/audio-files.js');
+  const dt = new DataTransfer(); dt.items.add(new File([encodeAudio([samples], 48000, 'wav24')], `${name}.wav`, { type: 'audio/wav' }));
+  $('#io-module').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true }));
+  const clip = await until(() => [...document.querySelectorAll('#io-module .io-clip')].find(c => c.textContent.includes(name)), 5000);
+  const target = $('#io-module select[aria-label="MIDI import destination"]'); target.value = 'loop3'; target.dispatchEvent(new Event('change'));
+  const said = [], status = $('#io-module [role=status]'), watch = new MutationObserver(() => said.push(status.textContent));
+  watch.observe(status, { childList: true, characterData: true, subtree: true });
+  [...clip.querySelectorAll('button')].find(b => b.textContent === 'Transcribe to MIDI').click();
+  await until(() => clip.dataset.transcribed || status.classList.contains('error') && !/instead/.test(status.textContent), 90000);
+  await until(() => clip.dataset.transcribed, 3000);
+  watch.disconnect();
+  const loop = window.synth.loops()[3], names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  const midiOf = n => Number(n.match(/\d+$/)[0]) * 12 + names.indexOf(n.replace(/\d+$/, ''));
+  const ons = loop.events.filter(e => e.type === 'noteon'), first = ons[0]?.time ?? 0;
+  return { said, notes: ons.map(e => ({ midi: midiOf(e.note), start: e.time - first + 300 })) };
+ };
+
+ if (phase === 'live') {
+  await check('Chords, live: the app\'s own oscillators playing C, Am, F, G are heard (every note name, F1 at least 0.8 with octaves), several keys lit at once, each chord named in the tuner and by the teacher, as approximate', async expect => {
+   mode('chords');
+   expect(!$('.listen-engine').hidden, 'the clip engine choice is hidden in Chords');
+   const heard = [], names = new Set(), chips = new Set();
+   const on = ({ detail: d }) => { if (d.source === 'audio') heard.push({ ...d }); };
+   window.addEventListener('synth:note', on);
+   let most = 0;
+   const watch = setInterval(() => {
+    most = Math.max(most, document.querySelectorAll('#keyboard .active').length);
+    names.add($('.listen-note').textContent);
+    const chip = $('#teacher-panel .tp-chip'); if (chip && !chip.hidden) chips.add(chip.textContent);
+   }, 30);
+   const audio = await renderChordsSynth(chords, rate), src = new AudioBufferSourceNode(ctx, { buffer: audio });
+   await listening.listenTo(src, 'a test clip');
+   const at = ctx.currentTime + 0.15; src.start(at);
+   await new Promise(r => { src.onended = r; }); await wait(400);
+   clearInterval(watch); window.removeEventListener('synth:note', on);
+   const notes = [], open = new Map();
+   for (const e of heard) { if (e.on) open.set(e.midi, { midi: e.midi, start: e.time }); else if (open.has(e.midi)) { notes.push({ ...open.get(e.midi), end: e.time }); open.delete(e.midi); } }
+   const want = ref.map(n => ({ ...n, start: window.synth.perfTimeOf(at + n.start / 1000) })), sc = noteF1(want, notes);
+   // The synth's sawtooths have exact harmonics, so F3 under F4 can hide the F4 (its fundamental is the F3's
+   // second harmonic) and an F5 be heard for it: the octave can be out, the note names are right.
+   const pc = list => list.map(n => ({ ...n, midi: n.midi % 12 })), byName = noteF1(pc(want), pc(notes));
+   expect(sc.f1 >= 0.8 && byName.f1 === 1, `F1 ${sc.f1.toFixed(2)}, by note name ${byName.f1.toFixed(2)}: heard ${notes.map(n => n.midi).join(' ')}`);
+   expect(Math.max(...sc.onsetErrors.map(Math.abs)) < 30, `onsets ${sc.onsetErrors.map(Math.round).join(' ')} ms`);
+   expect(most >= 3, `at most ${most} keys were lit at once`);
+   expect(['Cmaj', 'Amin', 'Fmaj', 'Gmaj'].every(n => names.has(n)), `the tuner named ${[...names].join(', ')}`);
+   expect(['Cmaj', 'Amin', 'Fmaj', 'Gmaj'].every(n => chips.has(n)), `the teacher named ${[...chips].join(', ')}`);
+   expect(/heard, approximate/.test($('#teacher-panel .tp-live-detail').textContent), `the live strip says ${$('#teacher-panel .tp-live-detail').textContent}`);
+   expect(heard.every(e => e.silent), 'a chord sounded through the synth on speakers');
+   mode('melody');
+  });
+ }
+ if (phase === 'offline') {
+  await check('Basic Pitch can\'t be downloaded: a clear message, the built-in ear transcribes the clip instead, and the keyboard still plays', async expect => {
+   mode('chords'); engine('basic-pitch');
+   const { said, notes } = await transcribeClip('Chords offline', strum(chords, { sampleRate: 48000 }));
+   expect(said.some(t => /Basic Pitch couldn't load \(couldn't download .*\), so the built-in ear transcribed/.test(t)), `said: ${said.join(' / ')}`);
+   const sc = noteF1(ref, notes);
+   expect(sc.f1 >= 0.9, `the built-in ear: F1 ${sc.f1.toFixed(2)}, ${notes.map(n => n.midi).join(' ')}`);
+   let played = false; const on = ({ detail }) => { if (detail.source === 'computer') played = true; };
+   window.addEventListener('synth:note', on);
+   document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', code: 'KeyA', bubbles: true })); document.body.dispatchEvent(new KeyboardEvent('keyup', { key: 'a', code: 'KeyA', bubbles: true }));
+   window.removeEventListener('synth:note', on);
+   expect(played, 'the keyboard didn\'t play');
+   engine('builtin'); mode('melody');
+  });
+ }
+ if (phase === 'online') {
+  await check('Basic Pitch, downloaded on demand: a clip of piano chords transcribed into a loop slot, F1 at least 0.9', async expect => {
+   mode('chords'); engine('basic-pitch');
+   const { said, notes } = await transcribeClip('Chords online', strum(chords, { sampleRate: 48000 }));
+   expect(said.some(t => /Downloading the Basic Pitch model \(on (webgpu|wasm|webgl|cpu)\)/.test(t)), `said: ${said.join(' / ')}`);
+   const sc = noteF1(ref, notes);
+   expect(sc.f1 >= 0.9, `F1 ${sc.f1.toFixed(2)}: ${notes.map(n => `${n.midi}@${Math.round(n.start)}`).join(' ')}`);
+   engine('builtin'); mode('melody');
+  });
+ }
+ listening.stop();
+ return { checks };
+}
+
+// Chords rendered through the app's own oscillators (the bank's sawtooths, a lowpass and a short envelope).
+async function renderChordsSynth(chords, rate) { return renderSynth(chords.flatMap(c => c.notes.map(midi => ({ midi, start: c.start, end: c.end }))), rate); }

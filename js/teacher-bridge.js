@@ -36,7 +36,7 @@ import { Voice, canListen, canSpeak, ENGINES as VOICE_ENGINES, loadEngine, BROWS
 import { PROVIDERS, GROUPS, SYSTEM_ONE, NO_SYSTEM_TWO, providerById, getProviderId, setProviderId, getKey, setKey, clearKey, getModelFor, setModelFor, getBase, setBase, engineFor, listModels, pickModel, fetchOpenRouterModels } from './providers.js';
 import { signIn, completeSignIn } from './ai-auth.js';
 import { read, save } from './storage.js';
-import { CLAP } from './listening.js';
+import { CLAP, listening } from './listening.js';
 
 // Notes the player struck or sang; the sequencer, looper and the teacher's own playback are not analysed.
 const PLAYED = /^(midi|computer|mouse|touch|audio)/; // audio: sung or played into the microphone (js/listening.js)
@@ -285,7 +285,7 @@ export class TeacherBridge {
    this._lastNoteAt = now; if (!clap) this._keysLow = followKeys(this._keysLow, midi); clearTimeout(this._missTimer);
    if (this.voice?.speaking) this.voice.cancelSpeech(); // the student's turn: stop talking
    this.tracker.noteOn(midi, vel, now); this.attempt.noteOn(midi, now);
-   if (clap) this._showClap(vel); else this._showLive(midi, vel);
+   if (clap) this._showClap(vel); else this._showLive(midi, vel, source === 'audio' && listening.settings.mode === 'chords');
   });
   window.addEventListener('synth:panic', () => { this._stopPlayback(); this.tracker.reset(); this.attempt.reset(); });
  }
@@ -911,11 +911,12 @@ export class TeacherBridge {
   live.querySelector('.tp-live-detail').textContent = `Clap · velocity ${vel} · heard by Listening`;
   live.querySelector('.tp-chip').hidden = true;
  }
- _showLive(note, vel) {
+ // `heard`: a chord the Listening widget heard, which is approximate, and says so.
+ _showLive(note, vel, heard = false) {
   const live = this.panel?.querySelector('.tp-live');
   if (!live) return;
   live.querySelector('.tp-live-note').textContent = pitchClassName(note);
-  live.querySelector('.tp-live-detail').textContent = `MIDI ${note} · velocity ${vel} · pitch class ${note % 12}`;
+  live.querySelector('.tp-live-detail').textContent = `MIDI ${note} · velocity ${vel} · pitch class ${note % 12}${heard ? ' · heard, approximate' : ''}`;
   const chip = live.querySelector('.tp-chip');
   const held = [...this.tracker.heldNotes];
   const chord = held.length >= 3 ? detectChord(held, Math.min(...held))[0] : null;
