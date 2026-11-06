@@ -36,6 +36,7 @@ import { Voice, canListen, canSpeak, ENGINES as VOICE_ENGINES, loadEngine, BROWS
 import { PROVIDERS, GROUPS, SYSTEM_ONE, NO_SYSTEM_TWO, providerById, getProviderId, setProviderId, getKey, setKey, clearKey, getModelFor, setModelFor, getBase, setBase, engineFor, listModels, pickModel, fetchOpenRouterModels } from './providers.js';
 import { signIn, completeSignIn } from './ai-auth.js';
 import { read, save } from './storage.js';
+import { CLAP } from './listening.js';
 
 // Notes the player struck or sang; the sequencer, looper and the teacher's own playback are not analysed.
 const PLAYED = /^(midi|computer|mouse|touch|audio)/; // audio: sung or played into the microphone (js/listening.js)
@@ -280,15 +281,19 @@ export class TeacherBridge {
    // Every release counts, whatever its source: the tracker ignores notes it isn't holding.
    if (!on) { this.tracker.noteOff(midi, now); this.attempt.noteOff(midi); return; }
    if (!PLAYED.test(source)) return;
-   const vel = Math.round(velocity * 127);
-   this._lastNoteAt = now; this._keysLow = followKeys(this._keysLow, midi); clearTimeout(this._missTimer);
+   const vel = Math.round(velocity * 127), clap = source === 'audio-clap';
+   this._lastNoteAt = now; if (!clap) this._keysLow = followKeys(this._keysLow, midi); clearTimeout(this._missTimer);
    if (this.voice?.speaking) this.voice.cancelSpeech(); // the student's turn: stop talking
-   this.tracker.noteOn(midi, vel, now); this.attempt.noteOn(midi, now); this._showLive(midi, vel);
+   this.tracker.noteOn(midi, vel, now); this.attempt.noteOn(midi, now);
+   if (clap) this._showClap(vel); else this._showLive(midi, vel);
   });
   window.addEventListener('synth:panic', () => { this._stopPlayback(); this.tracker.reset(); this.attempt.reset(); });
  }
 
  _onPhrase(a) {
+  // Claps heard in Rhythm only (js/listening.js) have no pitch: their phrase is read for its rhythm alone.
+  a.claps = a.noteOns.length > 0 && a.noteOns.every(n => n.note === CLAP);
+  if (a.claps) { a.rhythm = this._rhythm(a); if (this.lesson) this._checkLesson(); return; }
   this._showLocal(a);
   a.rhythm = this._rhythm(a); // the [RHYTHM] summary System 2 reads with the phrase, when there is one
   if (this.lesson) { this._checkLesson(); return; } // during a lesson, the phrase is marked rather than coached
@@ -327,7 +332,7 @@ export class TeacherBridge {
  _rhythm(a) {
   const clock = timing.clock, from = a.noteOns[0]?.time, to = a.noteOns.at(-1)?.time;
   const practising = this.exercise || isRhythm(this.lesson);
-  if (!timing.on || !clock.running || (!clock.external && !practising) || (this.lesson && !isRhythm(this.lesson))) return '';
+  if (!timing.on || !clock.running || (!clock.external && !practising && !a.claps) || (this.lesson && !isRhythm(this.lesson))) return ''; // claps are for their rhythm, against your own pulse too
   const notes = timing.onsets.filter(o => o.time >= from - 5 && o.time <= to + 5);
   if (notes.filter(o => !o.chord).length < 4) return '';
   const target = this.exercise || (this.lesson?.pattern ? { pattern: this.lesson.pattern, bpm: Math.round(clock.bpm) } : null);
@@ -899,6 +904,13 @@ export class TeacherBridge {
 
  /* ---- Lesson tab ---- */
 
+ _showClap(vel) {
+  const live = this.panel?.querySelector('.tp-live');
+  if (!live) return;
+  live.querySelector('.tp-live-note').textContent = '👏';
+  live.querySelector('.tp-live-detail').textContent = `Clap · velocity ${vel} · heard by Listening`;
+  live.querySelector('.tp-chip').hidden = true;
+ }
  _showLive(note, vel) {
   const live = this.panel?.querySelector('.tp-live');
   if (!live) return;

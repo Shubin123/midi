@@ -4,7 +4,7 @@
 // beat clock, and silent on speakers. The tuner, latency calibration on a loopback with a known delay, the
 // app's own notes heard back on speakers, snapping to the sequencer's scale, a microphone that is refused, and
 // the settings being kept. Returns { checks: [{ name, ok, problems }] }.
-import { sing, melody } from './support/signals.js';
+import { sing, melody, claps } from './support/signals.js';
 import { noteF1 } from '../js/listen-dsp.js';
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -222,5 +222,139 @@ export async function runMicrophone() {
  await wait(100);
  if (!$('.mic-indicator').hidden || $('#listen-toggle').getAttribute('aria-pressed') !== 'false') problems.push('Stop didn\'t close the microphone');
  checks.push({ name: 'the microphone: Listen opens it (the Mic on pill shows), a sung melody comes through note for note, and the pill stops it', ok: !problems.length, problems });
+ return { checks };
+}
+
+// The timing layers fed from the microphone (node tests/listening-panel.mjs, in a page of its own): the same
+// rhythm against the metronome played as MIDI, clapped and sung gives the same rhythm card and offsets; claps
+// rushing get the same nudge; free claps make the player's pulse; claps set the tempo, or the metronome
+// follows them; and on speakers a click heard back is told from a clap.
+export async function runTiming() {
+ const checks = [];
+ const check = async (name, fn) => {
+  const problems = [];
+  try { await fn((ok, why) => { if (!ok) problems.push(why); }); } catch (err) { problems.push(`threw: ${err.message}`); }
+  checks.push({ name, ok: !problems.length, problems });
+ };
+ const { listening } = await import('../js/listening.js');
+ const { timing } = await import('../js/timing-widget.js');
+ const bridge = await import('../js/teacher-bridge.js').then(m => m.initTeacher());
+ const ctx = window.synth.ensureAudio();
+ await ctx.resume();
+ const clock = timing.clock, rate = ctx.sampleRate;
+ listening.set({ latencyMs: null, headphones: false, playThrough: false, snap: false, clapTempo: false });
+ // The audio clock's time for a time on the page's clock, as the listener maps it back.
+ const ctxOf = T => { const ts = ctx.getOutputTimestamp(); return ts.contextTime + (T - ts.performanceTime) / 1000; };
+ // Plays samples into the listener so that their start is at T0 on the page's clock.
+ const playAt = async (samples, T0) => {
+  const b = ctx.createBuffer(1, samples.length, rate); b.copyToChannel(samples, 0);
+  const src = new AudioBufferSourceNode(ctx, { buffer: b });
+  await listening.listenTo(src, 'a test clip');
+  src.start(Math.max(ctx.currentTime, ctxOf(T0)));
+  return new Promise(r => { src.onended = r; });
+ };
+ const metronome = on => { const m = $('#metronomeToggle'); if (m.checked !== on) m.click(); };
+ const cards = [];
+ const add = bridge._add.bind(bridge);
+ bridge._add = e => { if (e.kind === 'rhythm') cards.push(e); return add(e); };
+ const fresh = async (bpm = 100) => { bridge.tracker.reset(); bridge._setExercise(null); timing.watch.reset(); window.synth.tempo = bpm; await wait(200); };
+ const mode = m => { if (listening.settings.mode !== m) { $('#listen-mode').value = m; $('#listen-mode').dispatchEvent(new Event('change')); } };
+ const phraseEnd = () => wait(clock.period * clock.beatsPerBar + 500);
+
+ // Two bars: beats and offsets (ms) from them.
+ const PLAN = [[0, 5], [1, -10], [2, 18], [2.5, 0], [3, -15], [4, 8], [5, 22], [6, -5], [6.5, 12], [7, 0]]; // none on a grade's edge
+ const offsetsOf = from => timing.onsets.filter(o => o.time >= from - 1).map(o => Math.round(o.offsetMs));
+
+ await check('the same rhythm against the metronome: played as MIDI, clapped, and sung, the rhythm cards match and each offset is within 6 ms', async expect => {
+  await fresh(100); metronome(true); await wait(300);
+  const results = {};
+  // As MIDI, stamped with the exact times (in the past, as a controller's time stamps can be).
+  const b0 = Math.floor(clock.beatAt(performance.now())) - 12, from0 = clock.timeOf(b0) - 50;
+  cards.length = 0;
+  for (const [beat, off] of PLAN) { const t = clock.timeOf(b0 + beat) + off; window.dispatchEvent(new CustomEvent('synth:note', { detail: { midi: 60, velocity: 0.8, on: true, source: 'midi', time: t } })); window.dispatchEvent(new CustomEvent('synth:note', { detail: { midi: 60, velocity: 0, on: false, source: 'midi', time: t + 120 } })); }
+  results.midi = { offsets: offsetsOf(from0), card: await phraseEnd().then(() => cards.at(-1)) };
+  for (const [kind, render] of [['claps', rel => claps(rel, { sampleRate: rate })], ['sung', rel => sing(rel.map((t, i) => ({ midi: [60, 62, 64, 65, 67][i % 5], start: t, end: t + 240 })), { sampleRate: rate, vibrato: 0, tail: 400 })]]) {
+   mode(kind === 'claps' ? 'rhythm' : 'melody');
+   await fresh(100);
+   const b1 = Math.ceil(clock.beatAt(performance.now()) / 4 + 1) * 4, T0 = clock.timeOf(b1) - 300;
+   const rel = PLAN.map(([beat, off]) => clock.timeOf(b1 + beat) + off - T0);
+   cards.length = 0;
+   await playAt(render(rel), T0);
+   results[kind] = { offsets: offsetsOf(T0), card: await phraseEnd().then(() => cards.at(-1)) };
+  }
+  mode('melody');
+  const m = results.midi;
+  expect(m.card, 'the MIDI phrase got no rhythm card');
+  for (const kind of ['claps', 'sung']) {
+   const r = results[kind];
+   expect(r.card, `the ${kind} phrase got no rhythm card`);
+   if (!r.card || !m.card) continue;
+   expect(r.card.bars.join('|') === m.card.bars.join('|'), `${kind}: ${r.card.bars.join(' | ')}, MIDI: ${m.card.bars.join(' | ')}`);
+   expect(r.card.grades.map(g => g.grade).join() === m.card.grades.map(g => g.grade).join(), `${kind} grades ${r.card.grades.map(g => g.grade).join()} vs ${m.card.grades.map(g => g.grade).join()}`);
+   expect(r.offsets.length === m.offsets.length && r.offsets.every((o, i) => Math.abs(o - m.offsets[i]) <= 6), `${kind} offsets ${r.offsets.join(' ')}, MIDI ${m.offsets.join(' ')}`);
+  }
+  expect(results.claps?.card && !document.querySelector('#keyboard .active'), 'a clap lit a key');
+  metronome(false);
+ });
+
+ await check('the tempo layer: claps rushing to 107 against 100 are said once, as for notes', async expect => {
+  mode('rhythm'); await fresh(100); metronome(true); await wait(300);
+  const flags = [], off = timing.subscribe((type, d) => { if (type === 'flag') flags.push(d); });
+  const T0 = clock.timeOf(Math.ceil(clock.beatAt(performance.now())) + 1) - 200, beat = 60000 / 107;
+  await playAt(claps(Array.from({ length: 12 }, (_, i) => 200 + i * beat), { sampleRate: rate }), T0);
+  off();
+  expect(flags.length === 1 && flags[0].kind === 'rushing' && Math.abs(flags[0].actual - 107) <= 2, `flags: ${JSON.stringify(flags)}`);
+  metronome(false);
+ });
+
+ await check('free play from claps alone: 96 BPM, one missed and one stray, becomes your pulse, and the claps land on its beats', async expect => {
+  mode('rhythm'); await fresh(120); metronome(false); clock.stop('free'); await wait(100);
+  const beat = 625, times = []; for (let i = 0; i < 12; i++) if (i !== 6) times.push(200 + i * beat); times.push(200 + 3.4 * beat);
+  await playAt(claps(times.sort((a, b) => a - b), { sampleRate: rate }), performance.now() + 150);
+  expect(clock.source === 'free' && Math.abs(clock.bpm - 96) < 1, `the clock is ${clock.source} at ${clock.bpm.toFixed(2)}`);
+  const late = timing.onsets.slice(-3).filter(o => o.offsetMs !== null).map(o => Math.abs(o.offsetMs)); // once the pulse has settled
+  expect(late.length === 3 && late.every(o => o < 10), `the last claps are ${late.map(Math.round).join(', ')} ms off their beat`);
+ });
+
+ await check('Clap to set the tempo (Metronome & Tempo): four claps 600 ms apart set 100 BPM', async expect => {
+  mode('rhythm'); await fresh(140);
+  const box = $('#clapTempo'); expect(box, 'no Clap to set the tempo switch'); box.click();
+  await playAt(claps([200, 800, 1400, 2000], { sampleRate: rate }), performance.now() + 150);
+  expect(window.synth.tempo === 100, `the tempo is ${window.synth.tempo}`);
+  expect($('#bpmDisplay').textContent === '100', `the display says ${$('#bpmDisplay').textContent}`);
+  box.click();
+ });
+
+ await check('Follow my tempo: clapping at 110 against a metronome at 100, the metronome moves to 110 without stopping', async expect => {
+  mode('rhythm'); await fresh(100); metronome(true); await wait(300);
+  $('#followTempo').click();
+  const T0 = clock.timeOf(Math.ceil(clock.beatAt(performance.now())) + 1) - 200, beat = 60000 / 110;
+  await playAt(claps(Array.from({ length: 14 }, (_, i) => 200 + i * beat), { sampleRate: rate }), T0);
+  expect(Math.abs(window.synth.tempo - 110) <= 2, `the tempo is ${window.synth.tempo}`);
+  expect(window.synth.metronome && clock.source === 'metronome', `metronome ${window.synth.metronome}, the clock kept by ${clock.source}`);
+  $('#followTempo').click(); metronome(false);
+ });
+
+ await check('on speakers, a metronome click heard back on the beat isn\'t a clap, a clap on the beat is; with headphones the clicks count too', async expect => {
+  mode('rhythm'); await fresh(100); metronome(true); await wait(300);
+  listening.set({ clickDb: -40 });
+  const run = async () => {
+   const heard = [], on = ({ detail }) => { if (detail.source === 'audio-clap' && detail.on) heard.push(detail.time); };
+   window.addEventListener('synth:note', on);
+   const b = Math.ceil(clock.beatAt(performance.now())) + 1, T0 = clock.timeOf(b) - 200;
+   const times = [0, 1, 2, 3].map(k => clock.timeOf(b + k) - T0), offBeat = clock.timeOf(b + 1.5) - T0;
+   await playAt(claps([...times, offBeat].sort((x, y) => x - y), { sampleRate: rate, amp: [...times, offBeat].sort((x, y) => x - y).map(t => (t === times[2] ? 0.5 : 0.05)), decayMs: 25 }), T0);
+   await wait(150); window.removeEventListener('synth:note', on);
+   return heard.length;
+  };
+  const speakers = await run();
+  expect(speakers === 2, `on speakers ${speakers} claps were heard, not 2 (the loud one on the beat, the soft one off it)`);
+  listening.set({ headphones: true });
+  const phones = await run();
+  expect(phones === 5, `with headphones ${phones} were heard, not 5`);
+  listening.set({ headphones: false, clickDb: null }); metronome(false);
+ });
+ mode('melody');
+ listening.stop();
  return { checks };
 }

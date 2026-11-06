@@ -65,3 +65,15 @@ export function melody(start = 200) {
  for (const [midi, len, gap, more = {}] of plan) { notes.push({ midi, start: t, end: t + len, ...more }); t += len + gap; }
  return notes;
 }
+
+// Claps at `times` (ms): a burst of noise that is loudest at once and gone in 60 ms, each `amp` loud (an array
+// for each its own). A metronome's click is the same with a 25 ms decay.
+export function claps(times, { sampleRate = 48000, amp = 0.5, decayMs = 60, noise = 0.001, seed = 11, tail = 300 } = {}) {
+ const N = Math.round(((Math.max(...times) + tail) / 1000) * sampleRate), out = new Float32Array(N), r = random(seed);
+ times.forEach((t, k) => {
+  const a = Array.isArray(amp) ? amp[k] : amp, at = Math.round((t / 1000) * sampleRate), len = Math.round((decayMs / 1000) * sampleRate);
+  for (let i = 0; i < len && at + i < N; i++) out[at + i] += a * (r() * 2 - 1) * Math.exp((-5 * i) / len);
+ });
+ for (let i = 0; i < N; i++) out[i] += noise * (r() * 2 - 1);
+ return out;
+}

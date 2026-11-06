@@ -165,7 +165,9 @@ teacher and graded by the beat clock, with nothing in those changed.
   AudioWorklet, says so in the widget; MIDI and the keyboard carry on. All
   of it runs on the device; no sound leaves the page.
 
-The input, mode, snapping, headphones, gate and measured latency are kept.
+**Mode** is **Melody** (one note at a time) or **Rhythm only** (claps and
+taps, for rhythm exercises; see Beat, tempo and rhythm). The input, mode,
+snapping, headphones, gate and measured latency are kept.
 `node tests/listening.mjs` checks the pitch, a sung melody (vibrato, scoops,
 breaths, a re-sung note, a legato step) note for note with every onset within
 20 ms (in practice within 7), a whistled melody, snapping, velocity, the gate
@@ -248,6 +250,28 @@ with no model at all:
   (`{"exercise": {"pattern": "x...x...x.x.x...", "bpm": 90}}`), which becomes
   its own Try this next. **Explain why** asks for it in Fast mode.
 
+**Heard through the microphone** (the Listening widget, below), it all works
+the same: sung or played notes and claps carry the time they were made (the
+measured latency taken off), so a phrase sung or clapped against the
+metronome gets the same offsets, grades and rhythm card as the same phrase
+played on MIDI. In **Rhythm only** mode every clap, tap or hit is an onset
+with no pitch: the beat clock grades it, and the teacher reads the phrase
+for its rhythm alone (against your own pulse too), with no scale or chord.
+In free play from the microphone, where an onset can be missed or one heard
+that wasn't played, **your pulse** comes from the onsets' autocorrelation
+(`pulseFromOnsets` in `js/timing.js`): the onsets of the last 8 s as a train of
+bumps, each lag scored with its double and leaning towards 110 BPM, then
+the slowest of the period, its half and its double that most onsets fall
+on, and a line fitted through those onsets for the exact tempo and beat.
+Onsets with no pulse have a flat autocorrelation and are left alone. In
+**Metronome & Tempo**, **Clap to set the tempo** makes every clap heard tap
+Tap BPM at the moment it was made, and **Follow my tempo** has the
+metronome (or the sequencer) follow you instead: once the last notes' tempo
+is clear and 1.5% away, the metronome's next click comes one new beat after
+its last, with no jump, and no rushing or dragging is said. On speakers, an
+onset within 30 ms of a metronome click and no louder than a click is heard
+there (measured in calibration) is the click coming back, not a clap.
+
 What keeps happening is kept in the browser as a small profile: each beat's
 offset over the latest phrases, and how often you rush or drag. Once a beat
 is off the same way in four phrases ("consistently late on beat 3") the
@@ -263,6 +287,16 @@ syncopation and the target; the profile and the exercises.
 and a MIDI clock taking turns keeping the beat, grades on the hit line and the
 strip, a nudge, a rhythm card and its exercise marked against, System 2 reading
 the [RHYTHM] summary and setting an exercise, and the Course tab's profile.
+`node tests/listening-timing.mjs` plays the same two bars against the
+metronome as MIDI, as claps and sung into the Listening widget: the rhythm
+cards match and every offset is within 6 ms of MIDI's. Claps rushing to 107
+against 100 are said once; free claps at 96 BPM (one missed, one stray)
+become your pulse with the claps on its beats; four claps set 100 BPM;
+clapping at 110 moves the metronome to 110 without stopping it; and on
+speakers soft clicks on the beat are left out while a clap on the beat
+counts. `node tests/timing.mjs` checks the autocorrelation from 60 to 180 BPM
+with missed, stray and eighth-note onsets (within 0.5 BPM and 5 ms), and
+that random onsets have no pulse.
 Generating MIDI out to the same port, so a student can play along with
 generated rhythms, is not built yet.
 

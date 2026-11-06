@@ -537,7 +537,7 @@
             function stopMetronome(announce = true) { if(metronomeIntervalId)clearInterval(metronomeIntervalId); metronomeIntervalId=null; if(metronomeLed)metronomeLed.classList.remove('active'); metronomeSources.forEach(s => { try { s.stop(); } catch (e) {} }); metronomeSources = []; if (announce) announceBeat('metronome', false); }
             function toggleMetronome() { if(!metronomeToggle) return; metronomeEnabled = metronomeToggle.checked; if (metronomeEnabled) startMetronome(); else stopMetronome();}
             function adjustBPM(amount) { currentBPM=Math.max(MIN_BPM,Math.min(MAX_BPM,currentBPM+amount)); updateBPMDisplay(); if(metronomeEnabled){stopMetronome();startMetronome();}}
-            function handleTapTempo() { if(!audioContext)initAudio(); if(!audioContext)return; const n=performance.now(); if(tapTempoLastTap&&(n-tapTempoLastTap>MAX_TAP_INTERVAL)){tapTempoTimes.length=0;} tapTempoTimes.push(n); tapTempoLastTap=n; if(tapTempoTimes.length>4)tapTempoTimes.shift(); if(tapTempoTimes.length>=2){let aI=0; for(let i=1;i<tapTempoTimes.length;i++){aI+=tapTempoTimes[i]-tapTempoTimes[i-1];} aI/=(tapTempoTimes.length-1); if(aI>0){currentBPM=Math.round(60000/aI);currentBPM=Math.max(MIN_BPM,Math.min(MAX_BPM,currentBPM)); updateBPMDisplay(); if(metronomeEnabled){stopMetronome();startMetronome();}}}}
+            function handleTapTempo(at) { if(!audioContext)initAudio(); if(!audioContext)return; const n=typeof at==='number'?at:performance.now(); /* a clap heard by the listener taps at the time it was made */ if(tapTempoLastTap&&(n-tapTempoLastTap>MAX_TAP_INTERVAL)){tapTempoTimes.length=0;} tapTempoTimes.push(n); tapTempoLastTap=n; if(tapTempoTimes.length>4)tapTempoTimes.shift(); if(tapTempoTimes.length>=2){let aI=0; for(let i=1;i<tapTempoTimes.length;i++){aI+=tapTempoTimes[i]-tapTempoTimes[i-1];} aI/=(tapTempoTimes.length-1); if(aI>0){currentBPM=Math.round(60000/aI);currentBPM=Math.max(MIN_BPM,Math.min(MAX_BPM,currentBPM)); updateBPMDisplay(); if(metronomeEnabled){stopMetronome();startMetronome();}}}}
             function getBeatDurationMs() { return (60 / currentBPM) * 1000; }
             // Armed loops start on the metronome's own next beat.
             function getTimeUntilNextBeatMs() { if (!metronomeEnabled || !audioContext || audioContext.state !== 'running') return 0; const bDS = 60/currentBPM; const cTIB = ((audioContext.currentTime - metronomeOrigin) % bDS + bDS) % bDS; return (bDS - cTIB) * 1000;}
@@ -1036,6 +1036,20 @@ window.synth = {
  // A note heard by the listener (js/listening.js), played as a MIDI controller's is: lit on the keys, falling,
  // recorded by an armed loop slot, and stamped with when it was sung (`time`, on the page's clock). It sounds
  // only when `silent` is false, which the listener allows with headphones on.
+ // A tap of Tap BPM at `time` (the page's clock): a clap heard by the listener.
+ tap: time => handleTapTempo(time),
+ // Follows the player's tempo without a jump: a clicking metronome's next click comes one new beat after its
+ // last, and the beat clock carries on from there ("follow me" in Metronome & Tempo).
+ follow: bpm => {
+  const next = Math.max(30, Math.min(300, Math.round(bpm * 10) / 10));
+  if (next === currentBPM) return;
+  if (metronomeIntervalId && metronomeNext > 0) {
+   const last = metronomeOrigin + (metronomeNext - 1) * 60 / currentBPM;
+   currentBPM = next; metronomeOrigin = last - (metronomeNext - 1) * 60 / currentBPM;
+   announceBeat('metronome', true, perfTimeOf(metronomeOrigin));
+   updateBPMDisplay();
+  } else window.synth.tempo = next;
+ },
  input: (midi, on, { velocity = 0.7, time = null, silent = true } = {}) => {
   if (!audioContext) initAudio();
   const nS = midiNoteToNoteString(midi), kE = keyboardContainer.querySelector(`[data-midi="${midi}"]`);

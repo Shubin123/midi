@@ -14,11 +14,15 @@
 // headphones on there is nothing to hear back, so what you sing can also play through the synth.
 import { NoteTracker, OnsetDetector, frameSizes, timed, snapToScale, roundTrip } from './listen-dsp.js';
 import { SCALES } from './sequencer.js';
+import { timing } from './timing-widget.js';
 import { read, save } from './storage.js';
 
 const KEY = 'listening-v1';
-export const MODES = { melody: 'Melody (one note at a time)' };
-const DEFAULTS = { deviceId: '', mode: 'melody', snap: false, headphones: false, playThrough: false, gateDb: -50, latencyMs: null, inputGain: 1 };
+// Melody: notes, as a keyboard sends them. Rhythm only: every clap, tap or hit is an onset with no pitch (source
+// 'audio-clap'), for rhythm exercises: the beat clock grades it and the teacher reads the phrase's rhythm.
+export const MODES = { melody: 'Melody (one note at a time)', rhythm: 'Rhythm only (claps and taps)' };
+export const CLAP = 0; // the note number a clap is sent as: nothing plays it, and the teacher reads it as a clap
+const DEFAULTS = { deviceId: '', mode: 'melody', snap: false, headphones: false, playThrough: false, gateDb: -50, latencyMs: null, inputGain: 1, clapTempo: false, clickDb: null };
 const listeners = new Set();
 const emit = (type, detail) => listeners.forEach(fn => { try { fn(type, detail); } catch (err) { console.error(err); } });
 
@@ -94,6 +98,7 @@ export const listening = {
   this.nodes = { ctx, source, gain, scope, worklet, sink };
   this.sizes = frameSizes(ctx.sampleRate);
   this.tracker = new NoteTracker({ gateDb: this.settings.gateDb });
+  this.claps = new OnsetDetector({ gateDb: this.settings.gateDb, minGapMs: 70 });
   this._configure();
   worklet.port.onmessage = ({ data }) => this._frames(data);
   Object.assign(this, { active: true, kind, label, error: '' });
@@ -120,7 +125,7 @@ export const listening = {
   const s = this.settings;
   if (this.nodes) this.nodes.gain.gain.value = s.inputGain;
   if (!this.tracker) return;
-  this.tracker.gateDb = this.tracker.onsets.gateDb = s.gateDb;
+  this.tracker.gateDb = this.tracker.onsets.gateDb = this.claps.gateDb = s.gateDb;
   this.tracker.snap = s.snap ? semis => { const { key, intervals } = keyAndScale(); return snapToScale(semis, key, intervals); } : null;
   this.tracker.ignore = midi => !s.headphones && this._sounding(midi);
  },
@@ -141,9 +146,13 @@ export const listening = {
   // the round trip.
   const ref = frames[0].end, rate = ctx.sampleRate, refMs = window.synth.perfTimeOf(ref / rate - this.latencyMs / 1000);
   const toMs = frame => refMs + ((frame - ref) / rate) * 1000;
+  const rhythm = this.settings.mode === 'rhythm';
   for (const raw of frames) {
    const f = timed(raw, this.sizes, toMs);
-   for (const e of this.tracker.push(f)) this._send(e);
+   let onset = null;
+   if (rhythm) { onset = this.claps.push(f); if (onset !== null) this._clap(onset, f); this.tracker.pitch = { semis: null, midi: null, cents: 0, clarity: f.clarity, voiced: false, hz: 0, db: f.db }; }
+   else { for (const e of this.tracker.push(f)) this._send(e); onset = this.tracker.onset; }
+   if (onset !== null && this.settings.clapTempo && !this._isClick(onset, f)) window.synth.tap(onset);
    const p = this.tracker.pitch;
    this.last = { ...f, pitch: p };
    if (p.voiced) this.trail.push({ t: f.tPitch, semis: p.semis, cents: p.cents, midi: p.midi });
@@ -161,7 +170,24 @@ export const listening = {
  _releaseAll(time) {
   if (this.tracker) for (const e of this.tracker.flush(time)) this._send(e);
   for (const midi of [...this.held]) this._send({ type: 'off', midi, velocity: 0, time });
-  this.tracker?.reset();
+  this.tracker?.reset(); this.claps?.reset();
+ },
+
+ // A clap (rhythm only): sent as a note the synth doesn't play or show, held for 80 ms, from the time it was
+ // made. On speakers a metronome click heard back isn't one.
+ _clap(time, f) {
+  if (this._isClick(time, f)) return;
+  const velocity = Math.max(0.1, Math.min(1, 0.2 + ((f.db - this.settings.gateDb) / 45) * 0.8));
+  const send = (on, t) => window.dispatchEvent(new CustomEvent('synth:note', { detail: { note: '', midi: CLAP, velocity: on ? velocity : 0, on, source: 'audio-clap', silent: true, time: t } }));
+  send(true, time);
+  setTimeout(() => send(false, time + 80), 80);
+  emit('clap', { time, velocity });
+ },
+ // On speakers, with the metronome clicking, an onset within 30 ms of a beat no louder than a click sounds here
+ // (measured in calibration, else -30 dB) is the click coming back.
+ _isClick(time, f) {
+  if (this.settings.headphones || !window.synth?.metronome || !timing.clock.external) return false;
+  return Math.abs(timing.clock.nearest(time, 1).offsetMs) <= 30 && f.db < (this.settings.clickDb ?? -30) + 6;
  },
 
  // Plays clicks and hears them back: the round trip, in ms. On speakers, keep quiet while it listens; on
@@ -172,11 +198,12 @@ export const listening = {
   const { ctx } = this.nodes, detector = new OnsetDetector({ gateDb: Math.min(this.settings.gateDb, -55), minGapMs: 120 }), heard = [];
   const rate = ctx.sampleRate, sizes = this.sizes;
   const ctxMs = frame => (frame / rate) * 1000; // on the audio clock, with no latency taken off
-  const tap = ({ data }) => { for (const raw of data) { const t = detector.push(timed(raw, sizes, ctxMs)); if (t !== null) heard.push(t); } };
+  const levels = [];
+  const tap = ({ data }) => { for (const raw of data) { const t = detector.push(timed(raw, sizes, ctxMs)); if (t !== null) { heard.push(t); levels.push(raw.db); } } };
   this.nodes.worklet.port.addEventListener('message', tap);
   const out = this.clickOut(ctx), start = ctx.currentTime + 0.3, times = [];
   const buffer = ctx.createBuffer(1, Math.round(rate * 0.02), rate), d = buffer.getChannelData(0);
-  for (let i = 0; i < d.length; i++) d[i] = (i < 2 ? 0.9 : Math.random() * 0.4 - 0.2) * (1 - i / d.length);
+  for (let i = 0; i < d.length; i++) d[i] = (i < 2 ? 0.8 : Math.random() * 0.2 - 0.1) * (1 - i / d.length); // the metronome's click
   for (let k = 0; k < clicks; k++) {
    const s = new AudioBufferSourceNode(ctx, { buffer }), at = start + (k * gapMs) / 1000;
    s.connect(out); s.start(at); times.push(at * 1000);
@@ -184,11 +211,11 @@ export const listening = {
   await new Promise(r => setTimeout(r, 300 + clicks * gapMs + 400));
   this.nodes?.worklet.port.removeEventListener('message', tap);
   const result = roundTrip(times, heard, gapMs * 0.9);
-  if (result) this.set({ latencyMs: Math.round(result.ms) });
+  if (result) this.set({ latencyMs: Math.round(result.ms), clickDb: this.settings.headphones ? this.settings.clickDb : Math.round(levels.sort((a, b) => a - b)[levels.length >> 1]) });
   return result;
  },
  // Where calibration clicks go: straight to the speakers, past the effects and the limiter.
- clickOut(ctx) { if (this._clickOut?.context !== ctx) { this._clickOut = new GainNode(ctx, { gain: 0.5 }); this._clickOut.connect(ctx.destination); } return this._clickOut; },
+ clickOut(ctx) { if (this._clickOut?.context !== ctx) { this._clickOut = new GainNode(ctx, { gain: 0.25 }); this._clickOut.connect(ctx.destination); } return this._clickOut; },
 };
 
 // Every note the app sounds that it didn't hear: kept so the listener can tell it from the player on speakers.

@@ -5,7 +5,7 @@
 // incoming MIDI clock while Sync to MIDI clock is on (synth:midi-clock), or, with none of those, the player's
 // own pulse, which follows them as they speed up or slow down. Every note played is kept with its offset and
 // grade (timing.onsets) for the teacher (js/teacher-bridge.js), which listens for notes and tempo flags here.
-import { BeatClock, MidiClock, TempoWatch, DIFFICULTY, grade, estimateTempo, eventTimes } from './timing.js';
+import { BeatClock, MidiClock, TempoWatch, DIFFICULTY, grade, estimateTempo, eventTimes, pulseFromOnsets } from './timing.js';
 import { read, save } from './storage.js';
 
 const PLAYED = /^(midi|computer|mouse|touch|audio)/; // audio: sung or played into the microphone (js/listening.js)
@@ -19,6 +19,7 @@ export const timing = {
  on: read('timing-on-v1', true),
  levelId: read('timing-level-v1', 'normal'),
  sync: read('midi-clock-sync-v1', false),
+ follow: read('timing-follow-v1', false), // "follow me": the session tempo follows the player's
  get level() { return DIFFICULTY[this.levelId] || DIFFICULTY.normal; },
  // fn(type, detail): 'note' with an onset, 'flag' with { kind, target, actual, trend }, 'clock' when the
  // beat's keeper changes.
@@ -89,17 +90,25 @@ window.addEventListener('synth:note', ({ detail: { midi, velocity, on, source = 
  if (clock.source === 'free' && t - (timing.onsets.at(-1)?.time ?? t) > clock.period * 8) clock.stop('free');
  let offsetMs = null, at = null;
  if (clock.running) { const n = clock.nearest(t, timing.level.grid); offsetMs = n.offsetMs; at = n.at; }
- const onset = { time: t, note: midi, velocity: Math.round(velocity * 127), offsetMs, at, grade: offsetMs === null ? null : grade(offsetMs, timing.level), chord, source: clock.source };
+ const heard = source.startsWith('audio');
+ const onset = { time: t, note: midi, velocity: Math.round(velocity * 127), offsetMs, at, grade: offsetMs === null ? null : grade(offsetMs, timing.level), chord, source: clock.source, heard };
  timing.onsets.push(onset); if (timing.onsets.length > 256) timing.onsets.shift();
  if (!chord && !clock.external) {
-  const recent = eventTimes(timing.onsets.filter(o => t - o.time < 8000).map(o => o.time)), est = estimateTempo(recent);
-  if (est && clock.source === 'free') { clock.setTempo(est.bpm, t); clock.origin += (offsetMs ?? 0) * 0.5; }
+  const recent = eventTimes(timing.onsets.filter(o => t - o.time < 8000).map(o => o.time));
+  // Heard through the microphone, an onset can be missed or one heard that wasn't played: the pulse comes from
+  // the onsets' autocorrelation, beat and all. Played on keys, from the gaps between notes.
+  const pulse = heard ? pulseFromOnsets(recent) : null, est = pulse || estimateTempo(recent);
+  if (pulse && (clock.source === 'free' || !clock.running)) { const was = clock.running; clock.start('free', pulse.bpm, pulse.origin); if (!was) emit('clock', 'free'); }
+  else if (est && clock.source === 'free') { clock.setTempo(est.bpm, t); clock.origin += (offsetMs ?? 0) * 0.5; }
   else if (est && !clock.running) { clock.start('free', est.bpm, t); emit('clock', 'free'); }
  }
  if (!chord) {
   if (onset.grade) flash(onset.grade);
   const flag = timing.watch.note(t, clock);
-  if (flag) emit('flag', flag);
+  if (flag && !timing.follow) emit('flag', flag);
+  // Follow me: once the tempo of the last few notes is clear, the metronome (or the sequencer) moves to it.
+  const actual = timing.watch.actual;
+  if (timing.follow && clock.external && clock.source !== 'midi' && actual && timing.watch.times.length >= 6 && Math.abs(actual / clock.bpm - 1) >= 0.015) window.synth?.follow(actual);
  }
  emit('note', onset);
  renderReadout(); wake();
@@ -187,7 +196,10 @@ export function mountTiming(keyboardModule, metronomeGroup) {
  level.onchange = () => { timing.levelId = level.value; save('timing-level-v1', level.value); };
  const sync = el('input', { type: 'checkbox', id: 'midiClockSync', checked: timing.sync });
  sync.onchange = () => { timing.sync = sync.checked; save('midi-clock-sync-v1', timing.sync); if (!timing.sync) midiStopped(); };
- metronomeGroup?.querySelector('.metronome-controls')?.append(el('label', { className: 'midi-sync', title: 'Follow the tempo and beat of a MIDI clock from your DAW or drum machine' }, sync, ' Sync to MIDI clock'));
+ const followMe = el('input', { type: 'checkbox', id: 'followTempo', checked: timing.follow });
+ followMe.onchange = () => { timing.follow = followMe.checked; save('timing-follow-v1', timing.follow); timing.watch.reset(); };
+ metronomeGroup?.querySelector('.metronome-controls')?.append(el('label', { className: 'midi-sync', title: 'Follow the tempo and beat of a MIDI clock from your DAW or drum machine' }, sync, ' Sync to MIDI clock'),
+  el('label', { className: 'midi-sync', title: 'The metronome (or the sequencer) speeds up and slows down with you, instead of you keeping to it' }, followMe, ' Follow my tempo'));
  new ResizeObserver(() => wake()).observe(canvas);
  timing.subscribe(type => { if (type === 'clock') render(); });
  render();

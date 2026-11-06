@@ -249,6 +249,7 @@ export class NoteTracker {
  _velocity(db) { return Math.max(0.1, Math.min(1, 0.2 + ((db - this.gateDb) / 45) * 0.8)); }
  push(f) {
   const events = [], onset = this.onsets.push(f);
+  this.onset = onset; // for whoever also wants the onsets (a clap tapping the tempo)
   if (onset !== null) this.lastOnset = onset;
   const voiced = f.clarity >= this.minClarity && f.db >= this.gateDb && f.hz >= this.minHz && f.hz <= this.maxHz;
   const semis = voiced ? toSemis(f.hz) : null;

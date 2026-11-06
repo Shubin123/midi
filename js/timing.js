@@ -96,6 +96,57 @@ export function estimateTempo(times, refBpm = null, n = 8) {
  return implied.length >= 3 ? { bpm: median(implied), n: implied.length } : null;
 }
 
+// The beat from onsets alone, for free play heard through the microphone (js/listening.js), where an onset can be
+// missed or one heard that wasn't played: the onsets of the last `spanMs` as a train of short bumps, its
+// autocorrelation (each lag scored with its double, so the beat wins over its half, and leaning towards
+// `prefer` BPM, as people hear a pulse), then a line fitted through the onsets that fall near the beats it
+// implies, for the exact tempo and where its beats are. Returns { bpm, origin (a beat's time), fit (how many
+// onsets are on its beats) } or null with fewer than six onsets or no clear pulse.
+export function pulseFromOnsets(times, { minBpm = 50, maxBpm = 220, prefer = 110, spanMs = 8000, resMs = 5 } = {}) {
+ const last = Math.max(...times), ts = times.filter(t => last - t <= spanMs).sort((a, b) => a - b);
+ if (ts.length < 6) return null;
+ const first = ts[0], n = Math.ceil((last - first) / resMs) + 8, x = new Float64Array(n);
+ for (const t of ts) { const c = (t - first) / resMs + 4; for (let k = Math.max(0, Math.floor(c - 4)); k <= Math.min(n - 1, Math.ceil(c + 4)); k++) x[k] += Math.exp(-0.5 * ((k - c) / 2) ** 2); }
+ const ac = lag => { let s = 0; for (let i = 0; i + lag < n; i++) s += x[i] * x[i + lag]; return s / (n - lag); };
+ const lo = Math.floor(60000 / maxBpm / resMs), hi = Math.ceil(60000 / minBpm / resMs);
+ const score = [];
+ for (let lag = lo; lag <= hi && lag < n - 1; lag++) { const bpm = 60000 / (lag * resMs); score.push([lag, (ac(lag) + 0.5 * (2 * lag < n ? ac(2 * lag) : 0)) * Math.exp(-0.5 * Math.log2(bpm / prefer) ** 2)]); }
+ if (!score.length) return null;
+ const [lag, peak] = score.reduce((a, b) => (b[1] > a[1] ? b : a));
+ // Onsets with no pulse have a flat autocorrelation; a pulse stands five times above its average (random onsets
+ // reached that 2 times in 500, claps ±25 ms off their beat fell short of it once in 48).
+ if (peak < 5 * (score.reduce((a, b) => a + b[1], 0) / score.length)) return null;
+ // A period's beats: the phase most onsets sit on, then a line through the onsets near a beat (within 40 ms, or an
+ // eighth of a fast one) for the tempo and the beat to the millisecond.
+ const near = (per, org) => ts.map(t => [Math.round((t - org) / per), t]).filter(([k, t]) => Math.abs(t - (org + k * per)) < Math.min(per / 8, 40));
+ const beats = period => {
+  let best = 0, phase = 0;
+  for (let p = 0; p < period; p += resMs / 2) {
+   let s = 0;
+   for (const t of ts) { const d = (((t - first - p) % period) + period) % period, e = Math.min(d, period - d); s += Math.exp(-0.5 * (e / 15) ** 2); }
+   if (s > best) { best = s; phase = p; }
+  }
+  let org = first + phase, on = near(period, org);
+  for (let round = 0; round < 2 && on.length >= 4; round++) {
+   const m = on.length, mk = on.reduce((a, [k]) => a + k, 0) / m, mt = on.reduce((a, [, t]) => a + t, 0) / m;
+   let num = 0, den = 0;
+   for (const [k, t] of on) { num += (k - mk) * (t - mt); den += (k - mk) ** 2; }
+   if (den > 0) { period = num / den; org = mt - period * mk; }
+   on = near(period, org);
+  }
+  const rms = on.length ? Math.sqrt(on.reduce((a, [k, t]) => a + (t - (org + k * period)) ** 2, 0) / on.length) : Infinity;
+  return { period, org, fit: on.length / ts.length, on: on.length, rms };
+ };
+ // The autocorrelation can land an octave out: of the period, its half and its double, the slowest that most of
+ // the onsets fall on is the beat.
+ const tries = [lag * 2, lag, lag / 2].map(l => l * resMs).filter(per => per >= 60000 / maxBpm && per <= 60000 / minBpm).map(beats).filter(b => b.on >= 4 && b.rms <= 25); // people clap within 10-20 ms of their beat
+ if (!tries.length) return null;
+ const top = Math.max(...tries.map(b => b.fit)), pick = tries.find(b => b.fit >= top * 0.7);
+ if (pick.fit < 0.6 || pick.on < 6) return null;
+ const bpm = 60000 / pick.period;
+ return bpm >= minBpm && bpm <= maxBpm ? { bpm, origin: pick.org + Math.ceil((last - pick.org) / pick.period) * pick.period - pick.period, fit: pick.fit } : null;
+}
+
 // Watches the tempo against the clock, note by note. Rushing or dragging is said once it has lasted `notes`
 // events running beyond `threshold` (a fraction of the tempo), and "back" once the tempo returns to within it.
 // In free play there is nothing to rush against: the clock follows the player, so a tempo changed on purpose

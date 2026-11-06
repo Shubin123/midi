@@ -1,13 +1,32 @@
 // node tests/timing.mjs: beat, tempo and rhythm (js/timing.js), on note times made up to be exactly as early,
 // late, swung or rushed as each check needs.
 import assert from 'node:assert/strict';
-import { BeatClock, MidiClock, PPQN, DIFFICULTY, grade, estimateTempo, eventTimes, TempoWatch, NUDGES, nudgeText, rhythmSummary, diffPattern, describeRhythm, newProfile, learn, issues, exerciseOptions, nextExercise, exercise, patternSteps, readPattern, rhythmMessage } from '../js/timing.js';
+import { BeatClock, MidiClock, PPQN, DIFFICULTY, grade, estimateTempo, eventTimes, pulseFromOnsets, TempoWatch, NUDGES, nudgeText, rhythmSummary, diffPattern, describeRhythm, newProfile, learn, issues, exerciseOptions, nextExercise, exercise, patternSteps, readPattern, rhythmMessage } from '../js/timing.js';
 
 let failed = 0;
 const check = (name, fn) => { try { fn(); } catch (err) { failed++; console.log(`FAIL ${name}\n     ${err.message.split('\n')[0]}`); } };
 // A deterministic wobble, ±`ms`, so runs are repeatable.
 const wobble = (i, ms) => Math.sin(i * 12.9898) * 43758.5453 % 1 * ms;
 const clockAt = (bpm, origin = 1000, source = 'metronome') => { const c = new BeatClock(); c.start(source, bpm, origin); return c; };
+
+/* ---- Free play heard through the microphone: the pulse from onsets alone ---- */
+check('onset autocorrelation: the tempo within 0.5 BPM and the beat within 5 ms, from 60 to 180 BPM, through missed and stray onsets and some eighths', () => {
+ for (const bpm of [60, 72, 96, 120, 150, 180]) for (const eighths of [false, true]) {
+  const beat = 60000 / bpm, ts = [];
+  for (let i = 0; i < 16; i++) { if (i === 5 || i === 11) continue; ts.push(1000 + i * beat + wobble(i, 8)); if (eighths && i % 4 === 2) ts.push(1000 + (i + 0.5) * beat + wobble(i + 50, 6)); }
+  ts.push(1000 + 7.3 * beat); // heard, but not played
+  const r = pulseFromOnsets(ts);
+  assert.ok(r, `${bpm} BPM${eighths ? ' with eighths' : ''}: no pulse`);
+  assert.ok(Math.abs(r.bpm - bpm) < 0.5, `${bpm} BPM${eighths ? ' with eighths' : ''}: read as ${r.bpm.toFixed(2)}`);
+  const phase = (((r.origin - 1000) % beat) + beat) % beat;
+  assert.ok(Math.min(phase, beat - phase) < 5, `${bpm} BPM: the beat is ${Math.min(phase, beat - phase).toFixed(1)} ms out`);
+ }
+});
+check('onset autocorrelation: too few onsets, or none on a pulse, is no pulse', () => {
+ assert.equal(pulseFromOnsets([0, 500, 1000, 1500]), null);
+ let seed = 5; const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+ for (let k = 0; k < 20; k++) { const ts = Array.from({ length: 12 }, () => rnd() * 6000).sort((a, b) => a - b); assert.equal(pulseFromOnsets(ts), null, `random onsets ${ts.map(Math.round).join(' ')} have a pulse`); }
+});
 
 /* ---- Layer 1: the beat ---- */
 check('offsets from the nearest beat and subdivision are exact at 60, 120 and 180 BPM', () => {

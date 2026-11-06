@@ -40,6 +40,11 @@ export function createListeningWidget() {
  const calibrate = el('button', { type: 'button', id: 'listen-calibrate', textContent: 'Calibrate latency' });
  const latency = el('output', { id: 'listen-latency' });
  const status = el('p', { className: 'listen-status', role: 'status' });
+ // In Metronome & Tempo: claps (or any onset heard) tap the tempo, as Tap BPM does.
+ const [clapBox, clapLabel] = check('clapTempo', 'Clap to set the tempo (while listening)', s.clapTempo, 'Every clap or tap the Listening widget hears taps Tap BPM, at the moment it was made');
+ clapLabel.className = 'midi-sync';
+ document.querySelector('#metronome-tempo-group .metronome-controls')?.append(clapLabel);
+ clapBox.onchange = () => listening.set({ clapTempo: clapBox.checked });
  const hint = el('p', { className: 'module-hint listen-hint' });
  content.append(
   el('div', { className: 'sequence-toolbar' }, toggle, device),
@@ -64,7 +69,7 @@ export function createListeningWidget() {
   status.classList.toggle('error', !!st.error);
   playBox.disabled = !st.headphones; playLabel.classList.toggle('disabled', !st.headphones);
   latency.textContent = `Latency ${st.latencyMs} ms${st.measured ? ' (measured)' : ' (estimated)'}`;
-  hint.textContent = st.headphones ? 'Headphones: nothing the app plays can reach the microphone.' : 'On speakers, notes the app plays itself are ignored. Headphones work best.';
+  hint.textContent = st.mode === 'rhythm' ? `Rhythm only: every clap or tap is graded on the beat, with no pitch.${st.headphones ? '' : ' On speakers a metronome click is told from a clap by its level; headphones work best.'}` : st.headphones ? 'Headphones: nothing the app plays can reach the microphone.' : 'On speakers, notes the app plays itself are ignored. Headphones work best.';
   gateMark.style.left = `${((st.gateDb + 80) / 80) * 100}%`;
   mic.hidden = !(st.active && st.kind === 'mic');
   describeKey();
@@ -99,10 +104,15 @@ export function createListeningWidget() {
  ['seq-key', 'seq-scale'].forEach(id => document.addEventListener('change', e => { if (e.target.id === id) describeKey(); }));
 
  // The meter and tuner follow the frames, at most once a frame.
- let drawn = false;
+ let drawn = false, claps = 0, clapShown = -Infinity;
  const show = () => {
   drawn = false;
   const f = listening.last;
+  if (f && s.mode === 'rhythm') { // the tuner counts claps instead
+   fill.style.width = `${Math.max(0, Math.min(100, ((f.db + 80) / 80) * 100))}%`; db.textContent = `${Math.max(-80, Math.round(f.db))} dB`;
+   note.textContent = performance.now() - clapShown < 150 ? '👏' : '·'; cents.textContent = `${claps} clap${claps === 1 ? '' : 's'}`; hz.textContent = ''; tuner.classList.toggle('voiced', performance.now() - clapShown < 400);
+   return;
+  }
   if (!f) { fill.style.width = '0%'; db.textContent = '—'; note.textContent = '–'; cents.textContent = ''; hz.textContent = ''; needle.style.left = '50%'; return; }
   fill.style.width = `${Math.max(0, Math.min(100, ((f.db + 80) / 80) * 100))}%`;
   fill.classList.toggle('gated', f.db < s.gateDb);
@@ -117,6 +127,7 @@ export function createListeningWidget() {
  listening.subscribe((type, detail) => {
   if (type === 'state') { render(detail); show(); }
   if (type === 'frame' && !drawn) { drawn = true; requestAnimationFrame(show); wakeTrail(); }
+  if (type === 'clap') { claps++; clapShown = performance.now(); }
  });
 
  render(listening.state());
