@@ -29,6 +29,7 @@ import { Conversations, describeConversation } from './conversations.js';
 import { modelCacheInfo, clearModelCache, formatBytes } from './model-cache.js';
 import { answer as systemOneAnswer, nextTip, isSoundControl } from './system-one.js';
 import { meetRequest } from './requests.js';
+import { readCommand } from './commands.js';
 import { Voice, canListen, canSpeak, ENGINES as VOICE_ENGINES, loadEngine, BROWSER } from './voice.js';
 import { PROVIDERS, GROUPS, providerById, getProviderId, setProviderId, getKey, setKey, clearKey, getModelFor, setModelFor, getBase, setBase, engineFor, listModels, pickModel, fetchOpenRouterModels } from './providers.js';
 import { signIn, completeSignIn } from './ai-auth.js';
@@ -831,7 +832,13 @@ export class TeacherBridge {
   }
   if (e.kind === 'change') {
    const undo = button('Undo', () => { if (ws.restore(e.name, e.raw)) { undo.disabled = true; undo.textContent = 'Undone'; } });
-   return el('div', { className: 'teacher-msg change' }, `Changed ${e.name} from ${e.fromText} to ${e.to}.`, actions(button('Show', () => ws.show(e.name)), undo));
+   const text = ws.LAYOUTS.includes(e.raw) ? `${e.name} is ${e.to} (it was ${e.fromText}).` : `Changed ${e.name} from ${e.fromText} to ${e.to}.`;
+   return el('div', { className: 'teacher-msg change' }, e.who ? el('span', { className: 'tp-who', textContent: e.who }) : '', text, actions(button('Show', () => ws.show(e.name)), undo));
+  }
+  // Words that fit several controls: a button for each, and the one pressed is changed.
+  if (e.kind === 'pick') {
+   const row = actions(...e.choices.map(c => button(c.name.split(' › ').pop(), () => { row.querySelectorAll('button').forEach(b => { b.disabled = true; }); this._apply([c], 'System 1 · done at once'); })));
+   return el('div', { className: 'teacher-msg s1' }, el('span', { className: 'tp-who', textContent: 'System 1' }), e.text, row);
   }
   return el('div', { className: 'teacher-msg info' }, e.text || '');
  }
@@ -885,12 +892,13 @@ export class TeacherBridge {
  async _route(q) {
   const req = await meetRequest(q, { last: this._lastExample, pick: this.laya ? (...a) => this.laya.pick(...a) : null }).catch(() => null);
   if (req) return this._playRequest(q, req);
+  if (this._command(q)) return;
   const compose = COMPOSE.test(q);
   if (compose && this.teacher.isConfigured) return this._question(q, [], { compose });
   if (this.laya) return this._systemOneAsk(q, compose);
   if (this.teacher.isConfigured) return this._question(q);
   this._msg('user', q);
-  this._msg('info', 'I can play what you ask for right now ("play a ii–V–I in G", "a sad progression in D minor"). To answer questions, load Laya (System 1) or connect a provider in the Provider tab.');
+  this._msg('info', 'I can play what you ask for ("play a ii–V–I in G", "a sad progression in D minor") and change settings ("set the cutoff to 800", "turn on the metronome") right now. To answer questions, load Laya (System 1) or connect a provider in the Provider tab.');
   this._showTab('provider');
  }
  _playRequest(q, req) {
@@ -923,13 +931,45 @@ export class TeacherBridge {
  // A reply's "show" points at controls one after another; "set" changes them, each with an Undo.
  _act({ show = [], set = [] }) {
   show.forEach((name, i) => setTimeout(() => ws.show(name), 600 + i * 1500));
-  for (const [name, value] of set) {
+  this._apply(set.map(([name, value]) => ({ name, value })));
+ }
+ // Makes changes as the student would, each listed with Show and Undo: a control is set, a whole widget is
+ // hidden, shown or minimised. Returns what was done, in words.
+ _apply(list, who = '') {
+  const done = [];
+  for (const { name, value } of list) {
    try {
-    const hit = ws.find(name), fromText = hit?.control ? ws.valueOf(hit.control) : '';
+    const hit = ws.find(name);
+    if (hit && !hit.control && ws.LAYOUTS.includes(value)) {
+     const r = ws.arrange(hit, value);
+     this._add({ kind: 'change', who, name: r.name, raw: r.from, fromText: r.from, to: r.to });
+     done.push(`${r.name} ${r.to}`);
+     continue;
+    }
+    const fromText = hit?.control ? ws.valueOf(hit.control) : '';
     const r = ws.set(hit || name, value);
-    this._add({ kind: 'change', name: r.name, raw: r.from, fromText, to: r.to });
-   } catch (err) { this._msg('info', `The teacher tried to change ${name}, but: ${err.message}`); }
+    this._add({ kind: 'change', who, name: r.name, raw: r.from, fromText, to: r.to });
+    done.push(`${r.name.split(' › ').pop()} ${r.to}`);
+   } catch (err) { this._msg('info', `${who ? 'I' : 'The teacher'} tried to change ${name}, but: ${err.message}`); }
   }
+  return done;
+ }
+ // System 1 changes settings when asked, at once and with no model (js/commands.js): "set the cutoff to 800",
+ // "turn off oscillator 2", "louder", "hide the oscilloscope". Words that fit several controls ask which, with
+ // a button for each; anything it can't read goes on to Laya or System 2.
+ _command(q) {
+  const r = readCommand(q, ws.commandItems());
+  if (!r || r.problem) return false;
+  this._msg('user', q);
+  if (r.ask) {
+   this._add({ kind: 'pick', text: r.ask.text, choices: r.ask.choices.map(c => ({ name: c.item.name, value: c.value })) });
+   this._say(r.ask.text);
+   return true;
+  }
+  const done = this._apply(r.changes.map(c => ({ name: c.item.name, value: c.value })), 'System 1 · done at once');
+  r.already.forEach(a => this._msg('info', `${a.say}.`));
+  this._say([done.length && `Done: ${done.join(', ')}.`, ...r.already.map(a => `${a.say.split(' › ').pop()}.`)].filter(Boolean).join(' '));
+  return true;
  }
 
  /* ---- Widget guides ---- */

@@ -1,7 +1,8 @@
-// The teacher's view of the workspace: every widget and plug-in window, their controls and current values, and
-// two ways to act on them: point at a control (show) and change one (set). Everything is read from the page,
-// so a new widget or a newly loaded plug-in is covered without being registered anywhere. Buttons are never
-// pressed for the student, and nothing outside the widgets (the teacher panel, file pickers) can be changed.
+// The teacher's view of the workspace: every widget and plug-in window, the ☰ Settings menu, their controls and
+// current values, and ways to act on them: point at a control (show), change one (set), and hide, minimise or
+// expand a widget (arrange). Everything is read from the page, so a new widget or a newly loaded plug-in is
+// covered without being registered anywhere. Buttons are never pressed for the student, and nothing outside
+// these (the teacher panel and its own switch in Settings, file pickers) can be changed.
 
 const clean = s => String(s ?? '').replace(/\s+/g, ' ').trim();
 export const norm = s => clean(s).toLowerCase().replace(/[^a-z0-9#♯♭.\- ]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -10,10 +11,13 @@ export const norm = s => clean(s).toLowerCase().replace(/[^a-z0-9#♯♭.\- ]+/g
 
 const titleOf = el => clean(el.dataset.title || el.querySelector('.control-title')?.childNodes[0]?.textContent || el.getAttribute('aria-label') || el.id);
 
-// Workspace widgets in their current order, then plug-in windows (open or closed: a closed one keeps running).
+// Workspace widgets in their current order, then plug-in windows (open or closed: a closed one keeps running),
+// then the app's own sections of the ☰ Settings menu (js/settings.js) as one more, called Settings.
 export function widgets() {
  const list = [...document.querySelectorAll('#workspace > .widget')].map(el => ({ id: el.id, title: titleOf(el), el, plugin: false, hidden: el.hidden, minimized: el.classList.contains('minimized') }));
  for (const el of document.querySelectorAll('.plugin-windows > .plugin-window')) list.push({ id: `plugin:${titleOf(el)}`, title: titleOf(el), el, plugin: true, hidden: el.hidden, minimized: false });
+ const menu = document.querySelector('.widget-menu .settings-sections');
+ if (menu) list.push({ id: 'settings', title: 'Settings', el: menu, plugin: false, menu: true, hidden: false, minimized: false });
  return list;
 }
 export const widgetById = id => widgets().find(w => w.id === id) || null;
@@ -34,7 +38,8 @@ export function labelOf(c) {
 }
 
 // Step cells and automation step values are summed up instead of listed one by one (there are dozens).
-const usable = c => !c.closest('.widget-header') && c.type !== 'file' && c.type !== 'hidden' && !c.dataset.step && !/ step \d+( value)?$/.test(c.getAttribute('aria-label') || '');
+// The teacher's own switch in Settings is left to the student.
+const usable = c => !c.closest('.widget-header, [data-not-for-teacher]') && c.type !== 'file' && c.type !== 'hidden' && !c.dataset.step && !/ step \d+( value)?$/.test(c.getAttribute('aria-label') || '');
 const kindOf = c => (c.tagName === 'SELECT' ? 'select' : c.tagName === 'BUTTON' ? 'button' : c.type === 'checkbox' ? 'checkbox' : c.type === 'range' || c.type === 'number' ? 'number' : 'text');
 
 // The controls of one widget: { label, kind, el }, with repeated labels numbered ("Arm 1", "Arm 2").
@@ -108,8 +113,9 @@ export function relevant(question, keywords = {}, max = 2) {
 
 /* ---- Finding, showing and setting ---- */
 
-// "Filter › Cutoff", "filter > cutoff", "Cutoff (Hz)", "filterCutoff" or "Filter" → { widget, control } (control
-// is null for a whole widget), or null. Exact names win over partial ones.
+// "Filter › Cutoff", "filter > cutoff", "filter/cutoff", "Cutoff (Hz)", "filterCutoff" or "Filter" → { widget,
+// control } (control is null for a whole widget), or null. Exact names win over partial ones. A slash only
+// separates when it has no spaces round it: "Import / Export" is one widget.
 export function find(name) {
  const raw = String(name ?? '').trim();
  if (!raw) return null;
@@ -118,7 +124,7 @@ export function find(name) {
   const w = widgets().find(x => x.el.contains(byId));
   if (w) return { widget: w, control: w.el === byId ? null : controls(w).find(c => c.el === byId) || null };
  }
- const [a, b] = raw.split(/\s*[›>/]\s*/);
+ const [a, b] = /[›>]/.test(raw) ? raw.split(/\s*[›>]\s*/) : raw.split(/(?<=\S)\/(?=\S)/);
  const score = (text, want) => { const t = norm(text), s = norm(want), bare = norm(String(text).replace(/\s*\(.*\)$/, '')); return !s ? 0 : t === s || bare === s ? 3 : t.startsWith(s) || bare.startsWith(s) ? 2 : t.includes(s) ? 1 : 0; };
  let best = null;
  for (const w of widgets()) {
@@ -137,6 +143,7 @@ export const nameOf = ({ widget, control }) => (control ? `${widget.title} › $
 // Brings a widget into view: shown again if hidden, expanded if minimised, a plug-in window opened. Uses the
 // page's own buttons, so the layout is saved as usual.
 export function reveal(w) {
+ if (w.menu) { const m = w.el.closest('details'); if (m) m.open = true; return; }
  if (w.plugin) {
   if (w.el.hidden) [...document.querySelectorAll('#plugin-host-module .plugin-row')].find(r => clean(r.querySelector('strong')?.textContent) === w.title)?.querySelector('button')?.click();
   return;
@@ -184,15 +191,49 @@ export function set(name, value) {
  show(hit);
  return { name: nameOf(hit), from, to: valueOf(el) };
 }
-// Puts a control back to a raw value saved by set().
+// Hides, shows or minimises a widget with the page's own controls (the Settings menu's switch, its – button),
+// so the layout is saved as usual. `to` is 'hidden', 'shown' or 'minimised'. Returns { name, from, to }.
+export const LAYOUTS = ['shown', 'hidden', 'minimised'];
+export const layoutOf = w => (w.hidden ? 'hidden' : w.minimized ? 'minimised' : 'shown');
+export function arrange(name, to) {
+ const hit = typeof name === 'string' ? find(name) : name, w = hit?.widget;
+ if (!w || hit.control || w.plugin || w.menu || !LAYOUTS.includes(to)) throw new Error(`${name} can't be ${to}.`);
+ const from = layoutOf(w);
+ const menuSwitch = () => [...document.querySelectorAll('.widget-menu-body > label')].find(l => clean(l.textContent) === w.title)?.querySelector('input');
+ if (to === 'hidden') { if (!w.el.hidden) menuSwitch()?.click(); }
+ else {
+  reveal(w);
+  if (to === 'minimised' && !w.el.classList.contains('minimized')) w.el.querySelector('.min-btn')?.click();
+ }
+ if (to !== 'hidden') show({ widget: { ...w, hidden: false }, control: null });
+ return { name: w.title, from, to };
+}
+// Puts a control back to a raw value saved by set(), or a widget to a layout saved by arrange().
 export function restore(name, raw) {
  const hit = find(name);
+ if (hit && !hit.control && LAYOUTS.includes(raw)) { arrange(hit, raw); return true; }
  if (!hit?.control) return false;
  const el = hit.control.el;
  if (el.type === 'checkbox') el.checked = raw; else el.value = raw;
  el.dispatchEvent(new Event('input', { bubbles: true }));
  el.dispatchEvent(new Event('change', { bubbles: true }));
  return true;
+}
+
+// Every control the teacher may change and every widget it may arrange, as js/commands.js reads them.
+export function commandItems() {
+ const out = [];
+ for (const w of widgets()) {
+  if (!w.plugin && !w.menu) out.push({ name: w.title, widget: w.title, label: w.title, id: w.id, kind: 'widget', value: layoutOf(w) });
+  for (const c of controls(w)) {
+   if (!['number', 'select', 'checkbox'].includes(c.kind)) continue;
+   const e = c.el;
+   out.push({ name: nameOf({ widget: w, control: c }), widget: w.title, label: c.label, id: e.id, kind: c.kind, min: e.min ?? '', max: e.max ?? '', step: e.step ?? '',
+    value: c.kind === 'checkbox' ? e.checked : c.kind === 'number' ? Number(e.value) : e.value,
+    options: c.kind === 'select' ? [...e.options].map(o => ({ value: o.value, text: clean(o.textContent) })) : undefined });
+  }
+ }
+ return out;
 }
 
 /* ---- What the workspace lessons check ---- */

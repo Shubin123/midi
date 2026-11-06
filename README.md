@@ -394,9 +394,34 @@ playing something, reads the example from the reply's own words: chord symbols
 in a row, notes spelled out ("D-F-A"), or a scale by name. Controls named in a
 "show" that don't exist fall back to their widget.
 
+### Changing settings when asked
+
+Ask the teacher to change something and it does, at once, with no model loaded
+(`js/commands.js`): "set the cutoff to 800", "turn off oscillator 2", "louder",
+"make the attack longer", "osc 3 to square", "switch the filter to highpass",
+"set the key to D minor", "tempo 90", "turn on the metronome at 100 bpm",
+"theme forest calm", "hide the oscilloscope", "turn on the panic button". The
+words are matched against every control the teacher can see, so a plug-in's
+controls work as soon as it loads ("set the delay feedback to 0.6"). Values are
+read in the control's own unit (2k is 2000 Hz, 200 ms is 0.2 s for the
+envelope, 50% of a 0–1 slider is 0.5) and held to its range; "up", "down",
+"brighter", "a little more" move a frequency or time by half again (or two
+thirds), the tempo by 10 BPM, anything else by a tenth of its range. Each
+change is listed with **Show** and **Undo**, and read aloud in talk mode.
+Nothing is guessed: words that fit several controls ("set the level to 0.5")
+ask which, with a button for each; a question ("how do I turn off the
+filter?") goes to the guides; and requests to play something stay with the
+composer. A System 2 model's own `{"set": …}` goes through the same path. The
+teacher's own switch in Settings is the one setting it leaves to you.
+
+`node tests/commands.mjs` reads about a hundred requests against the app's real
+controls (and the ones that must change nothing); `node tests/teacher-panel.mjs`
+types them into the panel in headless Chrome and checks the controls, the synth
+and Undo.
+
 ### The teacher and the workspace
 
-The teacher can see and use every widget and plug-in window (`js/workspace.js`):
+The teacher can see and use every widget, plug-in window and the ☰ Settings menu (`js/workspace.js`):
 it reads them from the page, so a new widget or a plug-in loaded later is
 covered without being registered anywhere. Each widget's **🎓** button (switched on in **☰ Settings**) opens its
 guide (`js/workspace-guide.js`): what it is for, and how to use it step by step,
@@ -406,8 +431,11 @@ the app, the model is sent a **[WORKSPACE]** summary: every widget in a line,
 and the controls of the ones the question is about, with their current values
 and ranges. Its reply can point at a control (`{"show": "Filter › Cutoff
 (Hz)"}`) and, when the student asks for a change, set one (`{"set": {"Filter ›
-Cutoff (Hz)": 800}}`); every change is listed with an **Undo**. Buttons are
-never pressed for the student, and nothing outside the widgets can be changed.
+Cutoff (Hz)": 800}}`, or a widget `"hidden"`, `"shown"` or `"minimised"`);
+every change is listed with an **Undo**. Buttons are never pressed for the
+student, and nothing outside the widgets and Settings can be changed. The
+tempo set anywhere (Tap BPM, − and +, the teacher) shows in the sequencer's
+Base BPM, and a metronome that is clicking keeps up with it.
 
 ### Conversations are kept
 

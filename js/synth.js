@@ -990,7 +990,7 @@ window.synth = {
  get instrumentInput() { return masterGain; },
  ensureAudio: () => { if (!audioContext) initAudio(); return audioContext; },
  get tempo() { return currentBPM; },
- set tempo(value) { currentBPM = Math.max(30, Math.min(300, value)); updateBPMDisplay(); },
+ set tempo(value) { currentBPM = Math.max(30, Math.min(300, value)); updateBPMDisplay(); if (metronomeIntervalId) { stopMetronome(); startMetronome(); } }, // a clicking metronome keeps up
  noteOn: note => playNote(note, 0.65, 'sequencer', true),
  noteOff: note => stopNote(note, 'emergency'),
  click: () => { if (metronomeEnabled) metronomeTick(); },

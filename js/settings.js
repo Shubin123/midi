@@ -33,12 +33,14 @@ export function addAppSettings(section) {
  const teach = toggle('settings-teach-buttons', '🎓 buttons on widgets, each opening its guide', read(TEACH_BUTTONS_KEY, false), shows('teach-buttons-on', TEACH_BUTTONS_KEY));
  const teacherOn = read(TEACHER_KEY, true);
  teach.querySelector('input').disabled = !teacherOn;
+ const ownSwitch = toggle('settings-teacher', 'AI teacher', teacherOn, on => {
+  save(TEACHER_KEY, on);
+  teach.querySelector('input').disabled = !on;
+  window.dispatchEvent(new CustomEvent('teacher:enabled', { detail: on }));
+ });
+ ownSwitch.dataset.notForTeacher = ''; // the teacher can change the rest of Settings, but not switch itself off
  section('AI teacher',
-  toggle('settings-teacher', 'AI teacher', teacherOn, on => {
-   save(TEACHER_KEY, on);
-   teach.querySelector('input').disabled = !on;
-   window.dispatchEvent(new CustomEvent('teacher:enabled', { detail: on }));
-  }),
+  ownSwitch,
   teach,
   el('p', { textContent: 'Off, the teacher is hidden and stops listening, talking and coaching; your conversation and lessons are kept.' }));
 }

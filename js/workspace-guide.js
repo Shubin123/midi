@@ -71,6 +71,11 @@ export const GUIDES = {
   how: [['Record captures everything you hear, after effects.', 'Import / Export › ● Record'], ['Render audio plays the sequencer or a loop slot and saves exactly that many bars.', 'Import / Export › Render audio'], ['Export MIDI saves the notes for any DAW.', 'Import / Export › Export MIDI'], ['Import a .mid into a loop slot or the sequencer, or an audio file as a clip.', 'Import / Export › + Import file…']],
   keywords: ['export', 'import', 'render', 'wav', 'aiff', 'mid', 'midi file', 'bounce', 'download', 'daw', 'my daw', 'a daw', 'into my', 'ableton', 'logic', 'fl studio', 'save'],
  },
+ 'Settings': {
+  what: 'The ☰ Settings menu at the top right: stop every sound, the floating PANIC button, the AI teacher and its 🎓 buttons, and which widgets show.',
+  how: [['Stop all sounds is the panic: every note, loop, the sequencer and the metronome stop.', 'settings-panic'], ['Switch on the floating PANIC button to keep the panic on the page.', 'settings-panic-button'], ['Switch on 🎓 buttons and every widget gets one that opens its guide.', 'settings-teach-buttons']],
+  keywords: ['settings', 'menu', 'panic', 'stop all sounds', '🎓', 'teach buttons', 'guide buttons'],
+ },
 };
 
 export const PLUGIN_GUIDES = {

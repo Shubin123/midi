@@ -114,6 +114,8 @@ export function createSequencer() {
   const added=automation.querySelectorAll('.automation-lane')[lanes.length-1];added?.scrollIntoView({block:'nearest',behavior:'smooth'});added?.classList.add('just-added');setTimeout(()=>added?.classList.remove('just-added'),1600);};
  const position=sequence.querySelector('#seq-position'),play=sequence.querySelector('#seq-play'),bpm=sequence.querySelector('#seq-bpm');
  bpm.onchange=()=>{const v=Math.max(30,Math.min(300,Number(bpm.value)||120));bpm.value=v;window.synth.tempo=v;if(running)snapshot.tempo=v;};
+ // The tempo set anywhere else (Tap BPM, − and +, the teacher) shows here, except while a tempo lane moves it.
+ window.addEventListener('synth:tempo',e=>{if(!running)bpm.value=e.detail;});
  const tick=()=>{
   const now=window.synth.context.currentTime;
   if(window.synth.context.state!=='running'){lastTime=now;return;}
