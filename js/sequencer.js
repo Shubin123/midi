@@ -132,7 +132,7 @@ export function createSequencer() {
  sequence.querySelector('#seq-clear').onclick=()=>{pattern=notes.map(()=>Array(16).fill(false));cells.forEach(c=>{c.classList.remove('on');c.setAttribute('aria-pressed','false');});persist();};
  const refresh=()=>cells.forEach((c,k)=>{const on=!!pattern[Math.floor(k/16)][k%16];c.classList.toggle('on',on);c.setAttribute('aria-pressed',on);});
  const setPattern=p=>{pattern=p;refresh();persist();};
- document.getElementById('stopAllSoundsButton').addEventListener('click',stop,true);
+ window.addEventListener('synth:panic',stop); // however a panic starts: the button, Settings, or coming back to the tab
  window.addEventListener('pagehide',stop);
  document.addEventListener('visibilitychange',()=>{if(document.hidden)stop();});
  return {sequence,automation,api:{get notes(){return notes;},get pattern(){return pattern;},setPattern,start,stop,get running(){return running;},get lanes(){return lanes;}}};

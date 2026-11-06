@@ -3,7 +3,7 @@
 // or later). It finds Google Chrome, Chromium, Edge or a Playwright Chromium; set CHROME to use another.
 import { createServer } from 'node:http';
 import { readFile, mkdtemp, rm, readdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { spawn, execFileSync } from 'node:child_process';
 import { tmpdir, homedir, platform } from 'node:os';
 import { join, extname, normalize, dirname } from 'node:path';
@@ -31,8 +31,10 @@ async function findChrome() {
  return chrome;
 }
 
-// Starts the server and a fresh headless Chrome with one page. Returns { base, open(url), evaluate(expr),
-// errors, close() }: `errors` collects what the page throws or logs as an error since the last open().
+// Starts the server and a fresh headless Chrome with one page. Returns { base, open(url), reload(), evaluate(expr),
+// beforeScripts(source), errors, close() }: `errors` collects what the page throws or logs as an error since the
+// last open() or reload(); beforeScripts() runs `source` in every page from then on, before the page's own scripts;
+// evaluate() fails after `timeout` ms (a page that never finishes fails the suite rather than hanging it).
 export async function launch({ width = 1500, height = 1000 } = {}) {
  const server = createServer(async (req, res) => {
   const path = normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname)).replace(/^(\.\.[/\\])+/, '');
@@ -46,6 +48,10 @@ export async function launch({ width = 1500, height = 1000 } = {}) {
 
  const profile = await mkdtemp(join(tmpdir(), 'midi-tests-'));
  const chrome = spawn(await findChrome(), ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, `--window-size=${width},${height}`, '--autoplay-policy=no-user-gesture-required', '--no-first-run', '--no-default-browser-check', '--mute-audio', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+ // Stopped or interrupted, the run takes its Chrome and profile with it: nothing is left running or on disk.
+ const quit = () => { chrome.kill(); try { rmSync(profile, { recursive: true, force: true }); } catch { /* best effort */ } };
+ process.once('exit', quit);
+ for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.once(signal, () => { quit(); process.exit(130); });
  const endpoint = await new Promise((resolve, reject) => {
   let err = '';
   chrome.stderr.on('data', d => { err += d; const m = /DevTools listening on (ws:\S+)/.exec(err); if (m) resolve(m[1]); });
@@ -86,14 +92,30 @@ export async function launch({ width = 1500, height = 1000 } = {}) {
    await page('Page.navigate', { url: url.startsWith('http') ? url : `${base}/${url}` });
    await loaded;
   },
-  async evaluate(expression) {
-   const { result, exceptionDetails } = await page('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+  async reload() {
+   errors.length = 0;
+   const loaded = new Promise(r => listeners.push(function onLoad({ method, sessionId: s }) { if (s === sessionId && method === 'Page.loadEventFired') { listeners.splice(listeners.indexOf(onLoad), 1); r(); } }));
+   await page('Page.reload', {});
+   await loaded;
+  },
+  beforeScripts: source => page('Page.addScriptToEvaluateOnNewDocument', { source }),
+  async evaluate(expression, { timeout = 60000 } = {}) {
+   let timer;
+   const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`no answer in ${timeout / 1000} s from: ${expression.slice(0, 80)}`)), timeout); });
+   const { result, exceptionDetails } = await Promise.race([page('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }), late]).finally(() => clearTimeout(timer));
    if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text);
    return result.value;
   },
   async close() {
-   ws.close(); chrome.kill(); server.close();
-   await rm(profile, { recursive: true, force: true }).catch(() => {});
+   ws.close(); server.close();
+   // Chrome writes to its profile until it has exited, so it is removed after that.
+   if (chrome.exitCode === null && chrome.signalCode === null) {
+    const gone = new Promise(r => chrome.once('exit', r));
+    chrome.kill();
+    await Promise.race([gone, new Promise(r => setTimeout(r, 5000))]);
+   }
+   await rm(profile, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }).catch(() => {});
+   process.removeListener('exit', quit);
   },
  };
 }

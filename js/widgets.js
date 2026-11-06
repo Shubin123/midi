@@ -65,11 +65,16 @@ export function setupWidgets(workspace) {
  const observer = new ResizeObserver(layout);
  window.addEventListener('resize', layout); // column count and gap change at the breakpoints
 
+ // The Settings menu: the app's own settings in sections other modules add (section()), then the widgets.
  const menu = document.createElement('details');
  menu.className = 'widget-menu';
- menu.innerHTML = '<summary aria-label="Widget menu">☰ <span>Widgets</span></summary><div class="widget-menu-body"><strong>Your workspace</strong><p>Show, hide, minimise, resize, or reorder modules.</p></div>';
+ menu.innerHTML = '<summary aria-label="Settings">☰ <span>Settings</span></summary><div class="widget-menu-body"><div class="settings-sections"></div><strong>Widgets</strong><p>Show, hide, minimise, resize, or reorder them.</p></div>';
  document.querySelector('h1').before(menu);
- const body = menu.querySelector('div');
+ const body = menu.querySelector('.widget-menu-body');
+ // Clicking anywhere else closes it, and so does Escape.
+ document.addEventListener('pointerdown', e => { if (menu.open && !menu.contains(e.target)) menu.open = false; });
+ document.addEventListener('keydown', e => { if (e.key === 'Escape' && menu.open) { menu.open = false; menu.querySelector('summary').focus(); } });
+ const section = (title, ...nodes) => { const s = document.createElement('section'); s.className = 'settings-section'; s.append(Object.assign(document.createElement('strong'), { textContent: title }), ...nodes); menu.querySelector('.settings-sections').append(s); return s; };
  widgets.forEach(el => {
   el.classList.add('widget');
   el.hidden = list('hidden').includes(el.id);
@@ -171,4 +176,5 @@ export function setupWidgets(workspace) {
  const expandAll=document.createElement('button');expandAll.textContent='Expand all';expandAll.onclick=()=>all(false);
  const reset=document.createElement('button');reset.textContent='Reset layout';reset.onclick=()=>{widgets.sort((a,b)=>Number(a.dataset.order)-Number(b.dataset.order)).forEach(el=>{workspace.append(el);el.hidden=false;el._setMinimized(false);el.classList.toggle('wide',el.dataset.wide==='true');delete el.dataset.span;el.style.height='';el.classList.remove('sized');});body.querySelectorAll('input').forEach(x=>x.checked=true);layout();persist();window.dispatchEvent(new Event('resize'));};
  actions.append(minAll,expandAll,reset);body.append(actions);
+ return { menu, section };
 }

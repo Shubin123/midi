@@ -148,13 +148,45 @@ gap. The click itself is a short synthesised buffer rather than a sample.
 - Adjustable UI scale (75-150%), driven by a `--font-scale-factor` variable
   that the whole stylesheet sizes against.
 
-Theme, UI scale, and the falling-notes toggle persist in `localStorage`.
+Theme, UI scale, and the falling-notes toggle persist in `localStorage`. The
+theme and scale are back from the first frame on a reload: `js/themes.js` is
+loaded at the top of the page (not deferred) and applies them before anything is
+drawn, where they used to wait for the page to finish loading, showing the
+default theme until then. A saved theme that no longer exists falls back to
+Midnight Drive.
 
 ### PANIC
 
 A dedicated button force-stops every voice, clears the loop slots' playback
 timers, and rebuilds the audio graph, the standard escape hatch for when a
-stuck note leaves an oscillator droning.
+stuck note leaves an oscillator droning. It also stops the sequencer and the
+metronome, and cuts notes that are still fading out (their release) within
+50 ms. Effects' own tails, such as a delay's echoes, ring out as usual.
+
+The same panic is **Stop all sounds** in the **☰ Settings** menu. The floating
+PANIC button is off by default, to leave room; switch it on there (kept). The
+panic also runs by itself whenever you come back to the tab, so nothing left
+going while the tab was hidden carries on late or stuck.
+
+### Settings
+
+The **☰ Settings** menu at the top right holds the app's settings, then the
+widget list. Clicking anywhere outside it, or Escape, closes it.
+
+- **Sound**: Stop all sounds, and the floating PANIC button (off by default,
+  for room).
+- **AI teacher**: switched off, the teacher's panel, its pull tab and every
+  🎓 button are hidden, its tab closes, and it stops listening, talking,
+  coaching and playing examples, and doesn't load its model in the
+  background. Its conversation and lessons are kept, and switched on again it
+  opens as it was left.
+- **🎓 buttons**: off by default, for room in the title bars. Switched on,
+  every widget and plug-in window gets one that opens its guide. While the
+  teacher is off they stay hidden and the switch rests, greyed out.
+
+Every switch is kept, so the page comes back as you left it after a reload.
+- **Widgets**: show and hide each widget, minimise or expand them all, and
+  reset the layout.
 
 ## Modular sequencer workspace
 
@@ -201,13 +233,14 @@ to the natural size; with a grip focused, the arrow keys resize (a column or
 and **Reset layout** clears them. The AI teacher's panel is resized by dragging
 its left edge (300–720 px, kept; double-click resets). Every
 header has the same buttons in the same order: **×** hide, **↔** width, **–**
-minimise, then **🎓** (the teacher's guide to that widget). Focus a header and
+minimise, then **🎓** (the teacher's guide to that widget, when 🎓 buttons are
+on in Settings). Focus a header and
 use arrow keys to reorder with the keyboard. The **–** button (or a double-click on
 the title) minimises a module to its title bar, one column wide; **+** expands
 it. The width button toggles a wide module. Modules are packed like a masonry
 wall: in order, each goes to the column that currently ends highest, so short
 and minimised modules fill in under tall ones instead of leaving gaps. The
-layout uses four columns, two below 1100 px and one below 600 px. The hamburger
+layout uses four columns, two below 1100 px and one below 600 px. The **☰ Settings**
 menu can hide and restore every widget, minimise or expand them all, and reset
 the layout. Widget order, widths, minimised and hidden state, the sequencer's
 notes, key, scale and octave, and automation lanes persist in browser
@@ -363,7 +396,7 @@ in a row, notes spelled out ("D-F-A"), or a scale by name. Controls named in a
 
 The teacher can see and use every widget and plug-in window (`js/workspace.js`):
 it reads them from the page, so a new widget or a plug-in loaded later is
-covered without being registered anywhere. Each widget's **🎓** button opens its
+covered without being registered anywhere. Each widget's **🎓** button (switched on in **☰ Settings**) opens its
 guide (`js/workspace-guide.js`): what it is for, and how to use it step by step,
 each step with a **Show** button that brings the control into view (unhiding,
 expanding or opening its window) and makes it pulse. When a question is about
@@ -707,11 +740,14 @@ licensed [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/); the
 adapted texts in `js/lessons.js` are shared under the same license
 (`LICENSES/OpenMusicTheory-CC-BY-SA-4.0.txt`). The Course tab credits it too.
 
-The service worker needs `https://` or `http://localhost`. Tests:
+The service worker needs `https://` or `http://localhost`. Tests (Node 22 or
+later, nothing to install; see *Running it*):
 
 - `node tests/all.mjs`: every suite below, in parallel, with one answer (see *Checking for regressions*)
 - `node tests/waveforms.mjs`: every waveform rendered by the browser's own Web Audio and measured, then the Oscillators widget used and played through the synth in the app, all compared with recorded fingerprints (headless Chrome, no dependencies; see *Testing the waveforms*)
 - `node tests/widgets.mjs`: every widget dragged onto every other one, at three widths: the space it will drop into is open, outlined, empty and steady, and it lands there (headless Chrome)
+- `node tests/settings.mjs`: the Settings menu (clicking off closes it); the PANIC and 🎓 buttons off by default and switched on; switching the AI teacher off and on; stopping every sound from Settings or the PANIC button; the panic on coming back to the tab; and every switch kept after a reload (headless Chrome)
+- `node tests/themes.mjs`: every UI theme, and the UI scale, chosen and then back after a reload by the time the page is parsed and at its first frame; switching back to the default; a retired theme name (headless Chrome)
 - `node tests/oscillators.mjs`: the oscillator bank's settings
 - `node tests/archive.mjs`: archive reading and writing
 - `node tests/formats.mjs`: WAV, AIFF and MIDI reading and writing
@@ -736,6 +772,11 @@ the teacher, if any).
 python -m http.server 8000
 # then open http://localhost:8000/
 ```
+
+Node is not needed to run the app. It is used only by the test suites in
+`tests/`, which need Node 22 or later (for its built-in WebSocket) and import
+nothing but Node's own modules, so there is nothing to `npm install`. There is
+no `package.json`; the committed `package-lock.json` is empty and unused.
 
 Browsers require a user gesture before audio can start, so the `AudioContext`
 is created lazily on the first interaction and resumed if it is suspended. Web

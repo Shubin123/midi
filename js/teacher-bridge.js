@@ -10,9 +10,9 @@
 // teacher answer (js/voice.js). The Course tab teaches lessons adapted from Open Music Theory (js/lessons.js):
 // each one explains an idea, plays an example and checks a task from what you play. A first unit teaches the
 // workspace itself, and a second tempo and rhythm, and how System 1 and System 2 split the work the same way
-// (js/rhythm-lessons.js). Every widget and plug-in window gets a 🎓 button that opens its guide, and the model
-// sees the widgets and their settings (js/workspace.js) so it can point at controls and change them when
-// asked. Conversations are kept in the browser (js/conversations.js). The panel only needs the synth's `synth:note`
+// (js/rhythm-lessons.js). Every widget and plug-in window gets a 🎓 button that opens its guide (shown when
+// switched on in Settings), and the model sees the widgets and their settings (js/workspace.js) so it can
+// point at controls and change them when asked. Conversations are kept in the browser (js/conversations.js). The panel only needs the synth's `synth:note`
 // events and `window.synth`, so loading this module is the whole integration.
 import { PhraseTracker, NOTE_NAMES, detectChord, pitchClassName, fitToKeys, followKeys, KEYS_LOW } from './pitch-analyzer.js';
 import { AiTeacher } from './ai-teacher.js';
@@ -187,8 +187,9 @@ const STYLE = `
 
 .teacher-toggle{position:fixed;top:50%;right:min(calc(var(--teacher-width) + 10px),calc(100vw - 36px));transform:translateY(-50%);z-index:10001;width:26px;height:56px;padding:0;border:1px solid var(--border-color);border-radius:8px;box-shadow:0 4px 14px #0005;background:var(--primary-surface-color);color:var(--text-color);cursor:pointer;transition:right .2s}
 html:not(.teacher-open) .teacher-toggle{right:10px} /* it floats clear of the edge, and of the panel when open */
-body{padding-right:56px} /* a gutter for the pull tab (10 px from the edge, 26 px wide, 20 px clear of the widgets) */
-@media(max-width:600px){body{padding-right:46px}}
+html:not(.teacher-off) body{padding-right:56px} /* a gutter for the pull tab (10 px from the edge, 26 px wide, 20 px clear of the widgets) */
+@media(max-width:600px){html:not(.teacher-off) body{padding-right:46px}}
+html.teacher-off #teacher-panel,html.teacher-off .teacher-toggle,html.teacher-off .teach-btn{display:none!important} /* switched off in Settings */
 #keyboard .teacher-hint{box-shadow:inset 0 -14px 0 var(--accent-color)}
 @media(min-width:900px){
  html.teacher-open body{margin-right:var(--teacher-width)}
@@ -216,15 +217,15 @@ export class TeacherBridge {
   this.courseDone = new Set(read('teacher-course-v1', []));
   this.convo = new Conversations();
   this.voiceChoice = read('teacher-voice-v1', DEFAULT_VOICE); // who reads replies aloud in talk mode
+  this.enabled = read('teacher-enabled-v1', true); // switched in Settings (js/settings.js)
   window.addEventListener('pagehide', () => this.convo.save(true));
  }
 
  hook() {
   this._createPanel(); this._listen(); this._setupCallbacks();
   this._autoActivate(); this._loadConversation();
-  // Laya, once chosen and downloaded, loads by itself on later visits: it is quick from the cache and is what
-  // coaches and teaches the widgets. Qwen is never loaded automatically (it needs gigabytes of GPU memory).
-  if (read('teacher-laya-auto-v1', false)) modelCacheInfo().then(i => { if (i.laya) this._loadLaya(); }).catch(() => {});
+  this.setEnabled(this.enabled, true);
+  window.addEventListener('teacher:enabled', e => this.setEnabled(e.detail));
   this._renderProviders(); this._renderState(); this._renderEmpty();
   // Finish an OpenRouter sign-in if we came back from one; that connects it straight away.
   completeSignIn().then(key => {
@@ -246,6 +247,7 @@ export class TeacherBridge {
 
  _listen() {
   window.addEventListener('synth:note', ({ detail: { midi, velocity, on, source = '' } }) => {
+   if (!this.enabled) return;
    const now = performance.now();
    // Every release counts, whatever its source: the tracker ignores notes it isn't holding.
    if (!on) { this.tracker.noteOff(midi, now); this.attempt.noteOff(midi); return; }
@@ -369,7 +371,7 @@ export class TeacherBridge {
     </div>
    </section>
    <section class="tp-view tp-course-view" id="tp-view-course" role="tabpanel" aria-labelledby="tp-tab-course" hidden>
-    <p class="tp-intro">Short lessons, first on using this workspace, then on tempo and rhythm (and how the teacher's two systems keep time), then music theory from Open Music Theory played on your keys. Each one explains an idea and gives you something to do or play: the teacher watches and tells you when you have it. Every widget also has a 🎓 button with its guide.</p>
+    <p class="tp-intro">Short lessons, first on using this workspace, then on tempo and rhythm (and how the teacher's two systems keep time), then music theory from Open Music Theory played on your keys. Each one explains an idea and gives you something to do or play: the teacher watches and tells you when you have it. Switch on 🎓 buttons in ☰ Settings and every widget gets one that opens its guide.</p>
     <div class="tp-course"></div>
     <p class="tp-credit">Music theory lessons adapted from <a href="${OMT.url}" target="_blank" rel="noopener">Open Music Theory</a> by Kris Shaffer, Bryn Hughes, Brian Moseley and contributors, licensed <a href="${OMT.licenseUrl}" target="_blank" rel="noopener">${OMT.license}</a>.</p>
    </section>
@@ -432,6 +434,28 @@ export class TeacherBridge {
   if (tab === 'provider') { this._renderVoices(); this._renderStorage(); }
  }
 
+ // Switched off in Settings, the panel, its pull tab and every 🎓 button are hidden (html.teacher-off), its tab
+ // closes, and it stops listening, talking, coaching and playing; its conversation and lessons are kept.
+ // Switched on, it opens as it was left. Laya, once chosen and downloaded, loads by itself whenever the teacher
+ // is on: quick from the cache, it is what coaches and teaches the widgets. (Qwen never loads by itself: it
+ // needs gigabytes of GPU memory.)
+ setEnabled(on, starting = false) {
+  this.enabled = on;
+  document.documentElement.classList.toggle('teacher-off', !on);
+  if (on) {
+   if (!starting) this._setOpen(read('teacher-open-v1', innerWidth >= 900), false);
+   if (!this.laya && read('teacher-laya-auto-v1', false)) modelCacheInfo().then(i => { if (i.laya && this.enabled && !this.laya) this._loadLaya(); }).catch(() => {});
+   return;
+  }
+  this._setOpen(false, false);
+  if (this.talking) this.voice.stop();
+  this.voice?.cancelSpeech();
+  this._stopPlayback(); this._phraseQueue = []; this._coachNext = null;
+  this.tracker.reset(); this.attempt.reset(); clearTimeout(this._missTimer);
+  this._resetTeacher(); // interrupts a reply in progress; the model keeps its memory of the conversation
+  this._setStatus(null);
+ }
+
  _setOpen(open, persist = true) {
   const p = this.panel, toggle = this._toggle;
   p.classList.toggle('collapsed', !open);
@@ -483,7 +507,7 @@ export class TeacherBridge {
   box.querySelector('.tp-empty')?.remove();
   if (box.querySelector('.teacher-msg')) return;
   const empty = el('div', { className: 'tp-empty' });
-  if (this.laya) empty.append(`Play a phrase and pause for a moment: Laya names it and gives you the next step with an example to hear. Ask about any widget or plug-in, or press 🎓 on one, and Laya shows you how it works.${this.teacher.isConfigured ? ' Switch to Slow, or ask a question below, for a fuller explanation.' : ''}`);
+  if (this.laya) empty.append(`Play a phrase and pause for a moment: Laya names it and gives you the next step with an example to hear. Ask about any widget or plug-in and Laya shows you how it works.${this.teacher.isConfigured ? ' Switch to Slow, or ask a question below, for a fuller explanation.' : ''}`);
   else if (this.teacher.isConfigured) empty.append('Play a phrase and pause for a moment: the teacher names it, explains it and plays a suggestion. Or ask a question below.');
   else {
    const go = el('button', { type: 'button', className: 'tp-primary', textContent: 'Choose a provider' });
@@ -600,7 +624,7 @@ export class TeacherBridge {
   const bar = el('progress', { max: 1, hidden: true });
   btn.onclick = () => this._loadLaya({ btn, bar, status });
   body.append(
-   el('p', { className: 'tp-note', textContent: 'Laya is a fast decision model. It never writes text: it chooses. The moment you finish a phrase it picks your next step from the coaching menu; ask about a widget or plug-in (or press 🎓 on one) and it picks the guide step that answers you and lights up the control; on a plug-in, "Next tip" has it choose which control to try next. Everything it says was written in advance, so it is never wrong about the app.' }),
+   el('p', { className: 'tp-note', textContent: 'Laya is a fast decision model. It never writes text: it chooses. The moment you finish a phrase it picks your next step from the coaching menu; ask about a widget or plug-in (or press its 🎓, when 🎓 buttons are on in Settings) and it picks the guide step that answers you and lights up the control; on a plug-in, "Next tip" has it choose which control to try next. Everything it says was written in advance, so it is never wrong about the app.' }),
    el('div', { className: 'tp-row' }, btn), bar, status,
    el('p', { className: 'tp-note', textContent: `Runs on the GPU where it can, otherwise the CPU. The first load downloads ${LAYA_MB} MB; after that it loads from the browser cache by itself. Connect a provider (or Qwen) as well to have it explain in its own words.` }));
  }
@@ -616,7 +640,7 @@ export class TeacherBridge {
    save('teacher-laya-auto-v1', true);
    this._renderProviders(); this._renderState(); this._renderEmpty();
    if (ui) {
-    this._msg('info', `Laya is ready (System 1). Play a phrase and pause for your next step; ask about any widget or plug-in, or press 🎓 on one, and Laya shows you the control.`);
+    this._msg('info', `Laya is ready (System 1). Play a phrase and pause for your next step; ask about any widget or plug-in and Laya shows you the control.`);
     this._showTab('lesson');
    }
   } catch (err) {
@@ -931,7 +955,7 @@ export class TeacherBridge {
   // status line says "Loaded …" only for plug-ins added now, not for ones restored from the last visit.
   const hostStatus = () => document.querySelector('#plugin-host-module [role=status]');
   const watchHost = node => new MutationObserver(() => {
-   if (!this.laya || !/^Loaded /.test(node.textContent)) return;
+   if (!this.laya || !this.enabled || !/^Loaded /.test(node.textContent)) return;
    setTimeout(() => {
     const w = ws.widgets().filter(x => x.plugin).at(-1);
     if (w) { this._setOpen(true); this._showTab('lesson'); this._meetPlugin(w); }

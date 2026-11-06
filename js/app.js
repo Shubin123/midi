@@ -4,6 +4,7 @@ import { createAirWidget } from './air-widget.js';
 import { createPluginHost } from './plugin-host.js';
 import { createIoWidget } from './io-widget.js';
 import { mountBank } from './oscillators.js';
+import { addAppSettings } from './settings.js';
 // The oscillator bank is filled in now, before the synth (js/synth.js) reads it on load.
 window.oscillatorBank = mountBank(document.getElementById('oscillators-group'));
 window.addEventListener('load',()=>{
@@ -23,6 +24,6 @@ window.addEventListener('load',()=>{
  workspace.append(createAirWidget(),createPluginHost(),createIoWidget(api));
  document.querySelector('.controls').remove();document.querySelector('.looper-toggle-bar').remove();
  const looper=workspace.querySelector('#launchpadLooperContainer');looper.classList.add('open');looper.style.display='grid';
- container.append(workspace);setupWidgets(workspace);
+ container.append(workspace);addAppSettings(setupWidgets(workspace).section);
  window.dispatchEvent(new Event('resize'));
 });

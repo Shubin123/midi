@@ -109,7 +109,7 @@ const played = p => p.notes.length > 0;
 export const WORKSPACE_LESSONS = [
  {
   id: 'ws_widgets', unit: WORKSPACE_UNIT, widget: 'Oscilloscope', title: 'Your workspace',
-  text: 'Every panel here is a widget. Drag one by its title bar to move it, use – to minimise it to its title, ↔ to make it wide and × to hide it. The ☰ Widgets menu at the top shows hidden widgets again and can reset the layout. Your layout is saved.',
+  text: 'Every panel here is a widget. Drag one by its title bar to move it, use – to minimise it to its title, ↔ to make it wide and × to hide it. The ☰ Settings menu at the top shows hidden widgets again and can reset the layout. Your layout is saved.',
   task: 'Minimise the Oscilloscope with its – button.', hint: 'The – button is on the right of the Oscilloscope\'s title bar.',
   show: ['Oscilloscope'], check: (p, ws) => ws.minimized.includes('scope-module'),
  },

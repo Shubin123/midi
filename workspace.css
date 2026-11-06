@@ -79,3 +79,11 @@ body{padding:24px}h1{font-size:1.5rem;letter-spacing:.3px;text-align:left;margin
 .osc-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 .osc-add:disabled{opacity:.55;cursor:default}
 .osc-common{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));column-gap:16px;margin-top:14px}
+/* The Settings menu (js/widgets.js, js/settings.js): the app's sections above the widget list. */
+.settings-section{display:block;padding-bottom:12px;margin-bottom:14px;border-bottom:1px solid var(--border-color)}
+.settings-section .widget-menu-actions{margin:10px 0 4px}
+.settings-section p{margin:2px 0 0}
+/* Off unless switched on in Settings (js/settings.js): they take room. */
+html:not(.panic-button-on) #stopAllSoundsButton{display:none}
+html:not(.teach-buttons-on) .teach-btn{display:none!important}
+.widget-menu[open]{z-index:10002} /* above the teacher's pull tab */
