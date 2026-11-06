@@ -30,6 +30,8 @@ import { modelCacheInfo, clearModelCache, formatBytes } from './model-cache.js';
 import { answer as systemOneAnswer, nextTip, isSoundControl } from './system-one.js';
 import { meetRequest } from './requests.js';
 import { readCommand, pluginWords } from './commands.js';
+import { timing } from './timing-widget.js';
+import { rhythmSummary, describeRhythm, rhythmMessage, learn as learnTiming, newProfile, issues, exerciseOptions, exercise, EXERCISES, NUDGES, NUDGE_GAP_MS, nudgeText, patternSteps } from './timing.js';
 import { Voice, canListen, canSpeak, ENGINES as VOICE_ENGINES, loadEngine, BROWSER, SPEED as VOICE_SPEED, speedFrom } from './voice.js';
 import { PROVIDERS, GROUPS, SYSTEM_ONE, NO_SYSTEM_TWO, providerById, getProviderId, setProviderId, getKey, setKey, clearKey, getModelFor, setModelFor, getBase, setBase, engineFor, listModels, pickModel, fetchOpenRouterModels } from './providers.js';
 import { signIn, completeSignIn } from './ai-auth.js';
@@ -45,6 +47,7 @@ const COURSE = [...WORKSPACE_LESSONS, ...RHYTHM_LESSONS, ...LESSONS], COURSE_UNI
 const courseLesson = id => COURSE.find(l => l.id === id) || null;
 const nextInCourse = id => COURSE[COURSE.findIndex(l => l.id === id) + 1] || null;
 const isWorkspace = l => l?.unit === WORKSPACE_UNIT;
+const isRhythm = l => l?.unit === RHYTHM_UNIT;
 // A phrase analysis cut down to what phraseMessage() reads, for keeping in a saved conversation.
 const compact = a => ({ noteOns: a.noteOns.slice(0, 48).map(n => ({ note: n.note })), noteCount: a.noteCount, durationMs: a.durationMs, pitchClasses: a.pitchClasses, scales: a.scales.slice(0, 1).map(({ tonicName, scaleName, score }) => ({ tonicName, scaleName, score })), chords: a.chords.map(c => ({ best: { chordName: c.best.chordName } })) });
 // Questions that are about the app rather than the music get the workspace described to the model.
@@ -151,6 +154,20 @@ const STYLE = `
 #teacher-panel .tp-steps{margin:0 0 6px;padding-left:18px}
 #teacher-panel .tp-steps li{margin-bottom:4px}
 #teacher-panel .teacher-msg .tp-steps button{display:inline-block;margin:0 0 0 6px;padding:1px 7px;font-size:11px}
+#teacher-panel .teacher-msg.rhythm{border-left-color:#6bcb77;white-space:normal}
+#teacher-panel .teacher-msg.rhythm p{margin:6px 0 0}
+#teacher-panel .teacher-msg.rhythm .tp-fix{font-weight:600}
+#teacher-panel .tp-grid{display:flex;flex-direction:column;gap:3px;margin-top:6px}
+#teacher-panel .tp-bar{display:grid;grid-template-columns:repeat(16,1fr);gap:2px}
+#teacher-panel .tp-bar span{height:12px;border-radius:2px;background:color-mix(in srgb,var(--text-muted-color) 18%,transparent)}
+#teacher-panel .tp-bar span.beat{background:color-mix(in srgb,var(--text-muted-color) 34%,transparent)}
+#teacher-panel .tp-bar span.hit{background:var(--accent-color)}
+#teacher-panel .tp-bar span.hit.good{background:#6bcb77}#teacher-panel .tp-bar span.hit.ok{background:#f4a261}#teacher-panel .tp-bar span.hit.off{background:#ff6b6b}
+#teacher-panel .tp-exercise-bar{display:flex;align-items:center;gap:8px;padding:6px 14px;font-size:12px;border-bottom:1px solid var(--border-color);background:color-mix(in srgb,#6bcb77 14%,transparent)}
+#teacher-panel .tp-exercise-bar[hidden]{display:none}
+#teacher-panel .tp-exercise-bar span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#teacher-panel .tp-exercise-bar button{flex:none;padding:3px 8px;font-size:11px}
+#teacher-panel .tp-habits{font-size:11px;color:var(--text-muted-color);margin:4px 0 8px}
 #teacher-panel .teacher-msg.s1{border-left-color:#f4a261;white-space:normal}
 #teacher-panel .teacher-msg.change{font-size:12px;border-left-color:var(--accent-color);white-space:normal}
 #teacher-panel .tp-history{width:auto;max-width:150px;font-size:11px;padding:4px 6px}
@@ -223,6 +240,8 @@ export class TeacherBridge {
   this.convo = new Conversations();
   this.voiceChoice = read('teacher-voice-v1', DEFAULT_VOICE); // who reads replies aloud in talk mode
   this.voiceSpeed = read('teacher-voice-speed-v1', VOICE_SPEED.normal); // and how fast
+  this.rhythmProfile = read('teacher-rhythm-profile-v1', null) || newProfile(); // what keeps happening to the student's timing
+  this.exercise = null; this._nudgedAt = -Infinity; // the rhythm exercise being practised, and when the last nudge was
   this.enabled = read('teacher-enabled-v1', true); // switched in Settings (js/settings.js)
   window.addEventListener('pagehide', () => this.convo.save(true));
  }
@@ -232,6 +251,7 @@ export class TeacherBridge {
   this._autoActivate(); this._loadConversation();
   this.setEnabled(this.enabled, true);
   window.addEventListener('teacher:enabled', e => this.setEnabled(e.detail));
+  timing.subscribe((type, d) => { if (type === 'flag') this._nudge(d); });
   this._renderProviders(); this._renderState(); this._renderEmpty();
   // Finish an OpenRouter sign-in if we came back from one; that connects it straight away.
   completeSignIn().then(key => {
@@ -252,9 +272,11 @@ export class TeacherBridge {
  }
 
  _listen() {
-  window.addEventListener('synth:note', ({ detail: { midi, velocity, on, source = '' } }) => {
+  window.addEventListener('synth:note', ({ detail: { midi, velocity, on, source = '', time } }) => {
    if (!this.enabled) return;
-   const now = performance.now();
+   const now = time ?? performance.now();
+   // Playing to a beat, a phrase ends on a rest of about a bar; otherwise on 800 ms of silence.
+   this.tracker.gapMs = timing.clock.external ? Math.max(800, timing.clock.period * timing.clock.beatsPerBar * 0.9) : 800;
    // Every release counts, whatever its source: the tracker ignores notes it isn't holding.
    if (!on) { this.tracker.noteOff(midi, now); this.attempt.noteOff(midi); return; }
    if (!PLAYED.test(source)) return;
@@ -268,10 +290,83 @@ export class TeacherBridge {
 
  _onPhrase(a) {
   this._showLocal(a);
+  a.rhythm = this._rhythm(a); // the [RHYTHM] summary System 2 reads with the phrase, when there is one
   if (this.lesson) { this._checkLesson(); return; } // during a lesson, the phrase is marked rather than coached
   if (!this.autoAnalyze || a.noteCount < 3) return;
   if (this.laya) { this._coachNext = a; this._coachLoop(); }
-  else if (this.teacher.isConfigured) this._queue(a, {});
+  else if (this.teacher.isConfigured) this._queue(a, { rhythm: a.rhythm });
+ }
+
+ /* ---- Tempo and rhythm (js/timing.js, js/timing-widget.js) ---- */
+
+ // System 1 keeps the tempo: when the student rushes or drags against the beat for a few notes running, Laya
+ // picks the words of a short nudge from the written ones (the first is said without Laya), shown under the
+ // keys and spoken in talk mode: at most one a bar, never closer than four seconds, and only while coaching.
+ async _nudge(flag) {
+  if (!this.enabled || !this.autoAnalyze || (this.lesson && !isRhythm(this.lesson))) return;
+  const now = performance.now();
+  if (now - this._nudgedAt < Math.max(NUDGE_GAP_MS, timing.clock.period * timing.clock.beatsPerBar)) return;
+  this._nudgedAt = now;
+  if (flag.kind !== 'back') { this.rhythmProfile = learnTiming(this.rhythmProfile, null, flag.kind); save('teacher-rhythm-profile-v1', this.rhythmProfile); }
+  const options = NUDGES[flag.kind].map(t => nudgeText(t, flag));
+  let i = 0, who = 'System 1';
+  if (this.laya) {
+   try {
+    const r = await this.laya.pick(`A student playing along with the ${timing.clock.source} at ${flag.target} BPM is now at ${flag.actual} BPM, ${flag.trend}.`, 'Which short nudge helps them most right now?', Object.fromEntries(options.map((t, k) => [String(k), t])));
+    i = Number(r.choice) || 0; who = 'System 1 · Laya';
+   } catch { /* the first, written for this */ }
+  }
+  timing.say(options[i], who);
+  if (this.talking) this._say(options[i]);
+ }
+
+ // System 2 shapes the rhythm. A phrase played to a beat (the metronome, the sequencer, a MIDI clock), or for
+ // an exercise or a rhythm lesson, is put on the sixteenth grid and summed up (js/timing.js): a rhythm card
+ // shows the grid, what happened and one thing to do about it, and the next exercise, which System 1 picks
+ // (Laya, when loaded, from the three that fit). Returns the [RHYTHM] summary for System 2, or ''.
+ _rhythm(a) {
+  const clock = timing.clock, from = a.noteOns[0]?.time, to = a.noteOns.at(-1)?.time;
+  const practising = this.exercise || isRhythm(this.lesson);
+  if (!timing.on || !clock.running || (!clock.external && !practising) || (this.lesson && !isRhythm(this.lesson))) return '';
+  const notes = timing.onsets.filter(o => o.time >= from - 5 && o.time <= to + 5);
+  if (notes.filter(o => !o.chord).length < 4) return '';
+  const target = this.exercise || (this.lesson?.pattern ? { pattern: this.lesson.pattern, bpm: Math.round(clock.bpm) } : null);
+  const r = rhythmSummary(notes, clock, { expected: target ? target.pattern.match(/.{16}/g) : null, level: timing.level });
+  if (!r) return '';
+  this.rhythmProfile = learnTiming(this.rhythmProfile, r); save('teacher-rhythm-profile-v1', this.rhythmProfile);
+  const { text, fix } = describeRhythm(r, timing.level), habit = issues(this.rhythmProfile, timing.level)[0]?.text || '';
+  const { ids, recurring } = exerciseOptions(r, this.rhythmProfile, timing.level);
+  const grades = r.events.filter(e => e.bar < r.bars.length).map(e => ({ bar: e.bar, step: e.step, grade: notes.find(o => o.time === e.time)?.grade || '' }));
+  const entry = { kind: 'rhythm', who: 'System 1', bars: r.bars, grades, text, fix, habit, next: exercise(ids[0], r, recurring) };
+  entry.msg = rhythmMessage(r, { described: `${text} ${fix} Next exercise: ${entry.next.label}.`, profile: this.rhythmProfile, lesson: isRhythm(this.lesson) ? `${this.lesson.title}: ${this.lesson.task}` : '', target, level: timing.level });
+  const node = this._add(entry);
+  if (!(this.autoAnalyze && (this.laya || this.teacher.isConfigured))) this._say(fix); // else the coaching that follows speaks
+  // Laya chooses the next exercise among the three that fit, and the card is redrawn with its choice.
+  if (this.laya) this.laya.pick(`A student just played: ${text} ${habit ? `Recurring: ${habit}.` : ''}`, 'Which exercise should they practise next?', Object.fromEntries(ids.map(id => [id, EXERCISES[id].says])))
+   .then(c => { if (!ids.includes(c.choice)) return; entry.next = exercise(c.choice, r, recurring); entry.who = `System 1 · Laya, ${c.ms} ms`; const fresh = this._render(entry); node.replaceWith(fresh); this.convo.save(); }).catch(() => {});
+  return entry.msg;
+ }
+
+ // An exercise: its tempo is set and the metronome switched on, the pattern plays once from the next bar (a low
+ // C on the downbeat), and the phrases that follow are marked against it until another is chosen, it is ended,
+ // or the conversation is new.
+ _setExercise(ex) {
+  this.exercise = ex;
+  const bar = this.panel.querySelector('.tp-exercise-bar');
+  bar.hidden = !ex;
+  if (!ex) return;
+  bar.querySelector('span').textContent = `Exercise: ${ex.label} · ${ex.pattern.match(/.{16}/g).join(' | ')}`;
+  if (window.synth) window.synth.tempo = ex.bpm;
+  const m = document.getElementById('metronomeToggle');
+  if (m && !m.checked) m.click();
+  if (!timing.on) document.getElementById('timingToggle')?.click();
+  this._playExercise(ex);
+ }
+ _playExercise(ex) {
+  const c = timing.clock, now = performance.now();
+  const wait = c.external ? Math.max(0, c.timeOf(Math.ceil(c.beatAt(now) / c.beatsPerBar + 0.05) * c.beatsPerBar) - now) : 0;
+  this._stopPlayback();
+  this._later(wait, () => this._playSteps(patternSteps(ex.pattern, ex.accent), ex.bpm * 4, ex.label));
  }
 
  // Laya decides one phrase at a time (a model session can't run twice at once); if more phrases end while
@@ -297,7 +392,7 @@ export class TeacherBridge {
    why: slow ? null : { a: compact(a), coach: `${describePlayed(a)} Next step: ${move.say}`, suggested: d.explain >= 0.5 } });
   const at = performance.now();
   this._say(`${describePlayed(a)} ${move.say}`).then(() => { if (this._lastNoteAt <= at) this._playSteps(move.example.steps, move.example.bpm); });
-  if (slow) this._queue(a, { think: true, coach: `${describePlayed(a)} Next step: ${move.say}` });
+  if (slow) this._queue(a, { think: true, coach: `${describePlayed(a)} Next step: ${move.say}`, rhythm: a.rhythm });
  }
 
  // While the model answers one phrase, only the most recent of the phrases played meanwhile is sent next.
@@ -367,6 +462,7 @@ export class TeacherBridge {
    </nav>
    <section class="tp-view" id="tp-view-lesson" role="tabpanel" aria-labelledby="tp-tab-lesson">
     <div class="tp-live" aria-live="off"><span class="tp-live-note">♪</span><span class="tp-live-detail">Play something…</span><span class="tp-chip" hidden></span></div>
+    <div class="tp-exercise-bar" hidden><span></span><button type="button" class="tp-exercise-hear">▶ Hear it</button><button type="button" class="tp-exercise-end">End exercise</button></div>
     <div class="tp-lesson-bar" hidden><span></span><button type="button" class="tp-lesson-hear">▶ Example</button><button type="button" class="tp-lesson-end">End lesson</button></div>
     <div class="tp-messages" role="log" aria-live="polite"></div>
     <div class="tp-foot">
@@ -410,6 +506,8 @@ export class TeacherBridge {
   p.querySelector('.tp-talk').onclick = () => this._toggleTalk();
   this._panelResize(p.querySelector('.tp-resize'));
   p.querySelector('.tp-lesson-end').onclick = () => this._endLesson();
+  p.querySelector('.tp-exercise-end').onclick = () => this._setExercise(null);
+  p.querySelector('.tp-exercise-hear').onclick = () => this.exercise && this._playExercise(this.exercise);
   p.querySelector('.tp-lesson-hear').onclick = () => { const l = this.lesson; if (!l) return; if (l.example) this._playSteps(l.example.steps, l.example.bpm); else this._showTargets(l.show); };
   this._renderCourse();
   this._teachButtons();
@@ -441,6 +539,7 @@ export class TeacherBridge {
   this.panel.querySelectorAll('.tp-tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === tab));
   this.panel.querySelectorAll('.tp-view').forEach(v => { v.hidden = v.id !== `tp-view-${tab}`; });
   if (tab === 'provider') { this._renderVoices(); this._renderStorage(); }
+  if (tab === 'course') this._renderCourse(); // with what has been noticed about the student's timing since
  }
 
  // Switched off in Settings, the panel, its pull tab and every 🎓 button are hidden (html.teacher-off), its tab
@@ -819,7 +918,7 @@ export class TeacherBridge {
 
  _msg(type, text, play = null, info = {}) {
   const who = type !== 'teacher' ? '' : info.think ? `System 2 · ${this._who()}, thought for ${info.seconds.toFixed(1)} s` : `${this.laya ? 'System 2 · ' : ''}${this._who()}`;
-  this._add({ kind: 'msg', type, text, play, who }, type === 'user' ? text : '');
+  this._add({ kind: 'msg', type, text, play, who, exercise: info.exercise || null }, type === 'user' ? text : '');
  }
  _who() { return this._active?.id === 'local' ? 'Qwen' : providerById(this._active?.id)?.name || 'Teacher'; }
 
@@ -840,8 +939,18 @@ export class TeacherBridge {
    const d = el('div', { className: `teacher-msg ${e.type}` });
    if (e.who) d.append(el('span', { className: 'tp-who', textContent: e.who }));
    d.append(e.text);
-   if (e.play) d.append(actions(button(`▶ ${e.play.label}`, () => this._playSteps(e.play.steps, e.play.bpm, e.play.label))));
+   if (e.play || e.exercise) d.append(actions(e.play && button(`▶ ${e.play.label}`, () => this._playSteps(e.play.steps, e.play.bpm, e.play.label)), e.exercise && button(`Try this next: ${e.exercise.label}`, () => this._setExercise(e.exercise), true)));
    return d;
+  }
+  // A phrase's rhythm: the sixteenth grid bar by bar (each hit in its grade's colour), what happened, one thing
+  // to do about it, what keeps happening, and the next exercise.
+  if (e.kind === 'rhythm') {
+   const grade = (bar, step) => e.grades?.find(g => g.bar === bar && g.step === step)?.grade || '';
+   const grid = el('div', { className: 'tp-grid', title: 'Each row is a bar of sixteenth notes; the brighter cells are the beats' }, ...e.bars.map((b, bar) => el('div', { className: 'tp-bar' }, ...b.split('').map((c, step) => el('span', { className: `${step % 4 ? '' : 'beat'}${c === 'x' ? ` hit ${grade(bar, step)}` : ''}` })))));
+   const why = this.teacher.isConfigured && e.msg && !(this.mode === 'slow' && this.autoAnalyze) && button('Explain why', () => { why.disabled = true; this._askedAt = performance.now(); this.teacher.ask(e.msg, { think: this.mode === 'slow' }); });
+   return el('div', { className: 'teacher-msg rhythm' }, el('span', { className: 'tp-who', textContent: `${e.who} · rhythm` }), grid, el('p', { textContent: e.text }), el('p', { className: 'tp-fix', textContent: e.fix }),
+    e.habit ? el('p', { className: 'tp-dim', textContent: `This keeps happening: ${e.habit}.` }) : '',
+    actions(button(`Try this next: ${e.next.label}`, () => this._setExercise(e.next), true), why));
   }
   // Laya's step, and (in Fast mode) a way to ask System 2 why; highlighted when Laya judged it would help.
   if (e.kind === 'coach') {
@@ -893,7 +1002,7 @@ export class TeacherBridge {
   const c = this.convo.current, box = this.panel.querySelector('.tp-messages');
   this._resetTeacher();
   this.tracker.reset(); this._phraseQueue = []; this._coachHistory = []; this._stopPlayback(); this.voice?.cancelSpeech();
-  this._endLesson(false);
+  this._endLesson(false); this._setExercise(null);
   box.replaceChildren();
   c.entries.forEach(e => this._append(this._render(e)));
   const open = courseLesson(c.lesson);
@@ -1201,6 +1310,9 @@ export class TeacherBridge {
   list.replaceChildren();
   for (const unit of COURSE_UNITS) {
    list.append(el('h3', { className: 'tp-group-title', textContent: unit }));
+   // What the teacher has noticed about the student's timing, which it plans their exercises from.
+   const habits = unit === RHYTHM_UNIT && issues(this.rhythmProfile, timing.level);
+   if (habits?.length) list.append(el('p', { className: 'tp-habits', textContent: `Noticed in your playing: ${habits.map(h => h.text).join('; ')}. Your exercises lean on it.` }));
    for (const l of COURSE.filter(x => x.unit === unit)) {
     const done = this.courseDone.has(l.id);
     const item = el('button', { type: 'button', className: `tp-lesson-item${done ? ' done' : ''}${this.lesson === l ? ' current' : ''}` },

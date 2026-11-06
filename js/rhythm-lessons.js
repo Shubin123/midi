@@ -70,6 +70,7 @@ export const RHYTHM_LESSONS = [
   text: 'Tempo is speed: how fast the beats go by. Rhythm is pattern: how events are arranged in time, meaning which notes are long or short, where the accents fall, and where the silences go. The same rhythm can be played at any tempo and still be recognizable. The example plays one rhythm at 60 BPM, then twice at 120.',
   // 240 steps a minute: an eighth note is two steps at 60 BPM and one at 120.
   example: { steps: [...pattern(LONG_SHORT, 2), ...pattern(LONG_SHORT, 1), ...pattern(LONG_SHORT, 1)], bpm: 240 },
+  pattern: 'x...x.x.x.......', // long, short, short, long, rest: what a phrase is marked against on the sixteenth grid
   task: 'Play a rhythm of four notes or more, with long and short notes in it, then play the same rhythm again faster or slower. Any keys will do.',
   hint: 'Try long, short, short, long, as in the example. Keep the pattern and change only the speed: at least a third faster or slower the second time.',
   check: p => {
@@ -81,6 +82,7 @@ export const RHYTHM_LESSONS = [
   id: 'two_systems', unit: RHYTHM_UNIT, title: 'System 1 and System 2: tempo and rhythm',
   text: 'System 1 (fast, a bit less capable: here, Laya) sets the tempo: it responds to each beat almost instantly and keeps the interaction moving. System 2 (slow, more capable: Qwen, or the provider you connect) shapes the rhythm: it decides which moments deserve a pause, careful reasoning or emphasis, and which can be handled quickly. Why this split? Latency. Whatever model responds first decides how often anything happens at all, and in a live interaction that\'s the fast model. A slow model can\'t keep the beat without leaving gaps. Its strength is a wider view, so it\'s better at deciding where effort should go than at filling every moment. The design takeaway: let the fast model keep the groove going, and bring in the slow model only on the downbeats that matter. This is a common design pattern, not a law: you could flip it, so the slow model plans the pacing up front and the fast model fills in the details.',
   example: { steps: [...BEAT, ...BEAT], bpm: 120 },
+  pattern: 'x...x...x...x...x...x...x...x...',
   task: 'Keep the groove like System 1 and mark the downbeats like System 2: play a steady beat of eight notes, with the first and the fifth lower than the rest.',
   hint: 'Play evenly, like a clock ticking: low, high, high, high, low, high, high, high. A chord with a low note works on the downbeats too.',
   check: p => { const b = findMarkedBeat(p.notes, p.times); return !!b && `a steady beat at ${b.bpm} BPM, with its downbeats marked`; },

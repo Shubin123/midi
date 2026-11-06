@@ -116,6 +116,8 @@ export function createSequencer() {
  bpm.onchange=()=>{const v=Math.max(30,Math.min(300,Number(bpm.value)||120));bpm.value=v;window.synth.tempo=v;if(running)snapshot.tempo=v;};
  // The tempo set anywhere else (Tap BPM, − and +, the teacher) shows here, except while a tempo lane moves it.
  window.addEventListener('synth:tempo',e=>{if(!running)bpm.value=e.detail;});
+ // While it plays, the sequencer is the beat (js/timing-widget.js): its first step sounds at `at`.
+ const beatClock=(running,at=0)=>window.dispatchEvent(new CustomEvent('synth:beat-clock',{detail:{source:'sequencer',running,bpm:window.synth.tempo,at}}));
  const tick=()=>{
   const now=window.synth.context.currentTime;
   if(window.synth.context.state!=='running'){lastTime=now;return;}
@@ -127,8 +129,8 @@ export function createSequencer() {
   if(now>=releaseAt)release();
   if(step!==lastStep){if(lastStep>=0&&step<lastStep&&++bars>=barLimit){stop();return;}release();lastStep=step;notes.forEach((note,r)=>{if(pattern[r][step]){window.synth.noteOn(note);active.add(note);}});releaseAt=now+60/window.synth.tempo/4*0.72;if(step%4===0&&clicks)window.synth.click();cells.forEach(c=>c.classList.toggle('playing',Number(c.dataset.step)===step));position.textContent=`Step ${step+1} / 16 · ${window.synth.tempo.toFixed(1)} BPM`;}
  };
- const stop=()=>{if(!running)return;running=false;clearInterval(timer);release();Object.entries(snapshot).forEach(([target,value])=>apply(target,value));window.synth.resumeClick();phase=0;lastStep=-1;play.textContent='▶ Play';position.textContent='Stopped · 16 steps / 1 bar';cells.forEach(c=>c.classList.remove('playing'));barLimit=Infinity;clicks=true;const done=onStopped;onStopped=null;done?.();};
- const start=async(options={})=>{if(running)return;const context=window.synth.context;if(!context){position.textContent='Audio unavailable';return;}await context.resume();snapshot={tempo:window.synth.tempo};Object.keys(targets).filter(t=>t!=='tempo').forEach(t=>snapshot[t]=Number(document.getElementById(t).value));running=true;phase=0;lastStep=-1;lastTime=context.currentTime;window.synth.suspendClick();play.textContent='Ⅱ Stop';bars=0;barLimit=options.bars??Infinity;clicks=options.click??true;const stopped=new Promise(r=>onStopped=r);options.onStart?.();tick();timer=setInterval(tick,10);return stopped;};
+ const stop=()=>{if(!running)return;running=false;clearInterval(timer);release();beatClock(false);Object.entries(snapshot).forEach(([target,value])=>apply(target,value));window.synth.resumeClick();phase=0;lastStep=-1;play.textContent='▶ Play';position.textContent='Stopped · 16 steps / 1 bar';cells.forEach(c=>c.classList.remove('playing'));barLimit=Infinity;clicks=true;const done=onStopped;onStopped=null;done?.();};
+ const start=async(options={})=>{if(running)return;const context=window.synth.context;if(!context){position.textContent='Audio unavailable';return;}await context.resume();snapshot={tempo:window.synth.tempo};Object.keys(targets).filter(t=>t!=='tempo').forEach(t=>snapshot[t]=Number(document.getElementById(t).value));running=true;phase=0;lastStep=-1;lastTime=context.currentTime;window.synth.suspendClick();beatClock(true,window.synth.perfTimeOf(context.currentTime));play.textContent='Ⅱ Stop';bars=0;barLimit=options.bars??Infinity;clicks=options.click??true;const stopped=new Promise(r=>onStopped=r);options.onStart?.();tick();timer=setInterval(tick,10);return stopped;};
  play.onclick=()=>running?stop():start();
  sequence.querySelector('#seq-stop').onclick=stop;
  sequence.querySelector('#seq-clear').onclick=()=>{pattern=notes.map(()=>Array(16).fill(false));cells.forEach(c=>{c.classList.remove('on');c.setAttribute('aria-pressed','false');});persist();};

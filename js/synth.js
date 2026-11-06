@@ -321,7 +321,10 @@
 
             // Lets plug-in instruments follow every note source: keyboard, MIDI, sequencer, and looper.
             // `source` is the playNote/stopNote source ("midi", "computer", "sequencer", "looper-slot-0", ...).
-            function emitNote(noteString, velocity, on, source) { const nN=noteString.replace(/\d+$/,''); const midi=parseInt(noteString.match(/\d+$/)[0])*12+midiNoteNames.indexOf(nN); window.dispatchEvent(new CustomEvent('synth:note',{detail:{note:noteString,midi,velocity,on,source}})); }
+            // `time` is when the note was played, on the page's clock: a MIDI message's own time stamp when there is
+            // one (it is taken as the key goes down, before the page gets to it), else now.
+            let midiNoteTime = null;
+            function emitNote(noteString, velocity, on, source) { const nN=noteString.replace(/\d+$/,''); const midi=parseInt(noteString.match(/\d+$/)[0])*12+midiNoteNames.indexOf(nN); window.dispatchEvent(new CustomEvent('synth:note',{detail:{note:noteString,midi,velocity,on,source,time:source==='midi'&&midiNoteTime?midiNoteTime:performance.now()}})); }
 
             function emergencyStopAllSounds() {
                 console.warn("PANIC: Stopping all sounds!"); 
@@ -386,7 +389,7 @@
                     unit.oscillators.forEach(osc => { try { osc.stop(cut + 0.05); } catch (e) {} });
                 });
 
-                if (metronomeIntervalId) { clearInterval(metronomeIntervalId); metronomeIntervalId = null; } 
+                stopMetronome();
                 metronomeEnabled = false; if(metronomeToggle) metronomeToggle.checked = false; if(metronomeLed) metronomeLed.classList.remove('active'); 
                 console.log("All sounds and states (looper, metronome, sustain) reset. Looper data preserved."); 
             }
@@ -395,7 +398,10 @@
             let activeLEDIndex=0;const genLeds=[document.getElementById('led1'),document.getElementById('led2'),document.getElementById('led3')]; function cycleLEDs(){genLeds.forEach(l=>l.classList.remove('active'));if(genLeds[activeLEDIndex])genLeds[activeLEDIndex].classList.add('active');activeLEDIndex=(activeLEDIndex+1)%genLeds.length;}
             function resizeCanvas() { if (visualizerCanvas) { visualizerCanvas.width = visualizerCanvas.clientWidth; visualizerCanvas.height = visualizerCanvas.clientHeight; if (audioContext && analyser) { const sR = audioContext.sampleRate; const bTM = (analyser.fftSize / 2 / sR * 1000).toFixed(0); const fBTM = (analyser.fftSize / sR * 1000).toFixed(0); const tAL = visualizerCanvas.parentElement.querySelector('.visualizer-time-axis').children; if (tAL[1]) tAL[1].textContent = `~${bTM}ms`; if (tAL[2]) tAL[2].textContent = `~${fBTM}ms`; } } if (synthesiaToggle && synthesiaToggle.checked) createSynthesiaGrid(); }
             function setupMIDI(){ if(navigator.requestMIDIAccess)navigator.requestMIDIAccess({sysex:false}).then(onS,onF);else console.warn("No MIDI support.");} function onS(mA){const iN=mA.inputs.values();for(let n=iN.next();n&&!n.done;n=iN.next())n.value.onmidimessage=onM;} function onF(m){console.error(`Failed MIDI: ${m}`);}
-            function onM(msg){ const[cmd,nN,vR]=msg.data; const nS=midiNoteToNoteString(nN); const vL=vR/127; const kE=keyboardContainer.querySelector(`[data-midi="${nN}"]`); if((cmd&0xF0)===0x90&&vR>0){ playNote(nS,vL,"midi",true); if(kE)kE.classList.add('active');}else if((cmd&0xF0)===0x80||((cmd&0xF0)===0x90&&vR===0)){ stopNote(nS,"midi"); if(kE && !sustainPedalActive)kE.classList.remove('active');}}
+            // MIDI clock (tick, start, continue, stop) goes to the beat clock as synth:midi-clock; notes play.
+            const MIDI_CLOCK = { 0xF8: 'tick', 0xFA: 'start', 0xFB: 'continue', 0xFC: 'stop' };
+            function onM(msg){ if (msg.data[0] >= 0xF8) { const type = MIDI_CLOCK[msg.data[0]]; if (type) window.dispatchEvent(new CustomEvent('synth:midi-clock', { detail: { type, time: msg.timeStamp || performance.now() } })); return; } midiNoteTime = msg.timeStamp || null; onNoteMessage(msg); midiNoteTime = null; }
+            function onNoteMessage(msg){ const[cmd,nN,vR]=msg.data; const nS=midiNoteToNoteString(nN); const vL=vR/127; const kE=keyboardContainer.querySelector(`[data-midi="${nN}"]`); if((cmd&0xF0)===0x90&&vR>0){ playNote(nS,vL,"midi",true); if(kE)kE.classList.add('active');}else if((cmd&0xF0)===0x80||((cmd&0xF0)===0x90&&vR===0)){ stopNote(nS,"midi"); if(kE && !sustainPedalActive)kE.classList.remove('active');}}
             // The falling-notes area as a piano roll: a lane over every key, placed exactly as falling notes are
             // (proportionally from the key's place on the keyboard), black-key lanes shaded. Redrawn whenever the
             // keyboard changes size or keys.
@@ -512,15 +518,25 @@
             }
 
             function updateBPMDisplay() { if(bpmDisplay) bpmDisplay.textContent = currentBPM; window.dispatchEvent(new CustomEvent('synth:tempo',{detail:currentBPM})); }
-            function playMetronomeClickSound() { if (!audioContext || !metronomeClickBuffer) return; const s=audioContext.createBufferSource(); s.buffer=metronomeClickBuffer; const g=audioContext.createGain(); g.gain.value=0.25; s.connect(g).connect(audioContext.destination); s.start(audioContext.currentTime);}
-            function metronomeTick() { if (!metronomeEnabled || !metronomeLed) return; metronomeLed.classList.toggle('active'); playMetronomeClickSound(); setTimeout(() => { if(metronomeEnabled && metronomeLed) metronomeLed.classList.remove('active');}, 50); }
-            function startMetronome() { if (!audioContext) initAudio(); if (!audioContext) { alert("Audio not ready."); if(metronomeToggle)metronomeToggle.checked=false; return; } if (metronomeIntervalId) clearInterval(metronomeIntervalId); const iMs=(60/currentBPM)*1000; metronomeIntervalId=setInterval(metronomeTick,iMs); if(metronomeLed)metronomeLed.classList.remove('active'); metronomeTick();}
-            function stopMetronome() { if(metronomeIntervalId)clearInterval(metronomeIntervalId); metronomeIntervalId=null; if(metronomeLed)metronomeLed.classList.remove('active');}
+            // The metronome's clicks are scheduled on the audio clock, a beat apart from when it started, so they
+            // land exactly on the beat that the timing strip and the teacher measure against (js/timing-widget.js),
+            // however busy the page is: a timer only looks 100 ms ahead every 25 ms. The beat clock is told when
+            // the first click will be heard (synth:beat-clock), and again whenever the metronome starts over.
+            let metronomeOrigin = 0, metronomeNext = 0, metronomeSources = [];
+            // When something scheduled at audio time t will be heard, on the page's clock (performance.now()).
+            function perfTimeOf(t) { const ts = audioContext.getOutputTimestamp?.(); if (ts && ts.performanceTime > 0) return ts.performanceTime + (t - ts.contextTime) * 1000; return performance.now() + (t - audioContext.currentTime + (audioContext.outputLatency || audioContext.baseLatency || 0)) * 1000; }
+            function announceBeat(source, running, at = 0) { window.dispatchEvent(new CustomEvent('synth:beat-clock', { detail: { source, running, bpm: currentBPM, at } })); }
+            function playMetronomeClickSound(at) { if (!audioContext || !metronomeClickBuffer) return; const s=audioContext.createBufferSource(); s.buffer=metronomeClickBuffer; const g=audioContext.createGain(); g.gain.value=0.25; s.connect(g).connect(audioContext.destination); s.start(at ?? audioContext.currentTime); if (at) { metronomeSources.push(s); s.onended = () => { metronomeSources = metronomeSources.filter(x => x !== s); }; } }
+            function metronomeTick(at) { if (!metronomeEnabled || !metronomeLed) return; playMetronomeClickSound(at); const wait = at ? Math.max(0, (at - audioContext.currentTime) * 1000) : 0; setTimeout(() => { if (!metronomeEnabled || !metronomeLed) return; metronomeLed.classList.add('active'); setTimeout(() => metronomeLed?.classList.remove('active'), 50); }, wait); }
+            function scheduleClicks() { const p = 60 / currentBPM; while (metronomeOrigin + metronomeNext * p < audioContext.currentTime + 0.1) { metronomeTick(metronomeOrigin + metronomeNext * p); metronomeNext++; } }
+            function startMetronome() { if (!audioContext) initAudio(); if (!audioContext) { alert("Audio not ready."); if(metronomeToggle)metronomeToggle.checked=false; return; } stopMetronome(false); metronomeOrigin = audioContext.currentTime + 0.05; metronomeNext = 0; metronomeIntervalId = setInterval(scheduleClicks, 25); scheduleClicks(); announceBeat('metronome', true, perfTimeOf(metronomeOrigin)); }
+            function stopMetronome(announce = true) { if(metronomeIntervalId)clearInterval(metronomeIntervalId); metronomeIntervalId=null; if(metronomeLed)metronomeLed.classList.remove('active'); metronomeSources.forEach(s => { try { s.stop(); } catch (e) {} }); metronomeSources = []; if (announce) announceBeat('metronome', false); }
             function toggleMetronome() { if(!metronomeToggle) return; metronomeEnabled = metronomeToggle.checked; if (metronomeEnabled) startMetronome(); else stopMetronome();}
             function adjustBPM(amount) { currentBPM=Math.max(MIN_BPM,Math.min(MAX_BPM,currentBPM+amount)); updateBPMDisplay(); if(metronomeEnabled){stopMetronome();startMetronome();}}
             function handleTapTempo() { if(!audioContext)initAudio(); if(!audioContext)return; const n=performance.now(); if(tapTempoLastTap&&(n-tapTempoLastTap>MAX_TAP_INTERVAL)){tapTempoTimes.length=0;} tapTempoTimes.push(n); tapTempoLastTap=n; if(tapTempoTimes.length>4)tapTempoTimes.shift(); if(tapTempoTimes.length>=2){let aI=0; for(let i=1;i<tapTempoTimes.length;i++){aI+=tapTempoTimes[i]-tapTempoTimes[i-1];} aI/=(tapTempoTimes.length-1); if(aI>0){currentBPM=Math.round(60000/aI);currentBPM=Math.max(MIN_BPM,Math.min(MAX_BPM,currentBPM)); updateBPMDisplay(); if(metronomeEnabled){stopMetronome();startMetronome();}}}}
             function getBeatDurationMs() { return (60 / currentBPM) * 1000; }
-            function getTimeUntilNextBeatMs() { if (!metronomeEnabled || !audioContext || audioContext.state !== 'running') return 0; const bDS = 60/currentBPM; const cTIB = (audioContext.currentTime % bDS); return (bDS - cTIB) * 1000;}
+            // Armed loops start on the metronome's own next beat.
+            function getTimeUntilNextBeatMs() { if (!metronomeEnabled || !audioContext || audioContext.state !== 'running') return 0; const bDS = 60/currentBPM; const cTIB = ((audioContext.currentTime - metronomeOrigin) % bDS + bDS) % bDS; return (bDS - cTIB) * 1000;}
 
             // --- Launchpad Looper Functions ---
             function initializeLoopSlots() {
@@ -990,7 +1006,9 @@ window.synth = {
  get instrumentInput() { return masterGain; },
  ensureAudio: () => { if (!audioContext) initAudio(); return audioContext; },
  get tempo() { return currentBPM; },
- set tempo(value) { currentBPM = Math.max(30, Math.min(300, value)); updateBPMDisplay(); if (metronomeIntervalId) { stopMetronome(); startMetronome(); } }, // a clicking metronome keeps up
+ set tempo(value) { currentBPM = Math.max(30, Math.min(300, value)); updateBPMDisplay(); if (metronomeIntervalId) startMetronome(); }, // a clicking metronome keeps up
+ get metronome() { return metronomeEnabled && !!metronomeIntervalId; },
+ perfTimeOf: t => perfTimeOf(t),
  noteOn: note => playNote(note, 0.65, 'sequencer', true),
  noteOff: note => stopNote(note, 'emergency'),
  click: () => { if (metronomeEnabled) metronomeTick(); },

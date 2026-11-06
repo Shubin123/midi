@@ -1,8 +1,9 @@
 // Every test, in parallel, with one answer: node tests/all.mjs. It runs each tests/*.mjs suite in its own
-// process (tests/waveforms.mjs drives headless Chrome; tests/native-id.mjs only runs on macOS, where its
-// tools are) and exits non-zero if anything failed or could not run. Takes about as long as the slowest suite.
+// process (tests/native-id.mjs only runs on macOS, where its tools are) and exits non-zero if anything failed or
+// could not run. The suites that drive headless Chrome (tests/support/browser.mjs) run at most three at a time:
+// six at once starved the live audio capture in tests/waveforms.mjs of CPU, and its fingerprints moved.
 import { spawn } from 'node:child_process';
-import { readdirSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { platform } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +13,14 @@ const ONLY_ON = { 'native-id.mjs': 'darwin' };
 const suites = readdirSync(DIR).filter(f => f.endsWith('.mjs') && f !== 'all.mjs').sort();
 const t0 = Date.now();
 
-const run = file => new Promise(resolve => {
+const BROWSERS_AT_ONCE = 3;
+const browser = new Set(suites.filter(f => readFileSync(join(DIR, f), 'utf8').includes('support/browser.mjs')));
+let running = 0;
+const queue = [];
+const slot = () => (running < BROWSERS_AT_ONCE ? (running++, Promise.resolve()) : new Promise(r => queue.push(r)).then(() => { running++; }));
+const free = () => { running--; queue.shift()?.(); };
+const run = async file => { if (!browser.has(file)) return runOne(file); await slot(); try { return await runOne(file); } finally { free(); } };
+const runOne = file => new Promise(resolve => {
  if (ONLY_ON[file] && ONLY_ON[file] !== platform()) { resolve({ file, status: 'skip', why: `needs ${ONLY_ON[file]}` }); return; }
  const start = Date.now(), child = spawn(process.execPath, [join(DIR, file)], { stdio: ['ignore', 'pipe', 'pipe'] });
  let out = '';

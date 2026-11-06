@@ -88,3 +88,22 @@ body{padding:24px}h1{font-size:1.5rem;letter-spacing:.3px;text-align:left;margin
 html:not(.panic-button-on) #stopAllSoundsButton{display:none}
 html:not(.teach-buttons-on) .teach-btn{display:none!important}
 .widget-menu[open]{z-index:10002} /* above the teacher's pull tab */
+/* Timing (js/timing-widget.js): the hit line takes the grade of each note as it lands, and the strip under the
+   keys scrolls the last two bars past, a dot per note joined to its beat line, with the tempo beside it. */
+#keyboard-module .synthesia-hit-line{transition:background-color .25s,box-shadow .25s}
+#keyboard-module .synthesia-hit-line.hit-good{background:#6bcb77!important;box-shadow:0 0 14px #6bcb77!important;transition:none}
+#keyboard-module .synthesia-hit-line.hit-ok{background:#f4a261!important;box-shadow:0 0 14px #f4a261!important;transition:none}
+#keyboard-module .synthesia-hit-line.hit-off{background:#ff6b6b!important;box-shadow:0 0 14px #ff6b6b!important;transition:none}
+.keyboard-toolbar select{font:inherit;font-size:12px;background:var(--bg-color);color:var(--text-color);border:1px solid var(--border-color);border-radius:6px;padding:3px 6px}
+.keyboard-toolbar label[hidden]{display:none}
+#keyboard-module .keyboard{margin-bottom:10px}
+.timing-strip{margin:0 16px 16px;border:1px solid var(--border-color);border-radius:10px;background:color-mix(in srgb,var(--bg-color) 55%,transparent);overflow:hidden}
+.timing-strip[hidden]{display:none}
+.timing-canvas{display:block;width:100%;height:44px}
+.timing-readout{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;padding:5px 10px;border-top:1px solid var(--border-color);font-size:11px;color:var(--text-muted-color);min-height:28px}
+.timing-tempo{font-weight:700;color:var(--text-color)}
+.timing-tempo[data-state=rushing],.timing-tempo[data-state=dragging]{color:#f4a261}
+.timing-nudge{margin-left:auto;font-weight:600;color:var(--accent-color)}
+.timing-nudge[hidden]{display:none}
+.timing-nudge[data-who]:not([data-who=""])::before{content:attr(data-who) " · ";font-weight:400;color:var(--text-muted-color)}
+.midi-sync{display:flex;align-items:center;gap:6px;font-size:12px;margin-top:8px}

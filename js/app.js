@@ -5,6 +5,7 @@ import { createPluginHost } from './plugin-host.js';
 import { createIoWidget } from './io-widget.js';
 import { mountBank } from './oscillators.js';
 import { addAppSettings } from './settings.js';
+import { mountTiming } from './timing-widget.js';
 // The oscillator bank is filled in now, before the synth (js/synth.js) reads it on load.
 window.oscillatorBank = mountBank(document.getElementById('oscillators-group'));
 window.addEventListener('load',()=>{
@@ -16,6 +17,7 @@ window.addEventListener('load',()=>{
  const keyboardBar=document.createElement('div');keyboardBar.className='keyboard-toolbar';keyboardBar.append(fallingToggle);
  const keyboard=document.createElement('section');keyboard.id='keyboard-module';keyboard.dataset.title='Keyboard';keyboard.dataset.wide='true';keyboard.className='wide';
  keyboard.append(keyboardBar,document.querySelector('#synthesiaContainer'),document.querySelector('#keyboard'));workspace.append(keyboard);
+ mountTiming(keyboard,document.getElementById('metronome-tempo-group')); // the timing strip under the keys, and Sync to MIDI clock
  const {sequence,automation,api}=createSequencer();workspace.append(sequence,automation);
  document.querySelectorAll('.controls > .control-group').forEach((el,i)=>{el.id ||= 'settings-module-'+i;workspace.append(el);});
  const wrap=(selector,id,title)=>{const content=document.querySelector(selector);const panel=document.createElement('section');panel.id=id;panel.dataset.title=title;panel.dataset.wide='true';panel.className='wide';panel.append(content);workspace.append(panel);};

@@ -74,8 +74,9 @@ seconds.
 
 ### Checking for regressions
 
-`node tests/all.mjs` runs every suite in parallel (about twenty-five seconds,
-most of it the widget drags) and fails if any does. The browser suites share
+`node tests/all.mjs` runs every suite in parallel (about thirty seconds, most
+of it the widget drags), the ones that drive headless Chrome at most three at
+a time, and fails if any does. The browser suites share
 `tests/support/browser.mjs`, which serves the repo and drives headless Chrome. The waveform checks don't just look for "about right": each one
 also leaves a **fingerprint** in `tests/waveforms.golden.json`, so a change
 anywhere in the sound shows up even when it stays inside the checks' own
@@ -132,7 +133,76 @@ armed slot starts on the downbeat rather than the instant you clicked.
 
 Metronome with an LED tick, BPM from 30 to 300 via increment buttons, and a tap
 tempo button that averages recent taps and discards a stale series after a 3 s
-gap. The click itself is a short synthesised buffer rather than a sample.
+gap. The click itself is a short synthesised buffer rather than a sample,
+scheduled on the audio clock a beat apart (a timer looks 100 ms ahead every
+25 ms), so it lands exactly on the beat however busy the page is; armed loops
+start on its beats.
+
+### Beat, tempo and rhythm
+
+Three layers (`js/timing.js`, drawn by `js/timing-widget.js`), the first two
+with no model at all:
+
+- **Beat.** One clock for everything, kept by whoever keeps the beat: the
+  metronome (from when its first click is heard, output latency included),
+  the sequencer while it plays (its tempo lane moves it without a jump), an
+  incoming **MIDI clock** when **Sync to MIDI clock** is on in Metronome &
+  Tempo (24 ticks a beat; tempo and beat from a line fitted through the last
+  four beats of ticks, so USB jitter doesn't show; Start, Stop and Continue;
+  the session tempo and a running metronome follow it), or, with none of
+  those, **your own pulse**, which follows you as you speed up or slow down,
+  so rubato is never held against you. Every note gets its offset from the
+  nearest beat or eighth (sixteenth on Hard), using a MIDI message's own time
+  stamp, and a grade: the hit line above the keys flashes green, amber or
+  red. **Difficulty** (Keyboard toolbar) sets the windows: Easy ±50/100 ms,
+  Normal ±30/60 ms, Hard ±15/35 ms. Under the keys, a **timing strip**
+  scrolls the last two bars, a dot per note joined to the beat line it was
+  nearest, and a **tempo readout** shows the target and your tempo with an
+  arrow when you drift (*♩ 100 · metronome   you 107 ↑*). **Timing** in the
+  toolbar switches it all off.
+- **Tempo.** Your tempo comes from the gaps between notes (a chord is one
+  event), each gap read as the nearest note value of the beat, so quarters
+  and eighths mixed still give one tempo. Rushing or dragging beyond 4% for
+  four notes running is said once, and "back" when you return. System 1 says
+  it: Laya picks the words of a short nudge from written ones ("Easy, you're
+  speeding up: 107 against 100."), shown under the keys and spoken in talk
+  mode, at most one a bar and never closer than four seconds; without Laya,
+  the first one is said.
+- **Rhythm.** Playing to a beat (or for an exercise or a rhythm lesson), a
+  rest of about a bar ends the phrase, and the teacher puts it on the
+  sixteenth grid: a **rhythm card** shows the grid bar by bar (each hit in its
+  grade's colour), the numbers (how many within the window, on average how
+  early or late, which beat slips, straight or swung and by how much, how many
+  syncopations, and against an exercise how many hits of the pattern), one
+  thing to do about it, what keeps happening, and **Try this next**: the next
+  exercise, from the same rhythm slower, quarters or eighths, the beat that
+  keeps slipping, off-beats, a 3-3-2 or faster. Laya picks it from the three
+  that fit. Trying it sets the tempo, switches the metronome on, plays the
+  pattern from the next bar, and marks the phrases after it against it until
+  it is ended. With System 2 connected, the phrase's **[RHYTHM]** summary (the
+  grid and the numbers, the target, the history and System 1's step, not the
+  raw notes) goes with the phrase it already explains, so there is no extra
+  request; its reply can name the next exercise
+  (`{"exercise": {"pattern": "x...x...x.x.x...", "bpm": 90}}`), which becomes
+  its own Try this next. **Explain why** asks for it in Fast mode.
+
+What keeps happening is kept in the browser as a small profile: each beat's
+offset over the latest phrases, and how often you rush or drag. Once a beat
+is off the same way in four phrases ("consistently late on beat 3") the
+Course tab says so, the exercises lean on that beat, and System 2 is told.
+
+`node tests/timing.mjs` checks the arithmetic on note times made to be exactly
+as early, late, swung or rushed as each check needs: offsets exact at 60, 120
+and 180 BPM; a MIDI clock with ±2 ms jitter read within 0.2 BPM and 3 ms;
+tempo from mixed note values; rushing and dragging said once and an
+accelerando in free play never; the grid, swing (a dotted rhythm isn't swing),
+syncopation and the target; the profile and the exercises.
+`node tests/timing-panel.mjs` does it in the app: the metronome, the sequencer
+and a MIDI clock taking turns keeping the beat, grades on the hit line and the
+strip, a nudge, a rhythm card and its exercise marked against, System 2 reading
+the [RHYTHM] summary and setting an exercise, and the Course tab's profile.
+Generating MIDI out to the same port, so a student can play along with
+generated rhythms, is not built yet.
 
 ### Visuals
 
@@ -252,6 +322,8 @@ Source files:
 
 - `js/synth.js`: existing synthesis, keyboard, MIDI, and loop recorder engine
 - `js/sequencer.js`: sequencer transport and automation editor
+- `js/timing.js`, `js/timing-widget.js`: the beat clock, tempo and rhythm, the timing strip and Sync to MIDI clock
+- `js/commands.js`: requests to change a setting, read without a model
 - `js/automation.js`: automation targets, interpolation, and parameter application
 - `js/widgets.js`: responsive widget layout, dragging, and visibility
 - `js/storage.js`: browser persistence

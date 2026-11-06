@@ -5,6 +5,7 @@
 // object with `generate(messages, { think }) -> text` and an optional `interrupt()`.
 import { parseChordName, parseScaleName, midiFromName, chordMidi, scaleRunMidi } from './pitch-analyzer.js';
 import { exampleFromProse } from './requests.js';
+import { readPattern } from './timing.js';
 
 const MAX_HISTORY = 30; // messages, dropped oldest-first in user/assistant pairs
 const MAX_NOTES = 40;
@@ -13,6 +14,8 @@ const MAX_NOTES = 40;
 export const SYSTEM_PROMPT = `You are a friendly music theory teacher inside a live piano app. Guide the student one small step at a time.
 
 Messages starting with [PLAYED] describe a phrase the student just played: the notes in order (MIDI numbers, 60 is middle C), the pitch classes, the app's scale or mode guess, and any chords. The guess comes from the pitch set alone; correct it if the order or the bass points to another tonic. A line starting with "Coach:" is the step the app is suggesting to the student next; they have not done it yet. Build on it and explain why it helps, unless it is clearly wrong. Any other message is the student's own question.
+
+Messages with a [RHYTHM] block sum up the timing of a phrase played to a beat: the notes on a sixteenth grid bar by bar (x a note, . a rest; four characters a beat), the tempo, how early or late they were on average (negative is early) and how uneven, swing and syncopation, the pattern they are practising if any, what keeps happening across phrases, and the app's own step. Say what happened rhythmically and why it matters, give one concrete correction, and end with the next exercise as {"exercise": {"pattern": "<16 or 32 characters of x and .>", "bpm": <tempo>}}.
 
 Reply in plain text, two to four short sentences, no Markdown, and never repeat the [PLAYED] or Coach: lines. Say what they played (or answer the question), explain the idea, and end with one concrete thing to try next.
 
@@ -37,7 +40,7 @@ export function stripThinking(text) {
  return s.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 }
 
-const KEYS = ['chords', 'scale', 'notes', 'play', 'show', 'set'];
+const KEYS = ['chords', 'scale', 'notes', 'play', 'show', 'set', 'exercise'];
 // The last balanced {...} in the reply that parses as JSON and names something to play.
 function findExample(reply) {
  for (let start = reply.lastIndexOf('{'); start >= 0; start = reply.lastIndexOf('{', start - 1)) {
@@ -116,6 +119,9 @@ export function parsePlayCommand(raw) {
  const set = obj.set && typeof obj.set === 'object' && !Array.isArray(obj.set) ? Object.entries(obj.set).filter(([k, v]) => k.trim() && ['string', 'number', 'boolean'].includes(typeof v)).slice(0, 6) : [];
  const prose = !steps.length && !obj.show && !obj.set && SUGGESTS.test(text) ? exampleFromProse(text) : null;
  const out = { text, play: steps.length ? { steps, bpm, label: labels.join(', ') || `${steps.flat().length} notes` } : prose };
+ // A rhythm exercise: a pattern of one or two bars on the sixteenth grid, at a tempo.
+ const pattern = readPattern(obj.exercise?.pattern);
+ if (pattern) { const at = Number.isFinite(Number(obj.exercise.bpm)) ? Math.max(40, Math.min(220, Math.round(Number(obj.exercise.bpm)))) : 90; out.exercise = { id: 'model', pattern, bpm: at, label: `${pattern.match(/.{16}/g).join(' | ')} at ${at} BPM` }; }
  if (show.length || set.length) out.actions = { show, set };
  return out;
 }
@@ -142,7 +148,8 @@ export class AiTeacher {
  // opts.think asks a reasoning model to think first (System 2); opts.coach adds the System 1 suggestion.
  // opts.context is sent with this one message (the workspace as it is now) but not kept in the history.
  // opts.quick is an answer the app already gave: the model replies only if it is wrong (else onConfirm()).
- analyzePhrase(a, opts = {}) { return this._send(phraseMessage(a, opts.coach), opts); }
+ // opts.rhythm is the phrase's [RHYTHM] summary (js/timing.js), read with it in the same request.
+ analyzePhrase(a, opts = {}) { return this._send(`${phraseMessage(a, opts.coach)}${opts.rhythm ? `\n${opts.rhythm}` : ''}`, opts); }
  ask(q, opts = {}) { return this._send(q, opts); }
  reset() { this._generation++; this.conversationHistory = []; this.engine?.interrupt?.(); }
 
@@ -185,10 +192,10 @@ export class AiTeacher {
   }
   history.push({ role: 'assistant', content: reply });
   this.onStatus?.('ready');
-  const { text, play, actions = null } = parsePlayCommand(reply);
+  const { text, play, actions = null, exercise = null } = parsePlayCommand(reply);
   if (actions && (this._toolsUsed?.has('set_control') || this._toolsUsed?.has('arrange_widget'))) actions.set = []; // done already, by the tools
   const seconds = (performance.now() - started) / 1000;
-  this.onResponse?.(text, play, { think, seconds, actions });
+  this.onResponse?.(text, play, { think, seconds, actions, exercise });
   return { text, playCmd: play, seconds, actions };
  }
 }
