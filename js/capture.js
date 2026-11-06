@@ -2,6 +2,7 @@
 // Model: input -> static level-dependent curve -> stereo impulse response (a Hammerstein system).
 // The impulse response comes from regularized FFT deconvolution of an exponential sweep; the curve from stepped sine levels.
 import { encodeAudio } from './audio-files.js';
+import { FFT } from './listen-dsp.js';
 export const LAYOUT = { preroll: 0.5, sweep: 10, tail: 4, step: 0.25, levels: [-42, -39, -36, -33, -30, -27, -24, -21, -18, -15, -12, -9, -6, -3, 0], probeHz: 100, post: 1, sweepDb: -6, f1: 20 };
 const dbToGain = db => 10 ** (db / 20);
 const gainToDb = g => 20 * Math.log10(Math.max(g, 1e-12));
@@ -23,26 +24,13 @@ function sweep(sampleRate) {
  return x;
 }
 
-// In-place iterative radix-2 FFT on Float64Arrays.
+// In-place FFT on Float64Arrays: the one the Listening widget hears with (js/listen-dsp.js), one per size; the
+// inverse is scaled by 1/n.
+const ffts = new Map();
 function fft(re, im, inverse = false) {
  const n = re.length;
- for (let i = 1, j = 0; i < n; i++) {
-  let bit = n >> 1;
-  for (; j & bit; bit >>= 1) j ^= bit;
-  j ^= bit;
-  if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; }
- }
- for (let len = 2; len <= n; len <<= 1) {
-  const angle = (inverse ? 2 : -2) * Math.PI / len, wr = Math.cos(angle), wi = Math.sin(angle), half = len >> 1;
-  for (let i = 0; i < n; i += len) {
-   let cr = 1, ci = 0;
-   for (let k = 0; k < half; k++) {
-    const a = i + k, b = a + half, tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr;
-    re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
-    const next = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = next;
-   }
-  }
- }
+ if (!ffts.has(n)) ffts.set(n, new FFT(n));
+ ffts.get(n).transform(re, im, inverse);
  if (inverse) for (let i = 0; i < n; i++) { re[i] /= n; im[i] /= n; }
 }
 

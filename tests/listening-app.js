@@ -484,6 +484,67 @@ export async function runTools() {
   g.fillText = fill;
   sel.value = 'master'; sel.dispatchEvent(new Event('change', { bubbles: true }));
  });
+ await check('Import / Export › Transcribe to MIDI: a sung clip\'s notes go into the chosen loop slot, or the step sequencer\'s first bar, and a .mid is offered', async expect => {
+  const { encodeAudio } = await import('../js/audio-files.js');
+  const ref = melody(100), wav = encodeAudio([sing(ref, { sampleRate: 48000 })], 48000, 'wav24');
+  const dt = new DataTransfer(); dt.items.add(new File([wav], 'Twinkle.wav', { type: 'audio/wav' }));
+  $('#io-module').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true }));
+  const clip = await until(() => [...document.querySelectorAll('#io-module .io-clip')].find(c => /Twinkle/.test(c.textContent)), 5000);
+  expect(clip, 'the clip didn\'t arrive');
+  if (!clip) return;
+  const target = $('#io-module select[aria-label="MIDI import destination"]');
+  target.value = 'loop2'; target.dispatchEvent(new Event('change'));
+  [...clip.querySelectorAll('button')].find(b => b.textContent === 'Transcribe to MIDI').click();
+  await until(() => clip.dataset.transcribed, 5000);
+  expect(clip.dataset.transcribed === ref.map(n => n.midi).join(' '), `heard ${clip.dataset.transcribed}`);
+  const toNote = m => ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'][m % 12] + Math.floor(m / 12);
+  const ons = window.synth.loops()[2].events.filter(e => e.type === 'noteon');
+  expect(ons.map(e => e.note).join(' ') === ref.map(n => toNote(n.midi)).join(' '), `loop slot 3 has ${ons.map(e => e.note).join(' ')}`);
+  const gaps = ons.slice(1).map((e, i) => e.time - ons[i].time), want = ref.slice(1).map((n, i) => n.start - ref[i].start);
+  expect(gaps.every((g, i) => Math.abs(g - want[i]) < 25), `the notes are ${gaps.map(Math.round).join(' ')} ms apart, not ${want.join(' ')}`);
+  expect(![...clip.querySelectorAll('button')].find(b => b.textContent === 'Download .mid').hidden, 'no Download .mid');
+  target.value = 'seq'; target.dispatchEvent(new Event('change'));
+  [...clip.querySelectorAll('button')].find(b => b.textContent === 'Transcribe to MIDI').click();
+  await until(() => /step sequencer/.test($('#io-module [role=status]').textContent), 5000);
+  expect(/Placed \d+ of 12 notes/.test($('#io-module [role=status]').textContent), `status: ${$('#io-module [role=status]').textContent}`);
+  window.synth.setLoop(2, [], 0);
+ });
+
+ await check('Import / Export › Export MIDI of the Performance heard by Listening: the notes sung, on the metronome\'s beats', async expect => {
+  const { readMidi } = await import('../js/midi-file.js');
+  window.synth.tempo = 90;
+  const m = $('#metronomeToggle'); if (!m.checked) m.click();
+  await wait(300);
+  const clock = timing.clock, b = Math.ceil(clock.beatAt(performance.now()) / 4 + 1) * 4, T0 = clock.timeOf(b) - 200, beat = clock.period;
+  const plan = [[0, 60], [1, 62], [2, 64], [2.5, 65], [3, 67]];
+  await listening.listenTo(new GainNode(ctx), 'a test clip');
+  listening.take.length = 0;
+  const { done } = await playAt(sing(plan.map(([k, midi]) => ({ midi, start: 200 + k * beat, end: 200 + k * beat + beat * 0.4 })), { sampleRate: rate, vibrato: 0 }), T0);
+  await done; await wait(200);
+  let blob = null; const make = URL.createObjectURL; URL.createObjectURL = x => { blob = x; return make.call(URL, x); };
+  const src = $('#io-module select[aria-label="Bounce source"]'); src.value = 'listen'; src.dispatchEvent(new Event('change'));
+  [...document.querySelectorAll('#io-module button')].find(x => x.textContent === 'Export MIDI').click();
+  URL.createObjectURL = make;
+  expect(blob, `nothing was exported: ${$('#io-module [role=status]').textContent}`);
+  if (blob) {
+   const song = readMidi(new Uint8Array(await blob.arrayBuffer()));
+   expect(song.notes.map(n => n.midi).join(' ') === plan.map(p => p[1]).join(' '), `the file has ${song.notes.map(n => n.midi).join(' ')}`);
+   expect(Math.abs(song.bpm - 90) < 0.2, `at ${song.bpm} BPM`);
+   const starts = song.notes.map(n => n.start), errs = starts.map((s0, i) => (s0 - plan[i][0]) * beat);
+   expect(errs.every(e => Math.abs(e) < 20), `the notes are ${errs.map(Math.round).join(', ')} ms off their beats in the file`);
+  }
+  src.value = 'seq'; src.dispatchEvent(new Event('change'));
+  if (m.checked) m.click();
+ });
+
+ await check('the plug-in capture measures through the same FFT: a 10 ms delay at half gain is heard as 10 ms of latency, almost exactly', async expect => {
+  const { testSignal, analyze } = await import('../js/capture.js');
+  const x = testSignal(48000), d = 480, y = new Float32Array(x.length);
+  for (let i = d; i < x.length; i++) y[i] = 0.5 * x[i - d];
+  const r = await analyze([y, y], 48000);
+  expect(Math.abs(r.report.latencyMs - 10) < 0.1, `latency ${r.report.latencyMs.toFixed(2)} ms`);
+  expect(r.report.accuracy > 0.99, `accuracy ${r.report.accuracy.toFixed(4)}`);
+ });
  listening.stop();
  return { checks };
 }

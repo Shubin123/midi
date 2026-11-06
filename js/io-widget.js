@@ -1,7 +1,11 @@
 // Import / Export: records or bounces the master output to WAV/AIFF, writes and reads Standard MIDI Files,
 // and imports audio clips that can be auditioned, run through the effect chain and converted.
 import { FORMATS, AUDIO_EXTENSIONS, encodeAudio, decodeAudioFile } from './audio-files.js';
-import { writeMidi, readMidi } from './midi-file.js';
+import { writeMidi, readMidi, songFromNotes } from './midi-file.js';
+import { transcribe } from './listen-dsp.js';
+import { pulseFromOnsets } from './timing.js';
+import { listening } from './listening.js';
+import { timing } from './timing-widget.js';
 import { read, save } from './storage.js';
 import { el, card } from './plugin-ui.js';
 
@@ -17,7 +21,7 @@ export function createIoWidget(sequencer) {
  const options = (pairs, value) => { const s = el('select'); pairs.forEach(([v, t]) => s.append(el('option', { value: v, textContent: t }))); if (value !== undefined && pairs.some(([v]) => v === value)) s.value = value; return s; };
  const sources = [['seq', 'Step sequencer'], ...Array.from({ length: LOOPS }, (_, i) => [`loop${i}`, `Loop slot ${i + 1}`])];
  const format = options(Object.entries(FORMATS).map(([k, f]) => [k, f.label]), stored.format);
- const source = options(sources, stored.source);
+ const source = options([...sources, ['listen', 'Performance heard by Listening']], stored.source);
  const midiTarget = options([...sources.slice(1), sources[0]], stored.midiTarget);
  const repeats = el('input', { type: 'number', min: 1, max: 32, value: stored.repeats || 1 });
  const tail = el('input', { type: 'checkbox', checked: stored.tail ?? true });
@@ -35,7 +39,7 @@ export function createIoWidget(sequencer) {
   el('div', { className: 'sequence-toolbar io-row' }, recordButton, el('span', { className: 'module-hint', textContent: 'Records everything you play from the master output, after effects.' })),
   el('div', { className: 'sequence-toolbar io-row' }, source, el('label', {}, 'Repeats ', repeats), el('label', {}, tail, 'Release tail'), renderButton,
    el('button', { textContent: 'Export MIDI', onclick: () => exportMidi() })),
-  el('p', { className: 'module-hint' }, 'Render audio plays the pattern or loop in real time and saves exactly that many bars or loop lengths, ready to drop on a DAW track. Export MIDI writes a Standard MIDI File (.mid) at the current tempo.'),
+  el('p', { className: 'module-hint' }, 'Render audio plays the pattern or loop in real time and saves exactly that many bars or loop lengths, ready to drop on a DAW track. Export MIDI writes a Standard MIDI File (.mid) at the current tempo; for a performance heard by Listening, at the beat it was sung to.'),
   el('div', { className: 'sequence-toolbar io-row' }, el('strong', { textContent: 'Import' }), el('button', { textContent: '+ Import file…', onclick: () => picker.click() }), el('label', {}, 'MIDI into ', midiTarget), status, picker),
   el('p', { className: 'module-hint' }, 'Audio: WAV and AIFF at any bit depth, plus FLAC, MP3, Ogg and M4A where the browser can decode them. MIDI: .mid type 0 or 1, with its tempo map. A loop slot keeps the full timing and plays with the current patch; the step sequencer takes the first bar, snapped to sixteenths on its rows.'),
   el('div', { className: 'sequence-toolbar' }, el('strong', { textContent: 'Clips' }), el('label', {}, throughFx, 'Play through effects')),
@@ -112,6 +116,7 @@ export function createIoWidget(sequencer) {
   try {
    busy(true);
    let audio, label;
+   if (source.value === 'listen') throw new Error('Render audio plays the sequencer or a loop. To keep a performance as sound, record it into a loop slot with Record: Audio, or press ● Record.');
    if (source.value === 'seq') {
     if (sequencer.running) sequencer.stop();
     if (!sequencer.pattern.some(r => r.some(Boolean))) throw new Error('The step sequencer is empty.');
@@ -154,9 +159,26 @@ export function createIoWidget(sequencer) {
  const fileName = name => name.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'export';
  const stamp = () => new Date().toTimeString().slice(0, 8).replace(/:/g, '.');
 
+ // Notes heard in time as a song: on the beat clock's beats when one was running (so it lines up in a DAW at the
+ // session tempo), else at the pulse the notes themselves have, else at the session tempo from the first note.
+ const songOf = (notes, name) => {
+  const c = timing.clock, first = Math.min(...notes.map(n => n.start));
+  if (c.running && c.source !== 'free' && notes.every(n => n.start >= c.origin - c.period * 64)) return songFromNotes(notes, { name, bpm: c.bpm, origin: c.timeOf(Math.floor(c.beatAt(first) / c.beatsPerBar) * c.beatsPerBar) });
+  const pulse = pulseFromOnsets(notes.map(n => n.start));
+  if (pulse) { const k = Math.ceil((pulse.origin - first) / (60000 / pulse.bpm)); return songFromNotes(notes, { name, bpm: pulse.bpm, origin: pulse.origin - k * (60000 / pulse.bpm) }); }
+  return songFromNotes(notes, { name, bpm: window.synth.tempo });
+ };
  const exportMidi = () => {
   const bpm = window.synth.tempo;
   try {
+   if (source.value === 'listen') {
+    const notes = listening.performance();
+    if (!notes.length) throw new Error('Nothing has been heard yet: press 🎙 Listen in the Listening widget and sing or play.');
+    const song = songOf(notes, 'Performance');
+    download(writeMidi(song), 'performance.mid');
+    say(`Exported ${notes.length} notes heard by Listening as MIDI at ${song.bpm} BPM.`);
+    return;
+   }
    if (source.value === 'seq') {
     const n = Math.max(1, Math.round(Number(repeats.value) || 1)), pattern = sequencer.pattern;
     const notes = [];
@@ -218,11 +240,30 @@ export function createIoWidget(sequencer) {
  const addClip = (name, audio) => {
   const { channels, sampleRate } = audio, seconds = channels[0].length / sampleRate;
   const play = el('button', { textContent: '▶ Play' });
+  // Transcribe to MIDI: the clip's notes, heard as the Listening widget hears a voice, into wherever MIDI goes
+  // (a loop slot or the step sequencer), and a .mid to download.
+  const midiLink = el('button', { textContent: 'Download .mid', hidden: true });
+  const toMidi = el('button', { textContent: 'Transcribe to MIDI', title: 'Hear the notes in this clip (one at a time) and put them where MIDI goes' });
+  toMidi.onclick = async () => {
+   toMidi.disabled = true;
+   try {
+    say(`Listening to ${name}…`);
+    await new Promise(r => setTimeout(r, 20));
+    const mono = channels.length > 1 ? Float32Array.from(channels[0], (v, i) => channels.reduce((a, c) => a + c[i], 0) / channels.length) : channels[0];
+    const heard = transcribe(mono, sampleRate);
+    if (!heard.length) throw new Error(`No notes were heard in ${name}.`);
+    const blob = writeMidi(songOf(heard, name));
+    importMidi(new Uint8Array(await blob.arrayBuffer()), `${name} (transcribed)`);
+    midiLink.hidden = false; midiLink.onclick = () => download(blob, `${fileName(name)}.mid`);
+    box.dataset.transcribed = heard.map(n => n.midi).join(' ');
+   } catch (e) { say(e.message, true); } finally { toMidi.disabled = false; }
+  };
   const box = el('div', { className: 'plugin-card io-clip' },
    el('div', { className: 'sequence-toolbar' }, el('strong', { textContent: name }),
     el('span', { className: 'module-hint', textContent: `${seconds.toFixed(2)} s · ${sampleRate} Hz · ${channels.length === 1 ? 'mono' : channels.length === 2 ? 'stereo' : channels.length + ' ch'}` }),
     play,
     el('button', { textContent: 'Download', onclick: () => { const f = FORMATS[format.value]; download(encodeAudio(channels, sampleRate, format.value), `${fileName(name)}.${f.ext}`); } }),
+    toMidi, midiLink,
     el('button', { textContent: 'Remove', onclick: () => { if (play.source) stopPlaying(); box.remove(); } })));
   play.onclick = () => {
    if (play.source && playing === play.source) { stopPlaying(); return; }

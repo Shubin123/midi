@@ -40,6 +40,7 @@ export const listening = {
  last: null, // the latest frame, with the tracker's pitch: for the meter, the tuner and the pitch trail
  trail: [], // { t, semis, cents, clarity } for the last few seconds
  held: new Set(), // notes sent on and not yet off
+ take: [], // the performance so far: { midi, velocity, start, end } (ms, the page's clock), the latest 2000 notes
  // fn(type, detail): 'state', 'frame', 'note' ({ type, midi, velocity, time }).
  subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
  set(changes) { Object.assign(this.settings, changes); save(KEY, this.settings); this._configure(); emit('state', this.state()); },
@@ -167,6 +168,8 @@ export const listening = {
   if (e.type === 'on') { if (this.held.has(e.midi)) window.synth.input(e.midi, false, { time: e.time }); this.held.add(e.midi); }
   else if (!this.held.delete(e.midi)) return;
   window.synth.input(e.midi, e.type === 'on', { velocity: e.velocity, time: e.time, silent: this.silent });
+  if (e.type === 'on') { this.take.push({ midi: e.midi, velocity: e.velocity, start: e.time, end: null }); if (this.take.length > 2000) this.take.shift(); }
+  else { const n = this.take.findLast(x => x.midi === e.midi && x.end === null); if (n) n.end = e.time; }
   emit('note', e);
  },
  _releaseAll(time) {
@@ -215,6 +218,13 @@ export const listening = {
   const result = roundTrip(times, heard, gapMs * 0.9);
   if (result) this.set({ latencyMs: Math.round(result.ms), clickDb: this.settings.headphones ? this.settings.clickDb : Math.round(levels.sort((a, b) => a - b)[levels.length >> 1]) });
   return result;
+ },
+ // What has been sung or played since the last pause of `gapMs` or more: the notes, each with an end.
+ performance(gapMs = 10000) {
+  const done = this.take.map(n => ({ ...n, end: n.end ?? performance.now() }));
+  let k = done.length - 1;
+  while (k > 0 && done[k].start - done[k - 1].end < gapMs) k--;
+  return done.slice(Math.max(0, k));
  },
  // Records what the listener hears (after the input gain) until stop(), which resolves to { samples (mono),
  // sampleRate, at (the page's time when the first sample was made, the round trip taken off) }.

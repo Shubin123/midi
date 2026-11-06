@@ -73,7 +73,7 @@ export const GUIDES = {
  },
  'Import / Export': {
   what: 'Gets your work into a DAW and back: export MIDI, render the sequencer or a loop to WAV or AIFF, record the output, and import audio or MIDI files.',
-  how: [['Record captures everything you hear, after effects.', 'Import / Export › ● Record'], ['Render audio plays the sequencer or a loop slot and saves exactly that many bars.', 'Import / Export › Render audio'], ['Export MIDI saves the notes for any DAW.', 'Import / Export › Export MIDI'], ['Import a .mid into a loop slot or the sequencer, or an audio file as a clip.', 'Import / Export › + Import file…']],
+  how: [['Record captures everything you hear, after effects.', 'Import / Export › ● Record'], ['Render audio plays the sequencer or a loop slot and saves exactly that many bars.', 'Import / Export › Render audio'], ['Export MIDI saves the notes for any DAW.', 'Import / Export › Export MIDI'], ['Import a .mid into a loop slot or the sequencer, or an audio file as a clip.', 'Import / Export › + Import file…'], ['A clip\'s Transcribe to MIDI hears its notes and puts them where MIDI goes, with a .mid to download.', 'Import / Export › MIDI import destination'], ['Choose Performance heard by Listening, then Export MIDI, to save what you sang or played into the microphone.', 'Import / Export › Bounce source']],
   keywords: ['export', 'import', 'render', 'wav', 'aiff', 'mid', 'midi file', 'bounce', 'download', 'daw', 'my daw', 'a daw', 'into my', 'ableton', 'logic', 'fl studio', 'save'],
  },
  'Settings': {

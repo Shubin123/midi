@@ -185,7 +185,11 @@ The other widgets take it too (`js/listen-tools.js`):
   Source): the input's waveform, the note it hears with cents and frequency,
   and a tick every period of it.
 
-`node tests/listening-tools.mjs` sings a bar into Record from audio (six
+`node tests/listening-tools.mjs` transcribes a dropped WAV of a sung melody
+into a loop slot (every note, each gap within 25 ms) and the step sequencer,
+exports a performance sung against the metronome as a .mid (the notes, at
+90 BPM, each within 20 ms of its beat), runs the plug-in capture on a known
+10 ms delay through the shared FFT, and sings a bar into Record from audio (six
 notes land on their steps and rows, Undo puts the old pattern back), records a
 sung phrase into a loop slot as notes (each within 25 ms of when it was
 sung, and it plays back) and as audio (as long as the loop, the sound within
@@ -479,6 +483,17 @@ reads.
 | Export notes | **Export MIDI** of the step sequencer or a loop slot | Standard MIDI File (.mid), type 1, with tempo (an enabled tempo lane becomes tempo changes) |
 | Import audio | Drop or pick a file; it becomes a clip you can play, run through the effect chain, and download in any export format | WAV and AIFF/AIFC at any bit depth, read at their own sample rate; FLAC, MP3, Ogg and M4A through the browser's decoder |
 | Import notes | Drop a .mid into a loop slot (full timing, plays with the current patch) or the step sequencer (first bar, snapped to sixteenths) | .mid type 0 or 1, tempo map and time signature honoured |
+
+Audio comes in as notes too. Each clip has **Transcribe to MIDI**: its notes,
+heard one at a time as the Listening widget hears a voice
+(`transcribe` in `js/listen-dsp.js`, offline over the whole clip), go
+wherever **MIDI into** says (a loop slot with full timing, or the step
+sequencer's first bar), at the pulse the notes themselves have, and a
+**Download .mid** appears. The export source **Performance heard by
+Listening** exports what was sung or played into the microphone since the
+last pause of 10 s: on the beat clock's beats when one was running (so it
+lines up in a DAW at the session tempo), else at its own pulse. The plug-in
+capture (below) now measures through the same FFT as the listener.
 
 Render audio plays in real time while recording and cuts the file to exactly
 the chosen number of bars or loop lengths, so it lines up on a DAW's grid.

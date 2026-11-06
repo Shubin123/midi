@@ -34,6 +34,15 @@ export function writeMidi(song) {
  return new Blob([new Uint8Array(out)], { type: 'audio/midi' });
 }
 
+// A song from notes heard in time (transcribed or sung: [{ midi, velocity, start, end }] in ms), at `bpm`, beat 0
+// at `origin` ms (a beat at or before the first note, so the notes keep their place in the bar). Without an
+// origin the first note is beat 0.
+export function songFromNotes(notes, { name = 'Performance', bpm = 120, origin = null, track = 'Heard' } = {}) {
+ const first = Math.min(...notes.map(n => n.start)), zero = origin ?? first, beat = 60000 / bpm;
+ const at = ms => (ms - zero) / beat;
+ return { name, bpm: Math.round(bpm * 10) / 10, tracks: [{ name: track, notes: notes.map(n => ({ midi: n.midi, velocity: n.velocity ?? 0.7, start: Math.max(0, at(n.start)), end: Math.max(at(n.start) + 1 / 64, at(n.end)) })) }] };
+}
+
 // Returns { name, bpm, barBeats, notes: [{ midi, velocity, start, end, startSec, endSec, track, channel }], endBeat, seconds(beat) }.
 export function readMidi(bytes) {
  const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), tag = at => String.fromCharCode(...bytes.subarray(at, at + 4));
