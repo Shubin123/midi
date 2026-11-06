@@ -1,0 +1,297 @@
+{
+ "$schema": "../../schema.json",
+ "format": 1,
+ "author": "midi (Shubin123/midi)",
+ "version": "1.0.0",
+ "licence": "MIT",
+ "id": "generic/pads",
+ "name": "Generic pad controller",
+ "maker": "Generic",
+ "models": [
+  "Any pad controller sending General MIDI drum notes"
+ ],
+ "status": "official",
+ "verified": "documented",
+ "generic": true,
+ "description": "Sixteen pads on the General MIDI drum notes 36 to 51, any channel: the first eight play the drum kit, the next four run the loop slots (hold to clear), then metronome, tap, record and PANIC.",
+ "sources": [
+  {
+   "id": "gm",
+   "title": "MIDI 1.0 Detailed Specification and General MIDI 1 (MIDI Association)",
+   "url": "https://midi.org/specs",
+   "notes": "CC 1 modulation, CC 64 sustain, channel 10 percussion with notes 35-81, pitch bend centred at 8192."
+  }
+ ],
+ "controls": [
+  {
+   "id": "pad1",
+   "type": "pad",
+   "label": "Pad 1",
+   "role": "pad 1"
+  },
+  {
+   "id": "pad2",
+   "type": "pad",
+   "label": "Pad 2",
+   "role": "pad 2"
+  },
+  {
+   "id": "pad3",
+   "type": "pad",
+   "label": "Pad 3",
+   "role": "pad 3"
+  },
+  {
+   "id": "pad4",
+   "type": "pad",
+   "label": "Pad 4",
+   "role": "pad 4"
+  },
+  {
+   "id": "pad5",
+   "type": "pad",
+   "label": "Pad 5",
+   "role": "pad 5"
+  },
+  {
+   "id": "pad6",
+   "type": "pad",
+   "label": "Pad 6",
+   "role": "pad 6"
+  },
+  {
+   "id": "pad7",
+   "type": "pad",
+   "label": "Pad 7",
+   "role": "pad 7"
+  },
+  {
+   "id": "pad8",
+   "type": "pad",
+   "label": "Pad 8",
+   "role": "pad 8"
+  },
+  {
+   "id": "pad9",
+   "type": "pad",
+   "label": "Pad 9",
+   "role": "pad 9"
+  },
+  {
+   "id": "pad10",
+   "type": "pad",
+   "label": "Pad 10",
+   "role": "pad 10"
+  },
+  {
+   "id": "pad11",
+   "type": "pad",
+   "label": "Pad 11",
+   "role": "pad 11"
+  },
+  {
+   "id": "pad12",
+   "type": "pad",
+   "label": "Pad 12",
+   "role": "pad 12"
+  },
+  {
+   "id": "pad13",
+   "type": "pad",
+   "label": "Pad 13",
+   "role": "pad 13"
+  },
+  {
+   "id": "pad14",
+   "type": "pad",
+   "label": "Pad 14",
+   "role": "pad 14"
+  },
+  {
+   "id": "pad15",
+   "type": "pad",
+   "label": "Pad 15",
+   "role": "pad 15"
+  },
+  {
+   "id": "pad16",
+   "type": "pad",
+   "label": "Pad 16",
+   "role": "pad 16"
+  }
+ ],
+ "programs": [
+  {
+   "id": "gm",
+   "name": "GM drum notes",
+   "default": true,
+   "messages": {
+    "pad1": {
+     "note": 36,
+     "channel": "any",
+     "source": "gm"
+    },
+    "pad2": {
+     "note": 37,
+     "channel": "any",
+     "source": "gm"
+    },
+    "pad3": {
+     "note": 38,
+     "channel": "any",
+     "source": "gm"
+    },
+    "pad4": {
+     "note": 39,
+     "channel": "any",
+     "source": "gm"
+    },
+    "pad5": {
+     "note": 40,
+     "channel": "any",
+     "source": "gm"
+    },
+    "pad6": {
+     "note": 41,
+     "channel": "any",
+     "source": "gm"
+    },
+    "pad7": {
+     "note": 42,
+     "channel": "any",
+     "source": "gm"
+    },
+    "pad8": {
+     "note": 43,
+     "channel": "any",
+     "source": "gm"
+    },
+    "pad9": {
+     "note": 44,
+     "channel": "any",
+     "source": "gm"
+    },
+    "pad10": {
+     "note": 45,
+     "channel": "any",
+     "source": "gm"
+    },
+    "pad11": {
+     "note": 46,
+     "channel": "any",
+     "source": "gm"
+    },
+    "pad12": {
+     "note": 47,
+     "channel": "any",
+     "source": "gm"
+    },
+    "pad13": {
+     "note": 48,
+     "channel": "any",
+     "source": "gm"
+    },
+    "pad14": {
+     "note": 49,
+     "channel": "any",
+     "source": "gm"
+    },
+    "pad15": {
+     "note": 50,
+     "channel": "any",
+     "source": "gm"
+    },
+    "pad16": {
+     "note": 51,
+     "channel": "any",
+     "source": "gm"
+    }
+   }
+  }
+ ],
+ "variations": [
+  {
+   "id": "pads",
+   "name": "Drums and loops",
+   "default": true,
+   "mappings": {
+    "pad1": {
+     "do": "drum",
+     "index": 1
+    },
+    "pad2": {
+     "do": "drum",
+     "index": 2
+    },
+    "pad3": {
+     "do": "drum",
+     "index": 3
+    },
+    "pad4": {
+     "do": "drum",
+     "index": 4
+    },
+    "pad5": {
+     "do": "drum",
+     "index": 5
+    },
+    "pad6": {
+     "do": "drum",
+     "index": 6
+    },
+    "pad7": {
+     "do": "drum",
+     "index": 7
+    },
+    "pad8": {
+     "do": "drum",
+     "index": 8
+    },
+    "pad9": {
+     "do": "loop",
+     "slot": 1,
+     "hold": {
+      "do": "clear",
+      "slot": 1
+     }
+    },
+    "pad10": {
+     "do": "loop",
+     "slot": 2,
+     "hold": {
+      "do": "clear",
+      "slot": 2
+     }
+    },
+    "pad11": {
+     "do": "loop",
+     "slot": 3,
+     "hold": {
+      "do": "clear",
+      "slot": 3
+     }
+    },
+    "pad12": {
+     "do": "loop",
+     "slot": 4,
+     "hold": {
+      "do": "clear",
+      "slot": 4
+     }
+    },
+    "pad13": {
+     "do": "metronome"
+    },
+    "pad14": {
+     "do": "tap"
+    },
+    "pad15": {
+     "do": "record"
+    },
+    "pad16": {
+     "do": "panic"
+    }
+   }
+  }
+ ]
+}

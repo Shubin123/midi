@@ -1,0 +1,10 @@
+{
+ "description": "The bundled controller presets, loaded by js/controllers/runtime.js (a browser can't list a folder). Add a new preset's path here.",
+ "presets": [
+  "arturia/minilab3.json",
+  "generic/keyboard.json",
+  "generic/knobs.json",
+  "generic/pads.json",
+  "generic/mackie.json"
+ ]
+}

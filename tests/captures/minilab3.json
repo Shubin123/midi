@@ -1,0 +1,1262 @@
+{
+ "device": "Arturia MiniLab 3",
+ "recorded": false,
+ "from": "documentation",
+ "notes": "Not recorded from a unit. The CCs are generated from the text of Arturia's own MIDI implementation chart (support article 6189475866396, fetched 2026-11-06), not from the preset, so the test checks the preset against Arturia's table. Pads, keys, strips and pedal are from the manual v1.0.5 (\u00a74.3, \u00a74.4, \u00a75.4.4); the SysEx from the Bitwig extension and Ableton script (see the preset's sources). To verify on hardware, record each control's messages in the same form (what came in on the Minilab3 MIDI port, with the program the controller was in) and set recorded to true.",
+ "programs": {
+  "arturia": [
+   {
+    "control": "main",
+    "bytes": "B0 72 41",
+    "kind": "turn",
+    "delta": 1
+   },
+   {
+    "control": "main",
+    "bytes": "B0 72 3E",
+    "kind": "turn",
+    "delta": -2
+   },
+   {
+    "control": "main-shift",
+    "bytes": "B0 70 41",
+    "kind": "turn",
+    "delta": 1
+   },
+   {
+    "control": "main-shift",
+    "bytes": "B0 70 3E",
+    "kind": "turn",
+    "delta": -2
+   },
+   {
+    "control": "main-click",
+    "bytes": "B0 73 7F",
+    "kind": "press"
+   },
+   {
+    "control": "main-click",
+    "bytes": "B0 73 00",
+    "kind": "release"
+   },
+   {
+    "control": "main-shift-click",
+    "bytes": "B0 71 7F",
+    "kind": "press"
+   },
+   {
+    "control": "main-shift-click",
+    "bytes": "B0 71 00",
+    "kind": "release"
+   },
+   {
+    "control": "knob1",
+    "bytes": "B0 4A 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "knob2",
+    "bytes": "B0 47 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "knob3",
+    "bytes": "B0 4C 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "knob4",
+    "bytes": "B0 4D 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "knob5",
+    "bytes": "B0 5D 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "knob6",
+    "bytes": "B0 12 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "knob7",
+    "bytes": "B0 13 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "knob8",
+    "bytes": "B0 10 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "fader1",
+    "bytes": "B0 52 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "fader2",
+    "bytes": "B0 53 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "fader3",
+    "bytes": "B0 55 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "fader4",
+    "bytes": "B0 11 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "shift",
+    "bytes": "B0 09 7F",
+    "kind": "press"
+   },
+   {
+    "control": "shift",
+    "bytes": "B0 09 00",
+    "kind": "release"
+   },
+   {
+    "control": "shift-pad1",
+    "bytes": "B0 66 7F",
+    "kind": "press"
+   },
+   {
+    "control": "shift-pad1",
+    "bytes": "B0 66 00",
+    "kind": "release"
+   },
+   {
+    "control": "shift-pad2",
+    "bytes": "B0 67 7F",
+    "kind": "press"
+   },
+   {
+    "control": "shift-pad2",
+    "bytes": "B0 67 00",
+    "kind": "release"
+   },
+   {
+    "control": "shift-pad3",
+    "bytes": "B0 68 7F",
+    "kind": "press"
+   },
+   {
+    "control": "shift-pad3",
+    "bytes": "B0 68 00",
+    "kind": "release"
+   },
+   {
+    "control": "loop",
+    "bytes": "B0 69 7F",
+    "kind": "press"
+   },
+   {
+    "control": "loop",
+    "bytes": "B0 69 00",
+    "kind": "release"
+   },
+   {
+    "control": "stop",
+    "bytes": "B0 6A 7F",
+    "kind": "press"
+   },
+   {
+    "control": "stop",
+    "bytes": "B0 6A 00",
+    "kind": "release"
+   },
+   {
+    "control": "play",
+    "bytes": "B0 6B 7F",
+    "kind": "press"
+   },
+   {
+    "control": "play",
+    "bytes": "B0 6B 00",
+    "kind": "release"
+   },
+   {
+    "control": "record",
+    "bytes": "B0 6C 7F",
+    "kind": "press"
+   },
+   {
+    "control": "record",
+    "bytes": "B0 6C 00",
+    "kind": "release"
+   },
+   {
+    "control": "tap",
+    "bytes": "B0 6D 7F",
+    "kind": "press"
+   },
+   {
+    "control": "tap",
+    "bytes": "B0 6D 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad1",
+    "bytes": "99 24 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad1",
+    "bytes": "89 24 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad2",
+    "bytes": "99 25 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad2",
+    "bytes": "89 25 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad3",
+    "bytes": "99 26 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad3",
+    "bytes": "89 26 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad4",
+    "bytes": "99 27 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad4",
+    "bytes": "89 27 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad5",
+    "bytes": "99 28 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad5",
+    "bytes": "89 28 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad6",
+    "bytes": "99 29 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad6",
+    "bytes": "89 29 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad7",
+    "bytes": "99 2A 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad7",
+    "bytes": "89 2A 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad8",
+    "bytes": "99 2B 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad8",
+    "bytes": "89 2B 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad9",
+    "bytes": "99 2C 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad9",
+    "bytes": "89 2C 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad10",
+    "bytes": "99 2D 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad10",
+    "bytes": "89 2D 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad11",
+    "bytes": "99 2E 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad11",
+    "bytes": "89 2E 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad12",
+    "bytes": "99 2F 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad12",
+    "bytes": "89 2F 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad13",
+    "bytes": "99 30 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad13",
+    "bytes": "89 30 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad14",
+    "bytes": "99 31 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad14",
+    "bytes": "89 31 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad15",
+    "bytes": "99 32 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad15",
+    "bytes": "89 32 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad16",
+    "bytes": "99 33 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad16",
+    "bytes": "89 33 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad3",
+    "bytes": "A9 26 50",
+    "kind": "pressure"
+   },
+   {
+    "control": "keys",
+    "bytes": "90 3C 64",
+    "kind": "note"
+   },
+   {
+    "control": "keys",
+    "bytes": "80 3C 00",
+    "kind": "note"
+   },
+   {
+    "control": "keys",
+    "bytes": "92 30 50",
+    "kind": "note",
+    "why": "Shift + a key picked channel 3"
+   },
+   {
+    "control": "bend",
+    "bytes": "E0 00 60",
+    "kind": "bend"
+   },
+   {
+    "control": "mod",
+    "bytes": "B0 01 40",
+    "kind": "value"
+   },
+   {
+    "control": "pedal",
+    "bytes": "B0 40 7F",
+    "kind": "value"
+   }
+  ],
+  "daw": [
+   {
+    "control": "main",
+    "bytes": "B0 1C 41",
+    "kind": "turn",
+    "delta": 1
+   },
+   {
+    "control": "main",
+    "bytes": "B0 1C 3E",
+    "kind": "turn",
+    "delta": -2
+   },
+   {
+    "control": "main-shift",
+    "bytes": "B0 1D 41",
+    "kind": "turn",
+    "delta": 1
+   },
+   {
+    "control": "main-shift",
+    "bytes": "B0 1D 3E",
+    "kind": "turn",
+    "delta": -2
+   },
+   {
+    "control": "main-click",
+    "bytes": "B0 76 7F",
+    "kind": "press"
+   },
+   {
+    "control": "main-click",
+    "bytes": "B0 76 00",
+    "kind": "release"
+   },
+   {
+    "control": "main-shift-click",
+    "bytes": "B0 77 7F",
+    "kind": "press"
+   },
+   {
+    "control": "main-shift-click",
+    "bytes": "B0 77 00",
+    "kind": "release"
+   },
+   {
+    "control": "knob1",
+    "bytes": "B0 56 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "knob2",
+    "bytes": "B0 57 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "knob3",
+    "bytes": "B0 59 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "knob4",
+    "bytes": "B0 5A 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "knob5",
+    "bytes": "B0 6E 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "knob6",
+    "bytes": "B0 6F 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "knob7",
+    "bytes": "B0 74 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "knob8",
+    "bytes": "B0 75 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "fader1",
+    "bytes": "B0 0E 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "fader2",
+    "bytes": "B0 0F 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "fader3",
+    "bytes": "B0 1E 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "fader4",
+    "bytes": "B0 1F 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "shift",
+    "bytes": "B0 1B 7F",
+    "kind": "press"
+   },
+   {
+    "control": "shift",
+    "bytes": "B0 1B 00",
+    "kind": "release"
+   },
+   {
+    "control": "shift-pad1",
+    "bytes": "B0 66 7F",
+    "kind": "press"
+   },
+   {
+    "control": "shift-pad1",
+    "bytes": "B0 66 00",
+    "kind": "release"
+   },
+   {
+    "control": "shift-pad2",
+    "bytes": "B0 67 7F",
+    "kind": "press"
+   },
+   {
+    "control": "shift-pad2",
+    "bytes": "B0 67 00",
+    "kind": "release"
+   },
+   {
+    "control": "shift-pad3",
+    "bytes": "B0 68 7F",
+    "kind": "press"
+   },
+   {
+    "control": "shift-pad3",
+    "bytes": "B0 68 00",
+    "kind": "release"
+   },
+   {
+    "control": "loop",
+    "bytes": "B0 69 7F",
+    "kind": "press"
+   },
+   {
+    "control": "loop",
+    "bytes": "B0 69 00",
+    "kind": "release"
+   },
+   {
+    "control": "stop",
+    "bytes": "B0 6A 7F",
+    "kind": "press"
+   },
+   {
+    "control": "stop",
+    "bytes": "B0 6A 00",
+    "kind": "release"
+   },
+   {
+    "control": "play",
+    "bytes": "B0 6B 7F",
+    "kind": "press"
+   },
+   {
+    "control": "play",
+    "bytes": "B0 6B 00",
+    "kind": "release"
+   },
+   {
+    "control": "record",
+    "bytes": "B0 6C 7F",
+    "kind": "press"
+   },
+   {
+    "control": "record",
+    "bytes": "B0 6C 00",
+    "kind": "release"
+   },
+   {
+    "control": "tap",
+    "bytes": "B0 6D 7F",
+    "kind": "press"
+   },
+   {
+    "control": "tap",
+    "bytes": "B0 6D 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad1",
+    "bytes": "99 24 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad1",
+    "bytes": "89 24 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad2",
+    "bytes": "99 25 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad2",
+    "bytes": "89 25 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad3",
+    "bytes": "99 26 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad3",
+    "bytes": "89 26 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad4",
+    "bytes": "99 27 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad4",
+    "bytes": "89 27 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad5",
+    "bytes": "99 28 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad5",
+    "bytes": "89 28 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad6",
+    "bytes": "99 29 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad6",
+    "bytes": "89 29 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad7",
+    "bytes": "99 2A 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad7",
+    "bytes": "89 2A 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad8",
+    "bytes": "99 2B 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad8",
+    "bytes": "89 2B 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad9",
+    "bytes": "99 2C 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad9",
+    "bytes": "89 2C 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad10",
+    "bytes": "99 2D 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad10",
+    "bytes": "89 2D 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad11",
+    "bytes": "99 2E 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad11",
+    "bytes": "89 2E 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad12",
+    "bytes": "99 2F 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad12",
+    "bytes": "89 2F 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad13",
+    "bytes": "99 30 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad13",
+    "bytes": "89 30 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad14",
+    "bytes": "99 31 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad14",
+    "bytes": "89 31 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad15",
+    "bytes": "99 32 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad15",
+    "bytes": "89 32 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad16",
+    "bytes": "99 33 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad16",
+    "bytes": "89 33 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad3",
+    "bytes": "A9 26 50",
+    "kind": "pressure"
+   },
+   {
+    "control": "keys",
+    "bytes": "90 3C 64",
+    "kind": "note"
+   },
+   {
+    "control": "keys",
+    "bytes": "80 3C 00",
+    "kind": "note"
+   },
+   {
+    "control": "keys",
+    "bytes": "92 30 50",
+    "kind": "note",
+    "why": "Shift + a key picked channel 3"
+   },
+   {
+    "control": "bend",
+    "bytes": "E0 00 60",
+    "kind": "bend"
+   },
+   {
+    "control": "mod",
+    "bytes": "B0 01 40",
+    "kind": "value"
+   },
+   {
+    "control": "pedal",
+    "bytes": "B0 40 7F",
+    "kind": "value"
+   }
+  ],
+  "user": [
+   {
+    "control": "main",
+    "bytes": "B0 72 41",
+    "kind": "turn",
+    "delta": 1
+   },
+   {
+    "control": "main",
+    "bytes": "B0 72 3E",
+    "kind": "turn",
+    "delta": -2
+   },
+   {
+    "control": "main-shift",
+    "bytes": "B0 70 41",
+    "kind": "turn",
+    "delta": 1
+   },
+   {
+    "control": "main-shift",
+    "bytes": "B0 70 3E",
+    "kind": "turn",
+    "delta": -2
+   },
+   {
+    "control": "main-click",
+    "bytes": "B0 73 7F",
+    "kind": "press"
+   },
+   {
+    "control": "main-click",
+    "bytes": "B0 73 00",
+    "kind": "release"
+   },
+   {
+    "control": "main-shift-click",
+    "bytes": "B0 71 7F",
+    "kind": "press"
+   },
+   {
+    "control": "main-shift-click",
+    "bytes": "B0 71 00",
+    "kind": "release"
+   },
+   {
+    "control": "knob1",
+    "bytes": "B0 4A 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "knob2",
+    "bytes": "B0 47 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "knob3",
+    "bytes": "B0 4C 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "knob4",
+    "bytes": "B0 4D 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "knob5",
+    "bytes": "B0 5D 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "knob6",
+    "bytes": "B0 12 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "knob7",
+    "bytes": "B0 13 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "knob8",
+    "bytes": "B0 10 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "fader1",
+    "bytes": "B0 52 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "fader2",
+    "bytes": "B0 53 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "fader3",
+    "bytes": "B0 55 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "fader4",
+    "bytes": "B0 11 40",
+    "kind": "value",
+    "value": 0.5039370078740157
+   },
+   {
+    "control": "shift",
+    "bytes": "B0 09 7F",
+    "kind": "press"
+   },
+   {
+    "control": "shift",
+    "bytes": "B0 09 00",
+    "kind": "release"
+   },
+   {
+    "control": "shift-pad1",
+    "bytes": "B0 66 7F",
+    "kind": "press"
+   },
+   {
+    "control": "shift-pad1",
+    "bytes": "B0 66 00",
+    "kind": "release"
+   },
+   {
+    "control": "shift-pad2",
+    "bytes": "B0 67 7F",
+    "kind": "press"
+   },
+   {
+    "control": "shift-pad2",
+    "bytes": "B0 67 00",
+    "kind": "release"
+   },
+   {
+    "control": "shift-pad3",
+    "bytes": "B0 68 7F",
+    "kind": "press"
+   },
+   {
+    "control": "shift-pad3",
+    "bytes": "B0 68 00",
+    "kind": "release"
+   },
+   {
+    "control": "loop",
+    "bytes": "B0 69 7F",
+    "kind": "press"
+   },
+   {
+    "control": "loop",
+    "bytes": "B0 69 00",
+    "kind": "release"
+   },
+   {
+    "control": "stop",
+    "bytes": "B0 6A 7F",
+    "kind": "press"
+   },
+   {
+    "control": "stop",
+    "bytes": "B0 6A 00",
+    "kind": "release"
+   },
+   {
+    "control": "play",
+    "bytes": "B0 6B 7F",
+    "kind": "press"
+   },
+   {
+    "control": "play",
+    "bytes": "B0 6B 00",
+    "kind": "release"
+   },
+   {
+    "control": "record",
+    "bytes": "B0 6C 7F",
+    "kind": "press"
+   },
+   {
+    "control": "record",
+    "bytes": "B0 6C 00",
+    "kind": "release"
+   },
+   {
+    "control": "tap",
+    "bytes": "B0 6D 7F",
+    "kind": "press"
+   },
+   {
+    "control": "tap",
+    "bytes": "B0 6D 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad1",
+    "bytes": "99 24 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad1",
+    "bytes": "89 24 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad2",
+    "bytes": "99 25 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad2",
+    "bytes": "89 25 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad3",
+    "bytes": "99 26 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad3",
+    "bytes": "89 26 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad4",
+    "bytes": "99 27 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad4",
+    "bytes": "89 27 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad5",
+    "bytes": "99 28 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad5",
+    "bytes": "89 28 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad6",
+    "bytes": "99 29 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad6",
+    "bytes": "89 29 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad7",
+    "bytes": "99 2A 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad7",
+    "bytes": "89 2A 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad8",
+    "bytes": "99 2B 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad8",
+    "bytes": "89 2B 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad9",
+    "bytes": "99 2C 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad9",
+    "bytes": "89 2C 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad10",
+    "bytes": "99 2D 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad10",
+    "bytes": "89 2D 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad11",
+    "bytes": "99 2E 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad11",
+    "bytes": "89 2E 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad12",
+    "bytes": "99 2F 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad12",
+    "bytes": "89 2F 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad13",
+    "bytes": "99 30 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad13",
+    "bytes": "89 30 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad14",
+    "bytes": "99 31 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad14",
+    "bytes": "89 31 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad15",
+    "bytes": "99 32 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad15",
+    "bytes": "89 32 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad16",
+    "bytes": "99 33 64",
+    "kind": "press"
+   },
+   {
+    "control": "pad16",
+    "bytes": "89 33 00",
+    "kind": "release"
+   },
+   {
+    "control": "pad3",
+    "bytes": "A9 26 50",
+    "kind": "pressure"
+   },
+   {
+    "control": "keys",
+    "bytes": "90 3C 64",
+    "kind": "note"
+   },
+   {
+    "control": "keys",
+    "bytes": "80 3C 00",
+    "kind": "note"
+   },
+   {
+    "control": "keys",
+    "bytes": "92 30 50",
+    "kind": "note",
+    "why": "Shift + a key picked channel 3"
+   },
+   {
+    "control": "bend",
+    "bytes": "E0 00 60",
+    "kind": "bend"
+   },
+   {
+    "control": "mod",
+    "bytes": "B0 01 40",
+    "kind": "value"
+   },
+   {
+    "control": "pedal",
+    "bytes": "B0 40 7F",
+    "kind": "value"
+   }
+  ]
+ },
+ "sysex": [
+  {
+   "bytes": "F0 7E 7F 06 02 00 20 6B 02 00 04 04 01 02 00 00 F7",
+   "means": "identity",
+   "why": "identity reply (family 02 00, member 04 04); the four version bytes here are an example"
+  },
+  {
+   "bytes": "F0 00 20 6B 7F 42 02 00 40 62 02 F7",
+   "program": "daw",
+   "why": "the DAW program loaded"
+  },
+  {
+   "bytes": "F0 00 20 6B 7F 42 02 00 40 62 01 F7",
+   "program": "arturia",
+   "why": "the Arturia program loaded"
+  },
+  {
+   "bytes": "F0 00 20 6B 7F 42 02 00 40 01 00 F7",
+   "program": "arturia",
+   "why": "reply to the program request: Arturia"
+  },
+  {
+   "bytes": "F0 00 20 6B 7F 42 02 00 40 01 01 F7",
+   "program": "daw",
+   "why": "reply to the program request: DAW"
+  },
+  {
+   "bytes": "F0 00 20 6B 7F 42 02 00 40 62 05 F7",
+   "program": "user",
+   "why": "a program number the documents don't give: taken as a User program"
+  },
+  {
+   "bytes": "F0 00 20 6B 7F 42 02 00 40 63 01 F7",
+   "bank": "B",
+   "why": "pad bank B"
+  },
+  {
+   "bytes": "F0 00 20 6B 7F 42 02 00 40 63 00 F7",
+   "bank": "A",
+   "why": "pad bank A"
+  }
+ ]
+}

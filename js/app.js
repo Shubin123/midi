@@ -10,6 +10,10 @@ import { createListeningWidget } from './listening-widget.js';
 import { mountListenTools } from './listen-tools.js';
 import { mountMappings, mountMonitor } from './listen-map.js';
 import { createSoundMatch } from './sound-match.js';
+import { createControllersWidget } from './controllers/widget.js';
+import { controllers } from './controllers/runtime.js';
+import { midi } from './controllers/midi.js';
+import { read } from './storage.js';
 // The oscillator bank is filled in now, before the synth (js/synth.js) reads it on load.
 window.oscillatorBank = mountBank(document.getElementById('oscillators-group'));
 window.addEventListener('load',()=>{
@@ -23,6 +27,7 @@ window.addEventListener('load',()=>{
  keyboard.append(keyboardBar,document.querySelector('#synthesiaContainer'),document.querySelector('#keyboard'));workspace.append(keyboard);
  mountTiming(keyboard,document.getElementById('metronome-tempo-group')); // the timing strip under the keys, and Sync to MIDI clock
  workspace.append(createListeningWidget()); // Audio In: singing or playing into the microphone, played as from a keyboard
+ workspace.append(createControllersWidget()); // MIDI controllers: ports, presets (js/controllers/), MIDI learn
  const {sequence,automation,api}=createSequencer();workspace.append(sequence,automation);
  window.workspaceApi={sequencer:api}; // for the teacher's actions (js/agent-actions.js)
  document.querySelectorAll('.controls > .control-group').forEach((el,i)=>{el.id ||= 'settings-module-'+i;workspace.append(el);});
@@ -36,5 +41,8 @@ window.addEventListener('load',()=>{
  mountMappings(automation.querySelector('.module-content'),api); // the microphone moving controls, and recording lanes
  mountMonitor(workspace.querySelector('#masterVolume').closest('.control-group')); // input gain, and hearing the input through the effects
  container.append(workspace);addAppSettings(setupWidgets(workspace).section);
+ // The presets first, then the ports: a controller plugged in is matched as soon as it is seen. SysEx is asked
+ // for at once only if it was allowed before (the browser remembers); otherwise from the Controllers widget.
+ controllers.start().then(()=>midi.start({sysex:read('midi-sysex-v1',false)})).catch(err=>console.warn('Controllers:',err.message));
  window.dispatchEvent(new Event('resize'));
 });

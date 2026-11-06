@@ -725,6 +725,12 @@ canvas#visualizerCanvas {
                 margin: 3px;
                 min-width: 55px; 
             }
+            .loop-slot-volume {
+                display: flex; align-items: center; gap: 6px;
+                font-size: 0.75em; color: var(--text-muted-color);
+                margin-top: 6px; width: 100%;
+            }
+            .loop-slot-volume input { flex: 1; min-width: 0; }
             .loop-slot-leds {
                 display: flex;
                 gap: 6px; /* Increased gap */

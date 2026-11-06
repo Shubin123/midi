@@ -51,6 +51,10 @@
             let metronomeEnabled = false, currentBPM = 120, metronomeIntervalId = null, metronomeClickBuffer, metronomeToggle, bpmDisplay, bpmIncrement, bpmDecrement, tapTempoButton, metronomeLed;
             const MIN_BPM = 30, MAX_BPM = 300, tapTempoTimes = []; let tapTempoLastTap; const MAX_TAP_INTERVAL = 3000;
             let sustainPedalActive = false, notesSustained = new Set();
+            // Keys held down on a MIDI controller (js/controllers/), so lifting the sustain pedal leaves them sounding;
+            // and the pitch bend and vibrato every live note follows: one ConstantSourceNode, in cents, into each
+            // oscillator's detune, made the first time a controller bends or modulates.
+            const midiHeld = new Set(); let bendNode = null, vibratoDepth = null, bendRange = 2;
 
 
             function createNoiseBuffers() { if (!audioContext) return; const bS = audioContext.sampleRate * 2; whiteNoiseBuffer = audioContext.createBuffer(1, bS, audioContext.sampleRate); const o = whiteNoiseBuffer.getChannelData(0); for (let i=0; i<bS; i++) o[i] = Math.random()*2-1;}
@@ -91,7 +95,6 @@
                 visualizerContext = visualizerCanvas.getContext('2d');
                 resizeCanvas();
                 visualize();
-                setupMIDI();
                 if (synthesiaToggle.checked) createSynthesiaGrid();
             }
             
@@ -134,6 +137,7 @@
                 if (slotId === -1 && currentArmedSlotId !== -1 && loopSlotsData[currentArmedSlotId].isRecording) {
                     recordEvent(currentArmedSlotId, 'noteon', noteString, velocity, params);
                 }
+                if (slotId !== -1) velocity *= loopSlotsData[slotId].volume ?? 1; // the slot's Volume
                 
                 const now = audioContext.currentTime;
                 const silent = source === 'audio' && inputSilent;
@@ -204,6 +208,7 @@
                     out: unit.mainNoteGain, taps: slotId === -1 ? oscillators.map((_, i) => oscTap(i).sum) : []
                 });
                 unit.oscillators = unit.layers.map(l => l.source);
+                if (bendNode && slotId === -1) unit.oscillators.forEach(o => bendNode.connect(o.detune));
 
                 if (slotId !== -1) {
                     loopSlotsData[slotId].notesCurrentlyPlaying.add(noteString);
@@ -275,7 +280,7 @@
                 }
             }
 
-            function setupKeyboardEvents() { keyboardContainer.addEventListener('mousedown', e => { if (!audioContext) initAudio(); if (!audioContext || e.button !== 0) return; const tK = e.target.closest('.white-key, .black-key'); if (tK) { isMouseDraggingOnKeyboard = true; document.body.style.userSelect = 'none'; const n = tK.dataset.note; playNote(n, 0.7, "mouse-drag-start", true); tK.classList.add('active'); currentDraggedKeyElement = tK; } }); document.addEventListener('mousemove', e => { if (!isMouseDraggingOnKeyboard) return; const kUM = document.elementFromPoint(e.clientX, e.clientY)?.closest('.white-key, .black-key'); if (kUM && kUM !== currentDraggedKeyElement) { if (currentDraggedKeyElement) { stopNote(currentDraggedKeyElement.dataset.note, "mouse-drag-slide-out"); if (!sustainPedalActive) currentDraggedKeyElement.classList.remove('active'); } const n = kUM.dataset.note; playNote(n, 0.7, "mouse-drag-slide-in", true); kUM.classList.add('active'); currentDraggedKeyElement = kUM; } else if (!kUM && currentDraggedKeyElement) { stopNote(currentDraggedKeyElement.dataset.note, "mouse-drag-off-key"); if (!sustainPedalActive) currentDraggedKeyElement.classList.remove('active'); currentDraggedKeyElement = null; } }); document.addEventListener('mouseup', e => { if (e.button !== 0) return; if (isMouseDraggingOnKeyboard) { if (currentDraggedKeyElement) { stopNote(currentDraggedKeyElement.dataset.note, "mouse-drag-end"); if (!sustainPedalActive) currentDraggedKeyElement.classList.remove('active'); } isMouseDraggingOnKeyboard = false; document.body.style.userSelect = ''; currentDraggedKeyElement = null; } }); keyboardContainer.addEventListener('touchstart', e => { if (!audioContext) initAudio(); if (!audioContext) return; e.preventDefault(); for (let t of e.changedTouches) { const tK = document.elementFromPoint(t.clientX, t.clientY)?.closest('.white-key, .black-key'); if (tK) { const n = tK.dataset.note; playNote(n, 0.7, "touch-start", true); tK.classList.add('active'); activeTouches.set(t.identifier, tK); } } }, { passive: false }); keyboardContainer.addEventListener('touchmove', e => { if (!audioContext) return; e.preventDefault(); for (let t of e.changedTouches) { const tI = t.identifier; const kUT = document.elementFromPoint(t.clientX, t.clientY)?.closest('.white-key, .black-key'); const pKFT = activeTouches.get(tI); if (kUT !== pKFT) { if (pKFT) { stopNote(pKFT.dataset.note, "touch-slide-out"); if (!sustainPedalActive) pKFT.classList.remove('active'); } if (kUT) { const n = kUT.dataset.note; playNote(n, 0.7, "touch-slide-in", true); kUT.classList.add('active'); activeTouches.set(tI, kUT); } else { activeTouches.delete(tI); } } } }, { passive: false }); keyboardContainer.addEventListener('touchend', e => { e.preventDefault(); for (let t of e.changedTouches) { const tI = t.identifier; const rK = activeTouches.get(tI); if (rK) { stopNote(rK.dataset.note, "touch-end"); if (!sustainPedalActive) rK.classList.remove('active'); activeTouches.delete(tI); } } }, { passive: false }); keyboardContainer.addEventListener('touchcancel', e => { e.preventDefault(); for (let t of e.changedTouches) { const tI = t.identifier; const cK = activeTouches.get(tI); if (cK) { stopNote(cK.dataset.note, "touch-cancel"); if (!sustainPedalActive) cK.classList.remove('active'); activeTouches.delete(tI); } } }, { passive: false }); document.addEventListener('keydown', e => { if (e.target.closest('input, select, button, summary')) return; if (e.code === 'Space') { e.preventDefault(); if (!sustainPedalActive) { sustainPedalActive = true; activeComputerKeys.forEach(nS => playNote(nS, 0.7, "sustain_retrigger", false)); } } else if (!e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) { const k = e.key.toLowerCase(); if (!Object.prototype.hasOwnProperty.call(keyMapping, k)) return; const kI = keyMapping[k]; const kEl = keyboardContainer.querySelector(`[data-keymap-index="${kI}"]`); if (kEl && !activeComputerKeys.has(kEl.dataset.note)) { playNote(kEl.dataset.note, 0.7, "computer", true); kEl.classList.add('active'); activeComputerKeys.add(kEl.dataset.note); } } }); document.addEventListener('keyup', e => { if (e.target.closest('input, select, button, summary')) return; if (e.code === 'Space') { e.preventDefault(); if (sustainPedalActive) { sustainPedalActive = false; const nTR = new Set(notesSustained); nTR.forEach(nS => { if (!activeComputerKeys.has(nS) && !isKeyHeldByMouseOrTouch(nS)) { stopNote(nS, "sustain_release"); } }); notesSustained.clear(); } } else { const k = e.key.toLowerCase(); if (!Object.prototype.hasOwnProperty.call(keyMapping, k)) return; const kI = keyMapping[k]; const kEl = keyboardContainer.querySelector(`[data-keymap-index="${kI}"]`); if (kEl && activeComputerKeys.has(kEl.dataset.note)) { stopNote(kEl.dataset.note, "computer"); activeComputerKeys.delete(kEl.dataset.note); if (!sustainPedalActive) kEl.classList.remove('active'); } } }); }
+            function setupKeyboardEvents() { keyboardContainer.addEventListener('mousedown', e => { if (!audioContext) initAudio(); if (!audioContext || e.button !== 0) return; const tK = e.target.closest('.white-key, .black-key'); if (tK) { isMouseDraggingOnKeyboard = true; document.body.style.userSelect = 'none'; const n = tK.dataset.note; playNote(n, 0.7, "mouse-drag-start", true); tK.classList.add('active'); currentDraggedKeyElement = tK; } }); document.addEventListener('mousemove', e => { if (!isMouseDraggingOnKeyboard) return; const kUM = document.elementFromPoint(e.clientX, e.clientY)?.closest('.white-key, .black-key'); if (kUM && kUM !== currentDraggedKeyElement) { if (currentDraggedKeyElement) { stopNote(currentDraggedKeyElement.dataset.note, "mouse-drag-slide-out"); if (!sustainPedalActive) currentDraggedKeyElement.classList.remove('active'); } const n = kUM.dataset.note; playNote(n, 0.7, "mouse-drag-slide-in", true); kUM.classList.add('active'); currentDraggedKeyElement = kUM; } else if (!kUM && currentDraggedKeyElement) { stopNote(currentDraggedKeyElement.dataset.note, "mouse-drag-off-key"); if (!sustainPedalActive) currentDraggedKeyElement.classList.remove('active'); currentDraggedKeyElement = null; } }); document.addEventListener('mouseup', e => { if (e.button !== 0) return; if (isMouseDraggingOnKeyboard) { if (currentDraggedKeyElement) { stopNote(currentDraggedKeyElement.dataset.note, "mouse-drag-end"); if (!sustainPedalActive) currentDraggedKeyElement.classList.remove('active'); } isMouseDraggingOnKeyboard = false; document.body.style.userSelect = ''; currentDraggedKeyElement = null; } }); keyboardContainer.addEventListener('touchstart', e => { if (!audioContext) initAudio(); if (!audioContext) return; e.preventDefault(); for (let t of e.changedTouches) { const tK = document.elementFromPoint(t.clientX, t.clientY)?.closest('.white-key, .black-key'); if (tK) { const n = tK.dataset.note; playNote(n, 0.7, "touch-start", true); tK.classList.add('active'); activeTouches.set(t.identifier, tK); } } }, { passive: false }); keyboardContainer.addEventListener('touchmove', e => { if (!audioContext) return; e.preventDefault(); for (let t of e.changedTouches) { const tI = t.identifier; const kUT = document.elementFromPoint(t.clientX, t.clientY)?.closest('.white-key, .black-key'); const pKFT = activeTouches.get(tI); if (kUT !== pKFT) { if (pKFT) { stopNote(pKFT.dataset.note, "touch-slide-out"); if (!sustainPedalActive) pKFT.classList.remove('active'); } if (kUT) { const n = kUT.dataset.note; playNote(n, 0.7, "touch-slide-in", true); kUT.classList.add('active'); activeTouches.set(tI, kUT); } else { activeTouches.delete(tI); } } } }, { passive: false }); keyboardContainer.addEventListener('touchend', e => { e.preventDefault(); for (let t of e.changedTouches) { const tI = t.identifier; const rK = activeTouches.get(tI); if (rK) { stopNote(rK.dataset.note, "touch-end"); if (!sustainPedalActive) rK.classList.remove('active'); activeTouches.delete(tI); } } }, { passive: false }); keyboardContainer.addEventListener('touchcancel', e => { e.preventDefault(); for (let t of e.changedTouches) { const tI = t.identifier; const cK = activeTouches.get(tI); if (cK) { stopNote(cK.dataset.note, "touch-cancel"); if (!sustainPedalActive) cK.classList.remove('active'); activeTouches.delete(tI); } } }, { passive: false }); document.addEventListener('keydown', e => { if (e.target.closest('input, select, button, summary')) return; if (e.code === 'Space') { e.preventDefault(); if (!sustainPedalActive) { sustainPedalActive = true; activeComputerKeys.forEach(nS => playNote(nS, 0.7, "sustain_retrigger", false)); } } else if (!e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) { const k = e.key.toLowerCase(); if (!Object.prototype.hasOwnProperty.call(keyMapping, k)) return; const kI = keyMapping[k]; const kEl = keyboardContainer.querySelector(`[data-keymap-index="${kI}"]`); if (kEl && !activeComputerKeys.has(kEl.dataset.note)) { playNote(kEl.dataset.note, 0.7, "computer", true); kEl.classList.add('active'); activeComputerKeys.add(kEl.dataset.note); } } }); document.addEventListener('keyup', e => { if (e.target.closest('input, select, button, summary')) return; if (e.code === 'Space') { e.preventDefault(); if (sustainPedalActive) { sustainPedalActive = false; const nTR = new Set(notesSustained); nTR.forEach(nS => { if (!activeComputerKeys.has(nS) && !isKeyHeldByMouseOrTouch(nS) && !midiHeld.has(nS)) { stopNote(nS, "sustain_release"); } }); notesSustained.clear(); } } else { const k = e.key.toLowerCase(); if (!Object.prototype.hasOwnProperty.call(keyMapping, k)) return; const kI = keyMapping[k]; const kEl = keyboardContainer.querySelector(`[data-keymap-index="${kI}"]`); if (kEl && activeComputerKeys.has(kEl.dataset.note)) { stopNote(kEl.dataset.note, "computer"); activeComputerKeys.delete(kEl.dataset.note); if (!sustainPedalActive) kEl.classList.remove('active'); } } }); }
             function isKeyHeldByMouseOrTouch(noteString) { if (currentDraggedKeyElement && currentDraggedKeyElement.dataset.note === noteString) return true; for (const kEl of activeTouches.values()) { if (kEl.dataset.note === noteString) return true; } return false; }
 
             function setupControlEvents() {
@@ -328,7 +333,7 @@
             // Notes heard by the listener (source "audio", js/listening.js) carry the time they were sung, and say
             // when they are `silent` (on speakers they light the keys without sounding, so the mic doesn't hear them).
             let midiNoteTime = null, inputSilent = true, loopRecordKind = 'notes';
-            function emitNote(noteString, velocity, on, source, silent = false) { const nN=noteString.replace(/\d+$/,''); const midi=parseInt(noteString.match(/\d+$/)[0])*12+midiNoteNames.indexOf(nN); window.dispatchEvent(new CustomEvent('synth:note',{detail:{note:noteString,midi,velocity,on,source,silent,time:(source==='midi'||source==='audio')&&midiNoteTime?midiNoteTime:performance.now()}})); }
+            function emitNote(noteString, velocity, on, source, silent = false) { const nN=noteString.replace(/\d+$/,''); const midi=parseInt(noteString.match(/\d+$/)[0])*12+midiNoteNames.indexOf(nN); window.dispatchEvent(new CustomEvent('synth:note',{detail:{note:noteString,midi,velocity,on,source,silent,time:/^(midi|audio|arp)/.test(source)&&midiNoteTime?midiNoteTime:performance.now()}})); }
 
             function emergencyStopAllSounds() {
                 console.warn("PANIC: Stopping all sounds!"); 
@@ -357,7 +362,8 @@
                 
                 activeVisualNoteElements.forEach(d => { if(d.animationFrameId) cancelAnimationFrame(d.animationFrameId); if(d.element && d.element.parentElement) d.element.remove(); }); 
                 activeVisualNoteElements = []; 
-                sustainPedalActive = false; notesSustained.clear(); 
+                sustainPedalActive = false; notesSustained.clear(); midiHeld.clear();
+                if (bendNode) { bendNode.offset.cancelScheduledValues(audioContext.currentTime); bendNode.offset.setValueAtTime(0, audioContext.currentTime); vibratoDepth.gain.setValueAtTime(0, audioContext.currentTime); }
                 
                 if (looperQuantizationTimeout) clearTimeout(looperQuantizationTimeout);
                 looperQuantizationTimeout = null;
@@ -401,11 +407,16 @@
             function visualize() { requestAnimationFrame(visualize); if (!audioContext || !visualizerContext || !visualizerCanvas) return; let currentAnalyser = analyser; const oscN = /^osc(\d+)$/.exec(visualizerSourceSelect ? visualizerSourceSelect.value : ''); if (oscN) currentAnalyser = oscTap(Number(oscN[1]) - 1).analyser; const input = visualizerSourceSelect?.value === 'input'; if (input) currentAnalyser = window.synth.inputScope; /* the Listening widget's input, while it listens */ if (!currentAnalyser) { if (input) { visualizerContext.clearRect(0, 0, visualizerCanvas.width, visualizerCanvas.height); window.synth.scopeOverlay?.(visualizerContext, visualizerCanvas.width, visualizerCanvas.height, null); } return; } const bL=currentAnalyser.frequencyBinCount;const dA=new Uint8Array(bL);currentAnalyser.getByteTimeDomainData(dA);visualizerContext.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--primary-surface-color').trim();visualizerContext.fillRect(0,0,visualizerCanvas.width,visualizerCanvas.height);visualizerContext.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--border-color').trim();visualizerContext.lineWidth=0.5*parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--font-scale-factor'));const nVL=4;for(let i=1;i<nVL;i++){const x=(visualizerCanvas.width/nVL)*i;visualizerContext.beginPath();visualizerContext.moveTo(x,0);visualizerContext.lineTo(x,visualizerCanvas.height);visualizerContext.stroke();}const nHL=2;for(let i=1;i<=nHL;i++){const y1=visualizerCanvas.height*(0.5-0.25*i);const y2=visualizerCanvas.height*(0.5+0.25*i);visualizerContext.beginPath();visualizerContext.moveTo(0,y1);visualizerContext.lineTo(visualizerCanvas.width,y1);visualizerContext.stroke();visualizerContext.beginPath();visualizerContext.moveTo(0,y2);visualizerContext.lineTo(visualizerCanvas.width,y2);visualizerContext.stroke();}visualizerContext.lineWidth=2.5*parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--font-scale-factor'));const aC=getComputedStyle(document.documentElement).getPropertyValue('--accent-color').trim();visualizerContext.strokeStyle=aC;visualizerContext.shadowBlur=10*parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--font-scale-factor'));visualizerContext.shadowColor=aC;visualizerContext.beginPath();const sW=visualizerCanvas.width*1.0/bL;let x=0;for(let i=0;i<bL;i++){const v=dA[i]/128.0;const y=v*visualizerCanvas.height/2;if(i===0)visualizerContext.moveTo(x,y);else visualizerContext.lineTo(x,y);x+=sW;}visualizerContext.lineTo(visualizerCanvas.width,visualizerCanvas.height/2);visualizerContext.stroke();visualizerContext.shadowBlur=0; if (input) window.synth.scopeOverlay?.(visualizerContext, visualizerCanvas.width, visualizerCanvas.height, currentAnalyser); }
             let activeLEDIndex=0;const genLeds=[document.getElementById('led1'),document.getElementById('led2'),document.getElementById('led3')]; function cycleLEDs(){genLeds.forEach(l=>l.classList.remove('active'));if(genLeds[activeLEDIndex])genLeds[activeLEDIndex].classList.add('active');activeLEDIndex=(activeLEDIndex+1)%genLeds.length;}
             function resizeCanvas() { if (visualizerCanvas) { visualizerCanvas.width = visualizerCanvas.clientWidth; visualizerCanvas.height = visualizerCanvas.clientHeight; if (audioContext && analyser) { const sR = audioContext.sampleRate; const bTM = (analyser.fftSize / 2 / sR * 1000).toFixed(0); const fBTM = (analyser.fftSize / sR * 1000).toFixed(0); const tAL = visualizerCanvas.parentElement.querySelector('.visualizer-time-axis').children; if (tAL[1]) tAL[1].textContent = `~${bTM}ms`; if (tAL[2]) tAL[2].textContent = `~${fBTM}ms`; } } if (synthesiaToggle && synthesiaToggle.checked) createSynthesiaGrid(); }
-            function setupMIDI(){ if(navigator.requestMIDIAccess)navigator.requestMIDIAccess({sysex:false}).then(onS,onF);else console.warn("No MIDI support.");} function onS(mA){const iN=mA.inputs.values();for(let n=iN.next();n&&!n.done;n=iN.next())n.value.onmidimessage=onM;} function onF(m){console.error(`Failed MIDI: ${m}`);}
-            // MIDI clock (tick, start, continue, stop) goes to the beat clock as synth:midi-clock; notes play.
-            const MIDI_CLOCK = { 0xF8: 'tick', 0xFA: 'start', 0xFB: 'continue', 0xFC: 'stop' };
-            function onM(msg){ if (msg.data[0] >= 0xF8) { const type = MIDI_CLOCK[msg.data[0]]; if (type) window.dispatchEvent(new CustomEvent('synth:midi-clock', { detail: { type, time: msg.timeStamp || performance.now() } })); return; } midiNoteTime = msg.timeStamp || null; onNoteMessage(msg); midiNoteTime = null; }
-            function onNoteMessage(msg){ const[cmd,nN,vR]=msg.data; const nS=midiNoteToNoteString(nN); const vL=vR/127; const kE=keyboardContainer.querySelector(`[data-midi="${nN}"]`); if((cmd&0xF0)===0x90&&vR>0){ playNote(nS,vL,"midi",true); if(kE)kE.classList.add('active');}else if((cmd&0xF0)===0x80||((cmd&0xF0)===0x90&&vR===0)){ stopNote(nS,"midi"); if(kE && !sustainPedalActive)kE.classList.remove('active');}}
+            // MIDI ports, clock and controllers are js/controllers/midi.js's; it plays notes through window.synth.midi.
+            // A note from a MIDI keyboard: lit on the keys, falling, recorded by an armed loop slot, at the time stamp
+            // of its message. `source` is 'midi' (or 'midi-pad', 'midi-arp' for a controller's pads and arpeggiator).
+            function midiNote(nN, vL, on, time = null, source = 'midi') { const nS=midiNoteToNoteString(nN); const kE=keyboardContainer.querySelector(`[data-midi="${nN}"]`); midiNoteTime = time; try { if(on){ midiHeld.add(nS); playNote(nS,vL,source,true); if(kE)kE.classList.add('active');}else{ midiHeld.delete(nS); stopNote(nS,source); if(kE && !sustainPedalActive)kE.classList.remove('active');} } finally { midiNoteTime = null; } }
+            // The sustain pedal (CC 64) as the space bar holds notes: lifted, the notes not still held down stop.
+            function setSustain(on) { if (on === sustainPedalActive) return; sustainPedalActive = on; if (on) { Object.keys(activeSoundUnits).forEach(n => notesSustained.add(n)); return; } const nTR = new Set(notesSustained); nTR.forEach(nS => { if (!activeComputerKeys.has(nS) && !isKeyHeldByMouseOrTouch(nS) && !midiHeld.has(nS)) { stopNote(nS, "sustain_release"); keyboardContainer.querySelector(`[data-note="${nS}"]`)?.classList.remove('active'); } }); notesSustained.clear(); }
+            // Pitch bend in semitones (held to the bend range) and vibrato depth from 0 to 1 (up to 60 cents at 5.5 Hz).
+            function ensureBend() { if (bendNode || !audioContext) return bendNode; bendNode = new ConstantSourceNode(audioContext, { offset: 0 }); bendNode.start(); const lfo = new OscillatorNode(audioContext, { frequency: 5.5 }); vibratoDepth = new GainNode(audioContext, { gain: 0 }); lfo.connect(vibratoDepth).connect(bendNode.offset); lfo.start(); Object.values(activeSoundUnits).forEach(u => u.oscillators.forEach(o => bendNode.connect(o.detune))); return bendNode; }
+            function setBend(semitones) { if (!ensureBend()) return; bendNode.offset.setTargetAtTime(Math.max(-bendRange, Math.min(bendRange, semitones)) * 100, audioContext.currentTime, 0.005); }
+            function setVibrato(depth) { if (!ensureBend()) return; vibratoDepth.gain.setTargetAtTime(Math.max(0, Math.min(1, depth)) * 60, audioContext.currentTime, 0.02); }
             // The falling-notes area as a piano roll: a lane over every key, placed exactly as falling notes are
             // (proportionally from the key's place on the keyboard), black-key lanes shaded. Redrawn whenever the
             // keyboard changes size or keys.
@@ -609,6 +620,14 @@
                 buttonsDiv.appendChild(clearButton);
                 
                 slotDiv.appendChild(buttonsDiv);
+
+                // The slot's volume: its notes' velocity and its audio take's gain (a controller's fader on the Looper page).
+                const volume = document.createElement('input');
+                Object.assign(volume, { type: 'range', id: `loop-slot-volume-${slotId}`, min: 0, max: 1, step: 0.01, value: slotData.volume ?? 1, className: 'horizontal-slider' });
+                volume.setAttribute('aria-label', `Slot ${slotId + 1} volume`);
+                volume.addEventListener('input', () => { const slot = loopSlotsData[slotId]; slot.volume = Number(volume.value); if (slot.gainNode) sAPT(slot.gainNode.gain, slot.volume); });
+                const volumeLabel = document.createElement('label'); volumeLabel.className = 'loop-slot-volume'; volumeLabel.append('Volume ', volume);
+                slotDiv.appendChild(volumeLabel);
 
                 const ledsDiv = document.createElement('div');
                 ledsDiv.className = 'loop-slot-leds';
@@ -865,6 +884,8 @@
                 updateAllLoopSlotButtons();
             }
             
+            // A slot's audio take plays through its own gain, its Volume.
+            function slotGain(slotId) { const slot = loopSlotsData[slotId]; if (!slot.gainNode || slot.gainNode.context !== audioContext) { slot.gainNode = new GainNode(audioContext, { gain: slot.volume ?? 1 }); slot.gainNode.connect(masterGain); } return slot.gainNode; }
             function playbackLoopSlot(slotId, loopCycleStartAudioTime) {
                 const slot = loopSlotsData[slotId];
                 if (!slot.isPlaying || (slot.recordedEvents.length === 0 && !slot.audio) || slot.loopDuration <= 0) { // loopDuration must be > 0
@@ -876,7 +897,7 @@
                 // An audio take plays from the start of every cycle, through the master volume and effects.
                 if (slot.audio) {
                     const src = new AudioBufferSourceNode(audioContext, { buffer: slot.audio });
-                    src.connect(masterGain); src.start(Math.max(audioContext.currentTime, loopCycleStartAudioTime)); src.stop(loopCycleStartAudioTime + slot.loopDuration / 1000);
+                    src.connect(slotGain(slotId)); src.start(Math.max(audioContext.currentTime, loopCycleStartAudioTime)); src.stop(loopCycleStartAudioTime + slot.loopDuration / 1000);
                     (slot.audioSources ||= []).push(src); src.onended = () => { slot.audioSources = slot.audioSources.filter(x => x !== src); src.disconnect(); };
                 }
                 slot.recordedEvents.forEach(event => {
@@ -1076,6 +1097,25 @@ window.synth = {
    updateBPMDisplay();
   } else window.synth.tempo = next;
  },
+ // A MIDI controller (js/controllers/): notes (`source` 'midi', 'midi-pad' or 'midi-arp'), the sustain pedal, pitch
+ // bend in semitones within ±bendRange, and vibrato (the mod wheel) from 0 to 1.
+ midi: {
+  note: (midi, velocity, on, time = null, source = 'midi') => { if (!audioContext) initAudio(); midiNote(midi, velocity, on, time, source); },
+  sustain: on => setSustain(!!on),
+  get sustained() { return sustainPedalActive; },
+  bend: semitones => setBend(semitones),
+  vibrato: depth => setVibrato(depth),
+  get bendRange() { return bendRange; }, set bendRange(v) { bendRange = Math.max(1, Math.min(24, Number(v) || 2)); },
+  get held() { return [...midiHeld]; },
+  // Lets go of every key a controller holds (it was unplugged mid-note): no note is left stuck.
+  releaseAll: () => { [...midiHeld].forEach(nS => { midiHeld.delete(nS); stopNote(nS, 'emergency'); keyboardContainer.querySelector(`[data-note="${nS}"]`)?.classList.remove('active'); }); setSustain(false); if (bendNode) { setBend(0); setVibrato(0); } },
+ },
+ // The keys on screen move to an octave (the Keyboard Octave, 2 to 6) without stopping the notes held, which stay lit:
+ // a controller's Octave buttons moved its keys.
+ showOctave: octave => { const o = String(Math.max(2, Math.min(6, Math.round(octave)))); if (baseOctaveSelect.value === o) return false; baseOctaveSelect.value = o; createKeyboard(); midiHeld.forEach(nS => keyboardContainer.querySelector(`[data-note="${nS}"]`)?.classList.add('active')); return true; },
+ get octave() { return Number(baseOctaveSelect.value); },
+ get keyRange() { const lo = Number(baseOctaveSelect.value) * 12; return [lo, lo + Number(numOctavesSelect.value) * 12]; },
+ loopVolume: (id, v) => { const input = document.getElementById(`loop-slot-volume-${id}`); if (v === undefined) return Number(input?.value ?? 1); if (input) { input.value = v; input.dispatchEvent(new Event('input', { bubbles: true })); } return Number(v); },
  input: (midi, on, { velocity = 0.7, time = null, silent = true } = {}) => {
   if (!audioContext) initAudio();
   const nS = midiNoteToNoteString(midi), kE = keyboardContainer.querySelector(`[data-midi="${midi}"]`);

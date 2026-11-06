@@ -1,0 +1,251 @@
+{
+ "$schema": "../../schema.json",
+ "format": 1,
+ "author": "midi (Shubin123/midi)",
+ "version": "1.0.0",
+ "licence": "MIT",
+ "id": "generic/knobs",
+ "name": "Generic 8-knob",
+ "maker": "Generic",
+ "models": [
+  "Any controller with knobs"
+ ],
+ "status": "official",
+ "verified": "unverified",
+ "generic": true,
+ "description": "Eight knobs, whatever they send: the first eight different CCs the controller sends become knobs 1 to 8, in the order you turn them (a relative encoder is told from a knob by its values), and they move the page's parameters. Keys, wheels and the pedal play as on a keyboard.",
+ "sources": [
+  {
+   "id": "gm",
+   "title": "MIDI 1.0 Detailed Specification and General MIDI 1 (MIDI Association)",
+   "url": "https://midi.org/specs",
+   "notes": "CC 1 modulation, CC 64 sustain, channel 10 percussion with notes 35-81, pitch bend centred at 8192."
+  }
+ ],
+ "controls": [
+  {
+   "id": "keys",
+   "type": "keys",
+   "label": "Keys",
+   "role": "keys",
+   "velocity": true
+  },
+  {
+   "id": "bend",
+   "type": "wheel",
+   "label": "Pitch wheel",
+   "role": "pitch wheel"
+  },
+  {
+   "id": "mod",
+   "type": "wheel",
+   "label": "Mod wheel",
+   "role": "mod wheel"
+  },
+  {
+   "id": "pedal",
+   "type": "pedal",
+   "label": "Sustain pedal",
+   "role": "sustain pedal"
+  },
+  {
+   "id": "pressure",
+   "type": "keys",
+   "label": "Aftertouch",
+   "role": "aftertouch",
+   "aftertouch": "channel"
+  },
+  {
+   "id": "knob1",
+   "type": "knob",
+   "label": "Knob 1",
+   "role": "knob 1"
+  },
+  {
+   "id": "knob2",
+   "type": "knob",
+   "label": "Knob 2",
+   "role": "knob 2"
+  },
+  {
+   "id": "knob3",
+   "type": "knob",
+   "label": "Knob 3",
+   "role": "knob 3"
+  },
+  {
+   "id": "knob4",
+   "type": "knob",
+   "label": "Knob 4",
+   "role": "knob 4"
+  },
+  {
+   "id": "knob5",
+   "type": "knob",
+   "label": "Knob 5",
+   "role": "knob 5"
+  },
+  {
+   "id": "knob6",
+   "type": "knob",
+   "label": "Knob 6",
+   "role": "knob 6"
+  },
+  {
+   "id": "knob7",
+   "type": "knob",
+   "label": "Knob 7",
+   "role": "knob 7"
+  },
+  {
+   "id": "knob8",
+   "type": "knob",
+   "label": "Knob 8",
+   "role": "knob 8"
+  }
+ ],
+ "programs": [
+  {
+   "id": "learned",
+   "name": "Learned",
+   "default": true,
+   "template": true,
+   "autolearn": true,
+   "messages": {
+    "keys": {
+     "notes": [
+      0,
+      127
+     ],
+     "channel": "any",
+     "source": "gm"
+    },
+    "bend": {
+     "bend": true,
+     "channel": "any"
+    },
+    "mod": {
+     "cc": 1,
+     "channel": "any",
+     "encoding": "absolute"
+    },
+    "pedal": {
+     "cc": 64,
+     "channel": "any",
+     "encoding": "absolute"
+    },
+    "pressure": {
+     "pressure": true,
+     "channel": "any"
+    },
+    "knob1": {
+     "learn": true
+    },
+    "knob2": {
+     "learn": true
+    },
+    "knob3": {
+     "learn": true
+    },
+    "knob4": {
+     "learn": true
+    },
+    "knob5": {
+     "learn": true
+    },
+    "knob6": {
+     "learn": true
+    },
+    "knob7": {
+     "learn": true
+    },
+    "knob8": {
+     "learn": true
+    }
+   }
+  }
+ ],
+ "variations": [
+  {
+   "id": "knobs",
+   "name": "Knobs",
+   "default": true,
+   "pages": [
+    {
+     "id": "synth",
+     "name": "Synth",
+     "params": [
+      "levelOsc1",
+      "detuneOsc1",
+      "levelOsc2",
+      "detuneOsc2",
+      "filterCutoff",
+      "filterResonance",
+      "attack",
+      "release"
+     ]
+    },
+    {
+     "id": "plugin",
+     "name": "Plugin",
+     "from": "plugin"
+    },
+    {
+     "id": "air",
+     "name": "Air/FX",
+     "from": "widget",
+     "widget": "Air"
+    }
+   ],
+   "mappings": {
+    "keys": {
+     "do": "notes"
+    },
+    "bend": {
+     "do": "bend"
+    },
+    "mod": {
+     "do": "mod"
+    },
+    "pedal": {
+     "do": "sustain"
+    },
+    "pressure": {
+     "do": "pressure"
+    },
+    "knob1": {
+     "do": "page",
+     "slot": 1
+    },
+    "knob2": {
+     "do": "page",
+     "slot": 2
+    },
+    "knob3": {
+     "do": "page",
+     "slot": 3
+    },
+    "knob4": {
+     "do": "page",
+     "slot": 4
+    },
+    "knob5": {
+     "do": "page",
+     "slot": 5
+    },
+    "knob6": {
+     "do": "page",
+     "slot": 6
+    },
+    "knob7": {
+     "do": "page",
+     "slot": 7
+    },
+    "knob8": {
+     "do": "page",
+     "slot": 8
+    }
+   }
+  }
+ ]
+}

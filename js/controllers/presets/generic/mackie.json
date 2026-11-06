@@ -1,0 +1,603 @@
+{
+ "$schema": "../../schema.json",
+ "format": 1,
+ "author": "midi (Shubin123/midi)",
+ "version": "1.0.0",
+ "licence": "MIT",
+ "id": "generic/mackie",
+ "name": "Mackie Control",
+ "maker": "Generic",
+ "models": [
+  "Controllers in Mackie Control (MCU) mode"
+ ],
+ "status": "community",
+ "verified": "documented",
+ "generic": true,
+ "description": "A controller in its Mackie Control mode: V-Pots move the page, faders 1-4 the volume, oscillator 2, sub and noise (5-8 the loop slots), the master fader the volume, the jog wheel browses (Select 1 confirms), Select 2-8 run loop slots, the metronome, tap and record, and the transport plays, stops, records and loops. Transport LEDs light (a note echoed back). Its messages come from Ardour's implementation of the protocol.",
+ "sources": [
+  {
+   "id": "ardour",
+   "title": "Ardour's Mackie Control surface (libs/surfaces/mackie: device_info.cc, surface.cc, pot.cc, jog.cc)",
+   "url": "https://github.com/Ardour/ardour/tree/master/libs/surfaces/mackie",
+   "notes": "An open-source DAW's implementation of the protocol, not Mackie's own document."
+  }
+ ],
+ "controls": [
+  {
+   "id": "vpot1",
+   "type": "encoder",
+   "label": "V-Pot 1",
+   "role": "knob 1"
+  },
+  {
+   "id": "vpot2",
+   "type": "encoder",
+   "label": "V-Pot 2",
+   "role": "knob 2"
+  },
+  {
+   "id": "vpot3",
+   "type": "encoder",
+   "label": "V-Pot 3",
+   "role": "knob 3"
+  },
+  {
+   "id": "vpot4",
+   "type": "encoder",
+   "label": "V-Pot 4",
+   "role": "knob 4"
+  },
+  {
+   "id": "vpot5",
+   "type": "encoder",
+   "label": "V-Pot 5",
+   "role": "knob 5"
+  },
+  {
+   "id": "vpot6",
+   "type": "encoder",
+   "label": "V-Pot 6",
+   "role": "knob 6"
+  },
+  {
+   "id": "vpot7",
+   "type": "encoder",
+   "label": "V-Pot 7",
+   "role": "knob 7"
+  },
+  {
+   "id": "vpot8",
+   "type": "encoder",
+   "label": "V-Pot 8",
+   "role": "knob 8"
+  },
+  {
+   "id": "fader1",
+   "type": "fader",
+   "label": "Fader 1",
+   "role": "fader 1"
+  },
+  {
+   "id": "fader2",
+   "type": "fader",
+   "label": "Fader 2",
+   "role": "fader 2"
+  },
+  {
+   "id": "fader3",
+   "type": "fader",
+   "label": "Fader 3",
+   "role": "fader 3"
+  },
+  {
+   "id": "fader4",
+   "type": "fader",
+   "label": "Fader 4",
+   "role": "fader 4"
+  },
+  {
+   "id": "fader5",
+   "type": "fader",
+   "label": "Fader 5",
+   "role": "fader 5"
+  },
+  {
+   "id": "fader6",
+   "type": "fader",
+   "label": "Fader 6",
+   "role": "fader 6"
+  },
+  {
+   "id": "fader7",
+   "type": "fader",
+   "label": "Fader 7",
+   "role": "fader 7"
+  },
+  {
+   "id": "fader8",
+   "type": "fader",
+   "label": "Fader 8",
+   "role": "fader 8"
+  },
+  {
+   "id": "master",
+   "type": "fader",
+   "label": "Master fader",
+   "role": "master fader"
+  },
+  {
+   "id": "jog",
+   "type": "encoder",
+   "label": "Jog wheel",
+   "role": "main encoder"
+  },
+  {
+   "id": "select1",
+   "type": "button",
+   "label": "Select 1",
+   "role": "pad 1"
+  },
+  {
+   "id": "select2",
+   "type": "button",
+   "label": "Select 2",
+   "role": "pad 2"
+  },
+  {
+   "id": "select3",
+   "type": "button",
+   "label": "Select 3",
+   "role": "pad 3"
+  },
+  {
+   "id": "select4",
+   "type": "button",
+   "label": "Select 4",
+   "role": "pad 4"
+  },
+  {
+   "id": "select5",
+   "type": "button",
+   "label": "Select 5",
+   "role": "pad 5"
+  },
+  {
+   "id": "select6",
+   "type": "button",
+   "label": "Select 6",
+   "role": "pad 6"
+  },
+  {
+   "id": "select7",
+   "type": "button",
+   "label": "Select 7",
+   "role": "pad 7"
+  },
+  {
+   "id": "select8",
+   "type": "button",
+   "label": "Select 8",
+   "role": "pad 8"
+  },
+  {
+   "id": "rewind",
+   "type": "button",
+   "label": "Rewind",
+   "role": "rewind"
+  },
+  {
+   "id": "ffwd",
+   "type": "button",
+   "label": "Fast forward",
+   "role": "ffwd"
+  },
+  {
+   "id": "stop",
+   "type": "button",
+   "label": "Stop",
+   "role": "stop"
+  },
+  {
+   "id": "play",
+   "type": "button",
+   "label": "Play",
+   "role": "play"
+  },
+  {
+   "id": "record",
+   "type": "button",
+   "label": "Record",
+   "role": "record"
+  },
+  {
+   "id": "cycle",
+   "type": "button",
+   "label": "Cycle",
+   "role": "cycle"
+  }
+ ],
+ "detect": {
+  "ports": [
+   {
+    "name": "\\b(mcu|mackie|hui)\\b",
+    "role": "main",
+    "source": "a port named for Mackie Control"
+   }
+  ]
+ },
+ "programs": [
+  {
+   "id": "mcu",
+   "name": "Mackie Control",
+   "default": true,
+   "messages": {
+    "vpot1": {
+     "cc": 16,
+     "channel": "any",
+     "encoding": "signed-bit",
+     "source": "ardour: Pot::ID 0x10 + strip; bit 6 is the sign, bits 0-5 the ticks"
+    },
+    "vpot2": {
+     "cc": 17,
+     "channel": "any",
+     "encoding": "signed-bit",
+     "source": "ardour: Pot::ID 0x10 + strip; bit 6 is the sign, bits 0-5 the ticks"
+    },
+    "vpot3": {
+     "cc": 18,
+     "channel": "any",
+     "encoding": "signed-bit",
+     "source": "ardour: Pot::ID 0x10 + strip; bit 6 is the sign, bits 0-5 the ticks"
+    },
+    "vpot4": {
+     "cc": 19,
+     "channel": "any",
+     "encoding": "signed-bit",
+     "source": "ardour: Pot::ID 0x10 + strip; bit 6 is the sign, bits 0-5 the ticks"
+    },
+    "vpot5": {
+     "cc": 20,
+     "channel": "any",
+     "encoding": "signed-bit",
+     "source": "ardour: Pot::ID 0x10 + strip; bit 6 is the sign, bits 0-5 the ticks"
+    },
+    "vpot6": {
+     "cc": 21,
+     "channel": "any",
+     "encoding": "signed-bit",
+     "source": "ardour: Pot::ID 0x10 + strip; bit 6 is the sign, bits 0-5 the ticks"
+    },
+    "vpot7": {
+     "cc": 22,
+     "channel": "any",
+     "encoding": "signed-bit",
+     "source": "ardour: Pot::ID 0x10 + strip; bit 6 is the sign, bits 0-5 the ticks"
+    },
+    "vpot8": {
+     "cc": 23,
+     "channel": "any",
+     "encoding": "signed-bit",
+     "source": "ardour: Pot::ID 0x10 + strip; bit 6 is the sign, bits 0-5 the ticks"
+    },
+    "fader1": {
+     "bend": true,
+     "channel": 1,
+     "encoding": "absolute",
+     "source": "ardour: one pitch bend channel per strip, 14 bits"
+    },
+    "fader2": {
+     "bend": true,
+     "channel": 2,
+     "encoding": "absolute",
+     "source": "ardour: one pitch bend channel per strip, 14 bits"
+    },
+    "fader3": {
+     "bend": true,
+     "channel": 3,
+     "encoding": "absolute",
+     "source": "ardour: one pitch bend channel per strip, 14 bits"
+    },
+    "fader4": {
+     "bend": true,
+     "channel": 4,
+     "encoding": "absolute",
+     "source": "ardour: one pitch bend channel per strip, 14 bits"
+    },
+    "fader5": {
+     "bend": true,
+     "channel": 5,
+     "encoding": "absolute",
+     "source": "ardour: one pitch bend channel per strip, 14 bits"
+    },
+    "fader6": {
+     "bend": true,
+     "channel": 6,
+     "encoding": "absolute",
+     "source": "ardour: one pitch bend channel per strip, 14 bits"
+    },
+    "fader7": {
+     "bend": true,
+     "channel": 7,
+     "encoding": "absolute",
+     "source": "ardour: one pitch bend channel per strip, 14 bits"
+    },
+    "fader8": {
+     "bend": true,
+     "channel": 8,
+     "encoding": "absolute",
+     "source": "ardour: one pitch bend channel per strip, 14 bits"
+    },
+    "master": {
+     "bend": true,
+     "channel": 9,
+     "encoding": "absolute",
+     "source": "ardour: the master fader on the channel after the strips"
+    },
+    "jog": {
+     "cc": 60,
+     "channel": "any",
+     "encoding": "signed-bit",
+     "source": "ardour: Jog::ID 0x3c"
+    },
+    "select1": {
+     "note": 24,
+     "channel": "any",
+     "source": "ardour: Select 0x18 + strip"
+    },
+    "select2": {
+     "note": 25,
+     "channel": "any",
+     "source": "ardour: Select 0x18 + strip"
+    },
+    "select3": {
+     "note": 26,
+     "channel": "any",
+     "source": "ardour: Select 0x18 + strip"
+    },
+    "select4": {
+     "note": 27,
+     "channel": "any",
+     "source": "ardour: Select 0x18 + strip"
+    },
+    "select5": {
+     "note": 28,
+     "channel": "any",
+     "source": "ardour: Select 0x18 + strip"
+    },
+    "select6": {
+     "note": 29,
+     "channel": "any",
+     "source": "ardour: Select 0x18 + strip"
+    },
+    "select7": {
+     "note": 30,
+     "channel": "any",
+     "source": "ardour: Select 0x18 + strip"
+    },
+    "select8": {
+     "note": 31,
+     "channel": "any",
+     "source": "ardour: Select 0x18 + strip"
+    },
+    "rewind": {
+     "note": 91,
+     "channel": "any",
+     "source": "ardour: 0x5b"
+    },
+    "ffwd": {
+     "note": 92,
+     "channel": "any",
+     "source": "ardour: 0x5c"
+    },
+    "stop": {
+     "note": 93,
+     "channel": "any",
+     "source": "ardour: 0x5d"
+    },
+    "play": {
+     "note": 94,
+     "channel": "any",
+     "source": "ardour: 0x5e"
+    },
+    "record": {
+     "note": 95,
+     "channel": "any",
+     "source": "ardour: 0x5f"
+    },
+    "cycle": {
+     "note": 86,
+     "channel": "any",
+     "source": "ardour: Cycle 0x56"
+    }
+   }
+  }
+ ],
+ "feedback": {
+  "requires": "none",
+  "leds": {
+   "controls": [
+    "stop",
+    "play",
+    "record",
+    "cycle"
+   ],
+   "on": 127,
+   "off": 0,
+   "source": "ardour: a button's LED is a note on with velocity 127 (on), 1 (flashing) or 0 (off)"
+  }
+ },
+ "variations": [
+  {
+   "id": "mixer",
+   "name": "Mixer",
+   "default": true,
+   "pages": [
+    {
+     "id": "synth",
+     "name": "Synth",
+     "params": [
+      "levelOsc1",
+      "detuneOsc1",
+      "levelOsc2",
+      "detuneOsc2",
+      "filterCutoff",
+      "filterResonance",
+      "attack",
+      "release"
+     ]
+    },
+    {
+     "id": "plugin",
+     "name": "Plugin",
+     "from": "plugin"
+    },
+    {
+     "id": "air",
+     "name": "Air/FX",
+     "from": "widget",
+     "widget": "Air"
+    },
+    {
+     "id": "automation",
+     "name": "Automation",
+     "from": "automation"
+    }
+   ],
+   "mappings": {
+    "vpot1": {
+     "do": "page",
+     "slot": 1
+    },
+    "vpot2": {
+     "do": "page",
+     "slot": 2
+    },
+    "vpot3": {
+     "do": "page",
+     "slot": 3
+    },
+    "vpot4": {
+     "do": "page",
+     "slot": 4
+    },
+    "vpot5": {
+     "do": "page",
+     "slot": 5
+    },
+    "vpot6": {
+     "do": "page",
+     "slot": 6
+    },
+    "vpot7": {
+     "do": "page",
+     "slot": 7
+    },
+    "vpot8": {
+     "do": "page",
+     "slot": 8
+    },
+    "fader1": {
+     "do": "param",
+     "param": "masterVolume"
+    },
+    "fader2": {
+     "do": "param",
+     "param": "osc:2:level"
+    },
+    "fader3": {
+     "do": "param",
+     "param": "osc:sub:level"
+    },
+    "fader4": {
+     "do": "param",
+     "param": "osc:noise:level"
+    },
+    "fader5": {
+     "do": "param",
+     "param": "loop:1:volume"
+    },
+    "fader6": {
+     "do": "param",
+     "param": "loop:2:volume"
+    },
+    "fader7": {
+     "do": "param",
+     "param": "loop:3:volume"
+    },
+    "fader8": {
+     "do": "param",
+     "param": "loop:4:volume"
+    },
+    "master": {
+     "do": "param",
+     "param": "masterVolume"
+    },
+    "jog": {
+     "do": "browse"
+    },
+    "select1": {
+     "do": "confirm"
+    },
+    "select2": {
+     "do": "loop",
+     "slot": 1,
+     "hold": {
+      "do": "clear",
+      "slot": 1
+     }
+    },
+    "select3": {
+     "do": "loop",
+     "slot": 2,
+     "hold": {
+      "do": "clear",
+      "slot": 2
+     }
+    },
+    "select4": {
+     "do": "loop",
+     "slot": 3,
+     "hold": {
+      "do": "clear",
+      "slot": 3
+     }
+    },
+    "select5": {
+     "do": "loop",
+     "slot": 4,
+     "hold": {
+      "do": "clear",
+      "slot": 4
+     }
+    },
+    "select6": {
+     "do": "metronome"
+    },
+    "select7": {
+     "do": "tap"
+    },
+    "select8": {
+     "do": "record"
+    },
+    "rewind": {
+     "do": "page-prev"
+    },
+    "ffwd": {
+     "do": "page-next"
+    },
+    "stop": {
+     "do": "stop"
+    },
+    "play": {
+     "do": "play"
+    },
+    "record": {
+     "do": "record"
+    },
+    "cycle": {
+     "do": "loop-toggle"
+    }
+   }
+  }
+ ]
+}

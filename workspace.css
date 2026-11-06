@@ -171,3 +171,31 @@ html:not(.teach-buttons-on) .teach-btn{display:none!important}
 .match-result{font-size:12px;margin:6px 0}
 #match-undo[hidden]{display:none}
 #sound-match-module.drop-target{outline:2px dashed var(--accent-color)}
+
+/* Controllers (js/controllers/widget.js) */
+.ctl-status{margin:4px 0}
+.ctl-device{border:1px solid var(--border-color);border-radius:8px;padding:8px 10px;margin:8px 0;display:flex;flex-direction:column;gap:6px}
+.ctl-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px}
+.ctl-head .badge,.ctl-preset-row .badge{font-size:.72em;padding:1px 6px;border-radius:9px;border:1px solid var(--border-color);color:var(--text-muted-color)}
+.badge.ctl-official{border-color:var(--accent-color);color:var(--accent-color)}
+.ctl-settings{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:.88em}
+.ctl-note{margin:0}
+.ctl-live{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}
+.ctl-knobs{display:grid;grid-template-columns:repeat(4,minmax(90px,1fr));gap:4px;flex:1;min-width:260px}
+.ctl-knob{display:flex;flex-direction:column;font-size:.75em;padding:3px 5px;border-radius:5px;background:color-mix(in srgb,var(--primary-surface-color) 70%,transparent);border:1px solid var(--border-color);min-width:0}
+.ctl-knob span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ctl-knob output{color:var(--text-muted-color)}
+.ctl-pads{display:grid;grid-template-columns:repeat(8,26px);gap:4px;margin-top:4px}
+.ctl-pad{width:26px;height:26px;border-radius:5px;font-size:.6em;display:flex;align-items:center;justify-content:center;color:#fff;text-shadow:0 0 2px #000;border:1px solid var(--border-color);opacity:.45}
+.ctl-pad.ctl-bank-on{opacity:1}
+.ctl-bank{font-size:.78em;color:var(--text-muted-color)}
+.ctl-learn{margin:4px 0;padding:4px 8px;border-radius:6px;background:color-mix(in srgb,var(--accent-color) 18%,transparent)}
+html.ctl-learning #workspace input,html.ctl-learning #workspace select,html.ctl-learning .plugin-window input{outline:2px dashed var(--accent-color);outline-offset:1px;cursor:crosshair}
+.ctl-routes{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:3px 8px;font-size:.8em}
+.ctl-map-row{font-size:.82em}
+.ctl-map-row>span:first-child{min-width:150px}
+.ctl-map-row input[type=number]{width:3.5em}
+.ctl-arp{font-size:.88em;margin-top:6px}
+/* On-screen controls a hardware control moves now (K5, F2, P1) */
+.hw-mapped{position:relative}
+.hw-mapped[data-hw]::after{content:attr(data-hw);position:absolute;top:-2px;right:0;font-size:.62em;line-height:1;padding:2px 4px;border-radius:6px;background:var(--accent-color);color:var(--bg-color);pointer-events:none;opacity:.85}

@@ -139,5 +139,5 @@ export function createSequencer() {
  window.addEventListener('synth:panic',stop); // however a panic starts: the button, Settings, or coming back to the tab
  window.addEventListener('pagehide',stop);
  document.addEventListener('visibilitychange',()=>{if(document.hidden)stop();});
- return {sequence,automation,api:{get notes(){return notes;},get pattern(){return pattern;},setPattern,start,stop,get running(){return running;},get lanes(){return lanes;}}};
+ return {sequence,automation,api:{get notes(){return notes;},get pattern(){return pattern;},setPattern,start,stop,get running(){return running;},get lanes(){return lanes;},get step(){return running?Math.floor(phase):-1;}}};
 }

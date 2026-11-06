@@ -12,7 +12,7 @@ Entirely self-contained; the only external requests are the Poppins webfont and,
 once you set up the AI teacher, calls to the provider you pick (or a one-time
 model download for the on-device option), and Basic Pitch if you choose it to
 transcribe chords.
-Hardware MIDI input is Chromium-only; everything else works everywhere.
+Hardware MIDI input needs Web MIDI (Chromium browsers and Firefox); everything else works everywhere.
 
 *Verified 2026-08-20 by requesting every external dependency this project uses over the network. The demo itself was not opened in a browser, so this reflects dependency health rather than a full functional test.*
 
@@ -115,8 +115,10 @@ Play with the mouse (including drag-across-keys glissando), touch, the computer
 keyboard, or a real MIDI controller. The computer keyboard uses the standard
 tracker layout (`A` is C, `W` is C♯, `S` is D, `E` is D♯, `D` is E, and so on)
 and the mapped keys are labelled on the first two octaves. MIDI arrives through
-`navigator.requestMIDIAccess({ sysex: false })`, with note-on velocity mapped
-from the 0-127 range onto voice gain.
+`navigator.requestMIDIAccess` (js/controllers/midi.js), with note-on velocity
+mapped from the 0-127 range onto voice gain, the sustain pedal (CC 64), the
+pitch wheel and the mod wheel; a controller with a preset (an Arturia MiniLab 3,
+say) plays every widget: see [MIDI controllers](#midi-controllers).
 
 ### Listening: sing or play into the microphone
 
@@ -497,6 +499,189 @@ waveform clearly further. Then it records a note through the widget (the
 match and what was heard shown, A and B both sounding, Apply setting the
 synth, Undo putting it back), matches a clip sent from Import / Export, and
 has the teacher match a note from "make it sound like this".
+
+## MIDI controllers
+
+Plug in a controller and it is found by itself (js/controllers/). Each port is
+matched against **controller presets**: one JSON file per controller
+(js/controllers/presets/<maker>/<model>.json) that says how to recognise it,
+what each of its controls sends in each of its programs, what feedback it takes
+(pad colours, LEDs, a screen), and **variations** of what the app does with it.
+The best match wins: the device's SysEx identity reply once SysEx is allowed,
+else its port name; an unknown device plays as a plain MIDI keyboard and is
+offered the generic presets and MIDI learn. Several controllers can be used at
+once, each with its own preset. The **Controllers** widget shows every port,
+what was detected and how, and for a device in use its variation, program,
+encoder page (each knob with what it moves now and its value), the pads as the
+controller shows them, MIDI learn, remapping and Save as preset. On-screen
+controls a hardware control moves carry a small badge with its name (K5, F2).
+
+**Plain MIDI** (any keyboard, and whatever a preset doesn't map): notes on the
+channel listened to (Omni, or one of 1 to 16) go where that channel is routed:
+the synth (and a VST3 instrument), the drum kit (js/drums.js, made from
+oscillators and noise on the General MIDI drum notes; channel 10 by default),
+or nowhere. CC 64 is the sustain pedal (keys still held stay down when it
+lifts), the pitch wheel bends every live note (±2 semitones, settable), and the
+mod wheel adds vibrato or moves a control. When a controller's Octave buttons
+move its keys, the keys on screen follow. MIDI clock in drives the beat clock
+(Sync to MIDI clock); the app's own clock can go out to a device (Send MIDI
+clock), so a hardware arpeggiator follows the session tempo.
+
+**Robustness.** Ports can come and go while the page is open: a controller
+unplugged mid-note (or with the pedal down) leaves nothing sounding; plugged
+back in it keeps its choices; after sleep the ports are looked at again; a port
+another app holds exclusively (a DAW, on Windows) is marked busy. SysEx is asked
+for only once a controller that needs it is plugged in (Allow pad colours and
+the screen); refused, every control still works and the widget says why.
+Feedback is sent only while a preset is in use, at most every 40 ms and only
+what changed, and the controller is put back as it was (pads dark, screen
+clear, its DAW mode left) when the preset is switched off or the page closes.
+
+**Knobs and faders** move parameters in **pages** of eight (sixteen with Shift).
+A page lists parameters by element id (`filterCutoff`), by "Widget › Control"
+(`Delay › Feedback`), or as `osc:<n|sub|noise>:<level|detune>`,
+`loop:<n>:volume` and `tempo`; or it is built when shown: the focused plug-in
+window's first controls (VST3, WAM and captured plug-ins alike), a widget's, or
+the selected automation lane's sixteen steps (js/controllers/registry.js reads
+every widget's controls through js/workspace.js, so a new widget or plug-in is
+covered without registering it; a widget can register its own order). Absolute
+knobs **pick up**: until a knob reaches the parameter's value it moves nothing,
+and the controller's screen says which way to turn (and a parameter changed
+elsewhere since is picked up again); relative encoders step from wherever the
+parameter is; a controller that can be told its encoders' values is told them
+whenever the page changes, so there is nothing to pick up. While the step
+sequencer plays, **Record** writes knob moves into the automation lanes of what
+they move, at the step playing; the lanes switch on when the take ends.
+
+The app also has its own **arpeggiator** (Controllers widget): the keys held
+play one at a time on the beat clock's grid (up, down, up and down, as played,
+random; eighths, sixteenths or triplets; one to three octaves; latch), so an
+armed loop slot records it in time. Its notes aren't graded as the player's
+timing; the chord held is, once.
+
+### Arturia MiniLab 3
+
+The first official preset (js/controllers/presets/arturia/minilab3.json). Every
+message in it is from Arturia's documentation (the manual v1.0.5, the cheat
+sheet, the support site's MIDI implementation chart) or from integration
+scripts by Arturia and DAW makers (Bitwig, Ableton, FL Studio, Logic, Reason,
+Cubase), and each says where it came from. **It hasn't yet been checked against
+a real unit**, so it is marked *documented*, not *hardware*: the captures in
+tests/captures/minilab3.json are built from Arturia's chart, not recorded.
+
+It is found by its identity reply (manufacturer `00 20 6B`, family `02 00`,
+member `04 04`) or by its port name (`Minilab3 MIDI` on macOS, `Minilab3` or
+`2- Minilab3 MIDI` on Windows, `Minilab3 Minilab3 MIDI` on Linux). Its
+`Minilab3 MCU` (or MCU/HUI) port, whose transport pads send notes in Mackie
+mode, and its `ALV` port are kept with it and play nothing.
+
+**Programs.** The controller has an Arturia program (where it starts), a DAW
+program and up to five User programs (Shift + Pad 3 steps through them). Each
+sends different CCs; the app reads which one it is in from what it sends, from
+the SysEx it announces when a program loads, and by asking (SysEx). **Pad
+colours and the screen are written in the DAW program only**: in the Arturia
+program everything else works and the widget says how to switch. A User program
+sends what the Arturia program does until it is changed in MIDI Control Center;
+if it was, teach the app with MIDI learn. The app's recommended User program
+([minilab3-user-program.md](js/controllers/presets/arturia/minilab3-user-program.md))
+sets the encoders to relative, for smooth control with no pick-up (firmware 1.1
+or later).
+
+| Control | Arturia | DAW | Performance (the default variation) |
+| --- | --- | --- | --- |
+| Keys (25, velocity) | notes, any channel | notes | play the synth or a VST3 instrument, the falling notes, the looper, the teacher |
+| Pitch / mod strips | bend, CC 1 | bend, CC 1 | pitch bend; vibrato (or a control) |
+| Sustain pedal | CC 64 | CC 64 | sustain |
+| Knobs 1-8 | CC 74 71 76 77 93 18 19 16 | CC 86 87 89 90 110 111 116 117 | the page: Synth is osc 1 level, osc 1 detune, osc 2 level, osc 2 detune, cutoff, resonance, attack, release (Shift: decay, sustain, sub level and detune, slop, filter type, volume, tempo) |
+| Faders 1-4 | CC 82 83 85 17 | CC 14 15 30 31 | volume, osc 2 level, sub level, noise level (Shift: the loop slots' volumes) |
+| Main encoder, click | CC 114, 115 | CC 28, 118 | browse the widgets; click puts the knobs on the one selected |
+| Shift + main encoder, click | CC 112, 113 | CC 29, 119 | tempo; the next variation |
+| Shift | CC 9 | CC 27 | the knobs' and faders' second layer |
+| Pads 1-8, bank A | notes 36-43, channel 10 | the same | loop slots 1-4 (record, play, stop; hold to clear), metronome, tap tempo, record, PANIC |
+| Pads 1-8, bank B | notes 44-51, channel 10 | the same | the step sequencer's steps 1-8 for the row of the last key played (hold a pad: steps 9-16) |
+| Shift + Pads 4-8 | CC 105-109 | the same | loop (loops play/stop), stop, play (the sequencer), record, tap |
+
+The other variations: **Sound design** (bank A picks the page, faders are the
+envelope, bank B plays drums), **Looper & drums** (bank A a drum kit, bank B the
+loop slots, faders their volumes), **Teacher / practice** (both banks drums for
+the teacher's exercises, each hit flashing green, amber or red for its timing).
+Switch them in the Controllers widget, with Shift + main encoder click, or by
+asking the teacher.
+
+What the controller does by itself with Shift, which the app doesn't take over:
+Shift + Pad 1 its arpeggiator (held: Arp Edit), Pad 2 the pad bank, Pad 3 the
+program; Shift + Hold chord mode; Shift + Octave semitones; Shift + a key from
+F1 to G♯2 the MIDI channel; Hold latches notes; Octave moves the keys (and the
+keys on screen follow). Its arpeggiator's notes are told from the player's by
+their machine-even spacing, so they aren't graded as the player's timing; with
+Send MIDI clock on and its Sync set to Ext, it follows the session tempo. Chord
+mode's notes arrive together and are one onset. The bank in use shows in the
+widget, from the pad notes and the bank SysEx.
+
+**Troubleshooting.** No pad colours or screen: switch to the DAW program
+(Shift + Pad 3) and allow SysEx (the Controllers widget's button; in Chrome,
+the site's MIDI permission). Knobs do nothing until turned a little: that is
+pick-up (turn towards the arrow on its screen), or use the relative User
+program. Knobs move the wrong things: the controller may be in a User program;
+pick it in Program, or MIDI learn. Notes doubled: another app may be sending
+the MiniLab's MCU port back in.
+
+### Generic presets and other controllers
+
+| Preset | Status | Verified | What it is |
+| --- | --- | --- | --- |
+| Arturia MiniLab 3 | official | documented | the above |
+| Generic keyboard | official | documented (General MIDI) | keys, pitch and mod wheels, sustain, aftertouch as vibrato |
+| Generic 8-knob | official | unverified | the first eight CCs turned become knobs 1-8 (relative encoders recognised) |
+| Generic pad controller | official | documented (General MIDI) | 16 pads on notes 36-51: drums, loop slots, metronome, tap, record, PANIC |
+| Mackie Control | community | documented (Ardour's implementation) | V-Pots, faders (pitch bend), jog, Select and transport buttons with LEDs |
+
+Planned, and to be marked official only once every message is checked against
+the maker's documentation and captures from a real unit: Arturia MiniLab mk2 and
+KeyLab Essential, Novation Launchkey and Launchpad, Akai MPK Mini and APC,
+Native Instruments Komplete Kontrol M32 (MIDI mode), Korg nanoKONTROL and
+microKEY, M-Audio Oxygen, and MPE controllers.
+
+**Remapping.** MIDI learn (Controllers widget): click a control in the app, then
+move a knob, fader or pad; it now moves that control (a control the preset
+doesn't know is learned, CC or note, and a relative encoder is told from a knob
+by its values). Remap controls lists every control with what it does, to change
+any; Reset to defaults forgets it all. What was learned and remapped is kept per
+device, and Save as preset makes it a preset of your own (status *user*), which
+can be renamed, duplicated, deleted, exported as JSON and imported again.
+
+### The preset format
+
+js/controllers/schema.json is the format (version 1), and every preset is
+checked against it when it loads; one that fails is left out and its problems
+are listed in the widget's Presets. A preset has: `id` (maker/model, its path),
+`name`, `maker`, `models`, `firmware`, `author`, `version`, `licence`, `status`
+(official, community, user), `verified` (hardware, documented, unverified),
+`sources` (each with a URL, cited from the messages they back); `detect`
+(`identity`: manufacturer, family, member bytes; `ports`: name patterns with a
+role, main, daw or ignore); `controls` (id, type, label, and the abstract
+`role` lessons use: knob 1, fader 2, pad 3); `programs`, each with what every
+control sends (`cc`, `note` with `pressure`, `notes` (a range), `bend`,
+`pressure`, or `learn`, a `channel` or any, and an `encoding`: absolute,
+binary-offset, twos-complement, signed-bit, button, toggle), and `enter` and
+`exit` messages; `listen` (SysEx the device sends about its program or bank) and
+`queries`; `feedback` (`pads`: an RGB message template with each pad's index;
+`leds`; `screen`: a text template and line widths; `encoders`: a value
+template; `requires`: sysex); `shiftLayer` (what the device does by itself);
+and `variations` (`extends` another, `pages`, `mappings` of control id to an
+action: `{ "do": "loop", "slot": 1, "hold": { "do": "clear", "slot": 1 } }`).
+Templates are hex bytes and placeholders: `{index}`, `{text:line1:10}`,
+`{bytes:name}`. A bundled official preset may have a JS module of `hooks` beside
+it for what JSON can't say; it gets a limited API (send to its device, read its
+state); presets from files are JSON only.
+
+`node tests/controllers.mjs` checks every bundled preset against the schema,
+broken ones for clear reasons, the MiniLab 3's captures through the loader in
+every program, detection, and the SysEx it is sent byte for byte;
+`node tests/controller-panel.mjs` plays the app with a mock Web MIDI device
+(tests/support/mock-midi.js): plain MIDI, the MiniLab 3 on every widget, SysEx
+refused and allowed, feedback, hot-plugging, MIDI clock, the Generic 8-knob
+preset and MIDI learn into a saved, exported and imported preset.
 
 ## Modular sequencer workspace
 
@@ -1437,6 +1622,7 @@ MIDI additionally requires a secure context, `https://` or `http://localhost`.
 ```
 index.html     synth markup and module entry points
 js/            synthesis, sequencer, automation, widgets, plugins, and persistence modules
+js/controllers MIDI ports, controller presets (schema, loader, runtime) and the Controllers widget
 plugin-sw.js   service worker that serves files from loaded plugin archives
 plugins/       built-in effects (source and zip)
 tools/         plugin packaging script
@@ -1449,10 +1635,11 @@ robots.txt     crawl policy and sitemap pointer
 
 ## Browser support
 
-Web Audio is universal, but **Web MIDI is Chromium-only**; Firefox and Safari
-do not implement `navigator.requestMIDIAccess`. The code degrades gracefully:
-it checks for the API and logs `No MIDI support.` rather than throwing, so
-everything except hardware controller input still works.
+Web Audio is universal. **Web MIDI** works in Chromium browsers and in Firefox
+(which asks through a site permission add-on); Safari has none. Either browser
+may allow MIDI but refuse SysEx, which a controller's pad colours, screen and
+identity need: the controls still work, and the Controllers widget says what is
+missing. Without Web MIDI the widget says so and everything else works.
 
 ## Credits
 

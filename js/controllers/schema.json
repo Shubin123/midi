@@ -1,0 +1,163 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://shubinwang.com/midi/js/controllers/schema.json",
+ "title": "Controller preset",
+ "description": "One MIDI controller: how to recognise it, its controls, what each sends in each of its programs, the feedback it takes (LEDs, pad colours, a screen), and variations of what the app does with it. Checked on load by js/controllers/validate.js, which reads this file. Format 1.",
+ "type": "object",
+ "required": ["format", "id", "name", "maker", "models", "version", "status", "verified", "controls", "programs", "variations"],
+ "additionalProperties": false,
+ "properties": {
+  "$schema": { "type": "string" },
+  "format": { "const": 1, "description": "The preset format's version: 1." },
+  "id": { "type": "string", "pattern": "^[a-z0-9-]+/[a-z0-9-]+$", "description": "maker/model, as its path under js/controllers/presets/ (user presets: user/<name>)." },
+  "name": { "type": "string", "minLength": 1 },
+  "maker": { "type": "string", "minLength": 1 },
+  "models": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+  "firmware": { "type": "object", "additionalProperties": false, "properties": { "min": { "type": "string" }, "max": { "type": "string" }, "notes": { "type": "string" } } },
+  "author": { "type": "string" },
+  "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+  "licence": { "type": "string" },
+  "status": { "enum": ["official", "community", "user"], "description": "official: bundled and checked against the maker's documentation; community: shared, unverified; user: made in this browser." },
+  "verified": { "enum": ["hardware", "documented", "unverified"], "description": "hardware: every message checked against captures from a real device; documented: against the maker's (or an official DAW integration's) documentation only; unverified." },
+  "description": { "type": "string" },
+  "generic": { "type": "boolean", "description": "Works with any device: offered for unknown ones, never chosen over a preset that matches by name or identity." },
+  "sources": { "type": "array", "items": { "$ref": "#/$defs/source" } },
+  "detect": { "$ref": "#/$defs/detect" },
+  "controls": { "type": "array", "items": { "$ref": "#/$defs/control" }, "minItems": 1 },
+  "programs": { "type": "array", "items": { "$ref": "#/$defs/program" }, "minItems": 1 },
+  "feedback": { "$ref": "#/$defs/feedback" },
+  "listen": { "type": "array", "items": { "$ref": "#/$defs/announce" }, "description": "SysEx the device sends by itself or in reply to a query: which program it is in, which pad bank." },
+  "queries": { "type": "array", "items": { "$ref": "#/$defs/bytes" }, "description": "Sent once SysEx is allowed, to ask the device which program and bank it is in." },
+  "shiftLayer": { "type": "array", "items": { "$ref": "#/$defs/shiftFunction" }, "description": "What the device does by itself with Shift held (the teacher reads these to explain them)." },
+  "variations": { "type": "array", "items": { "$ref": "#/$defs/variation" }, "minItems": 1 },
+  "hooks": { "type": "string", "pattern": "^[a-z0-9-]+\\.js$", "description": "A JS module beside the preset, for what JSON can't say. Run for official presets only, with a limited API." }
+ },
+ "$defs": {
+  "source": { "type": "object", "required": ["id", "title"], "additionalProperties": false, "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "url": { "type": "string" }, "notes": { "type": "string" } } },
+  "bytes": { "type": "array", "items": { "type": ["integer", "string"] }, "minItems": 1, "description": "SysEx or other bytes: numbers, hex strings (\"F0\"), or placeholders: {name} a value from 0 to 127, {text:name:length} ASCII text (cut to the length when one is given), {bytes:name} a list of bytes." },
+  "channel": { "type": ["integer", "string"], "description": "1 to 16, or \"any\"." },
+  "detect": {
+   "type": "object", "additionalProperties": false,
+   "properties": {
+    "identity": { "type": "object", "additionalProperties": false, "required": ["manufacturer"], "properties": { "manufacturer": { "type": "string" }, "family": { "type": "string" }, "member": { "type": "string" }, "source": { "type": "string" } } },
+    "ports": { "type": "array", "items": { "type": "object", "required": ["name"], "additionalProperties": false, "properties": { "name": { "type": "string", "description": "A regular expression for the port's name (case is ignored)." }, "role": { "enum": ["main", "daw", "ignore"], "description": "main: its messages are read; daw: the device's DAW (MCU/HUI) port, whose messages are kept from playing as notes; ignore: a port of the device that isn't for the app." }, "source": { "type": "string" } } } }
+   }
+  },
+  "control": {
+   "type": "object", "required": ["id", "type", "label"], "additionalProperties": false,
+   "properties": {
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+    "type": { "enum": ["keys", "strip", "wheel", "encoder", "knob", "fader", "pad", "button", "pedal"] },
+    "label": { "type": "string" },
+    "role": { "type": "string", "description": "The abstract name lessons use: knob 1, fader 2, pad 3, main encoder, shift, play." },
+    "bank": { "type": "string" },
+    "rgb": { "type": "boolean" },
+    "count": { "type": "integer", "minimum": 1 },
+    "velocity": { "type": "boolean" },
+    "aftertouch": { "enum": ["none", "channel", "poly"] },
+    "source": { "type": "string" }
+   }
+  },
+  "message": {
+   "type": "object", "additionalProperties": false,
+   "properties": {
+    "cc": { "type": "integer", "minimum": 0, "maximum": 127 },
+    "note": { "type": "integer", "minimum": 0, "maximum": 127 },
+    "notes": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 127 }, "minItems": 2, "maxItems": 2 },
+    "bend": { "const": true },
+    "pressure": { "enum": [true, "poly", "channel"] },
+    "learn": { "const": true, "description": "Not known until the control is moved in MIDI learn." },
+    "channel": { "$ref": "#/$defs/channel" },
+    "encoding": { "enum": ["absolute", "binary-offset", "twos-complement", "signed-bit", "button", "toggle"] },
+    "source": { "type": "string" }
+   }
+  },
+  "program": {
+   "type": "object", "required": ["id", "name", "messages"], "additionalProperties": false,
+   "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+    "name": { "type": "string" },
+    "description": { "type": "string" },
+    "default": { "type": "boolean" },
+    "port": { "enum": ["main", "daw"], "description": "The port this program's messages arrive on." },
+    "template": { "type": "boolean", "description": "A program the user makes (MIDI Control Center's User programs): its messages are learned." },
+    "autolearn": { "type": "boolean", "description": "Controls with learn messages take the first new CCs or notes heard, in order." },
+    "messages": { "type": "object", "additionalProperties": { "$ref": "#/$defs/message" } },
+    "enter": { "type": "array", "items": { "$ref": "#/$defs/bytes" }, "description": "Sent to the device when this program is used (a DAW-mode handshake)." },
+    "exit": { "type": "array", "items": { "$ref": "#/$defs/bytes" }, "description": "Sent when the preset lets the device go." },
+    "source": { "type": "string" }
+   }
+  },
+  "feedback": {
+   "type": "object", "additionalProperties": false,
+   "properties": {
+    "pads": {
+     "type": "object", "required": ["message", "index"], "additionalProperties": false,
+     "properties": {
+      "message": { "$ref": "#/$defs/bytes" },
+      "index": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0, "maximum": 127 }, "description": "Control id → the {index} the message takes." },
+      "scale": { "type": "integer", "minimum": 1, "maximum": 127, "description": "The most a colour channel takes (127)." },
+      "programs": { "type": "array", "items": { "type": "string" }, "description": "Programs in which the device takes these (all, if absent)." },
+      "source": { "type": "string" }
+     }
+    },
+    "leds": {
+     "type": "object", "required": ["controls"], "additionalProperties": false, "description": "One-colour LEDs lit by the message the control sends (a note or CC echoed back, value 127 on and 0 off).",
+     "properties": { "controls": { "type": "array", "items": { "type": "string" } }, "on": { "type": "integer" }, "off": { "type": "integer" }, "blink": { "type": "integer" }, "source": { "type": "string" } }
+    },
+    "screen": {
+     "type": "object", "required": ["message", "lines", "widths"], "additionalProperties": false,
+     "properties": { "message": { "$ref": "#/$defs/bytes" }, "lines": { "type": "integer", "minimum": 1, "maximum": 4 }, "widths": { "type": "array", "items": { "type": "integer", "minimum": 4, "maximum": 64 }, "minItems": 1, "maxItems": 4, "description": "Characters per line." }, "programs": { "type": "array", "items": { "type": "string" } }, "source": { "type": "string" } }
+    },
+    "encoders": {
+     "type": "object", "required": ["message", "index"], "additionalProperties": false, "description": "Sets an absolute encoder's own value to the parameter it moves (when the page changes), so it moves on from there instead of jumping.",
+     "properties": { "message": { "$ref": "#/$defs/bytes" }, "index": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0, "maximum": 127 } }, "programs": { "type": "array", "items": { "type": "string" } }, "source": { "type": "string" } }
+    },
+    "requires": { "enum": ["sysex", "none"] },
+    "throttleMs": { "type": "integer", "minimum": 0, "maximum": 1000 }
+   }
+  },
+  "announce": { "type": "object", "required": ["message", "means"], "additionalProperties": false, "properties": { "message": { "$ref": "#/$defs/bytes" }, "means": { "enum": ["program", "bank"] }, "values": { "type": "object", "additionalProperties": { "type": "string" }, "description": "The {value} byte (in decimal) → a program id or bank name." }, "otherwise": { "type": "string" }, "source": { "type": "string" } } },
+  "shiftFunction": { "type": "object", "required": ["with", "does"], "additionalProperties": false, "properties": { "with": { "type": "string" }, "does": { "type": "string" }, "hold": { "type": "string" }, "sends": { "type": "string" }, "source": { "type": "string" } } },
+  "action": {
+   "type": "object", "required": ["do"], "additionalProperties": false,
+   "properties": {
+    "do": { "enum": ["notes", "bend", "mod", "sustain", "hold", "pressure", "page", "param", "page-next", "page-prev", "set-page", "browse", "confirm", "tempo", "loop", "clear", "metronome", "tap", "record", "panic", "step", "step-page", "drum", "note", "play", "stop", "loop-toggle", "arp", "variation", "octave", "shift", "lesson-pad", "none"] },
+    "slot": { "type": "integer", "minimum": 1 },
+    "param": { "type": "string" },
+    "page": { "type": "string" },
+    "index": { "type": "integer", "minimum": 1 },
+    "note": { "type": "integer", "minimum": 0, "maximum": 127 },
+    "by": { "type": "integer" },
+    "to": { "type": "string" },
+    "hold": { "$ref": "#/$defs/action", "description": "Done instead when the control is held for half a second." },
+    "shift": { "$ref": "#/$defs/action", "description": "Done instead while a control mapped to shift is held." },
+    "takeover": { "enum": ["pickup", "jump"] }
+   }
+  },
+  "page": {
+   "type": "object", "required": ["id", "name"], "additionalProperties": false,
+   "properties": {
+    "id": { "type": "string" },
+    "name": { "type": "string" },
+    "params": { "type": "array", "items": { "type": "string" }, "maxItems": 64, "description": "Parameters by element id, \"Widget › Control\", or osc:<n|sub|noise>:<level|detune>, loop:<n>:volume, tempo." },
+    "from": { "enum": ["plugin", "widget", "automation"], "description": "Built when shown: the focused plug-in window's (or widget's) first controls, or the selected automation lane's steps." },
+    "widget": { "type": "string" }
+   }
+  },
+  "variation": {
+   "type": "object", "required": ["id", "name"], "additionalProperties": false,
+   "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+    "name": { "type": "string" },
+    "description": { "type": "string" },
+    "default": { "type": "boolean" },
+    "extends": { "type": "string" },
+    "programs": { "type": "array", "items": { "type": "string" } },
+    "pages": { "type": "array", "items": { "$ref": "#/$defs/page" } },
+    "mappings": { "type": "object", "additionalProperties": { "$ref": "#/$defs/action" } },
+    "drums": { "enum": ["kit", "instrument"] }
+   }
+  }
+ }
+}
