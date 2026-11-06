@@ -17,7 +17,8 @@ export function pluginWindow({ title, state, opener, onChange }) {
  const handle = el('button', { className: 'drag-handle', title: 'Drag to move. Use arrow keys to move.' }, '⠿ ', name);
  const close = el('button', { textContent: '×', title: `Close ${title}` });
  const content = el('div', { className: 'module-content' });
- const win = el('section', { className: 'widget plugin-window', hidden: true }, el('div', { className: 'widget-header' }, handle, close), content);
+ const header = el('div', { className: 'widget-header' }, handle, close);
+ const win = el('section', { className: 'widget plugin-window', hidden: true }, header, content);
  win.setAttribute('role', 'dialog'); win.setAttribute('aria-label', title);
  layer.append(win);
  // Any size from 260 × 160 up to the window; the size is kept with its position.
@@ -71,6 +72,17 @@ export function pluginWindow({ title, state, opener, onChange }) {
 
  const api = {
   content, place, show,
+  // The title bar, for controls that belong to the window (the Editor / Generic switch), before ×.
+  addToHeader: node => header.insertBefore(node, close),
+  // Makes the window wide enough for content `w` px wide (a plug-in editor's own size), unless the student has
+  // sized it themselves; its height follows its content, up to the screen.
+  fitContent: w => {
+   if (state.w || state.h) return;
+   const pad = parseFloat(getComputedStyle(content).paddingLeft) + parseFloat(getComputedStyle(content).paddingRight);
+   win.style.width = `${Math.min(innerWidth - 24, Math.max(260, Math.ceil(w + pad + win.offsetWidth - content.clientWidth)))}px`;
+   win.style.maxHeight = 'calc(100vh - 24px)';
+   place();
+  },
   get open() { return !win.hidden; },
   toggle: () => show(win.hidden),
   setTitle: text => { name.textContent = text; close.title = `Close ${text}`; win.setAttribute('aria-label', text); },

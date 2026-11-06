@@ -10,6 +10,7 @@ import { fxSlot, instrumentSlot, updateVoices } from './fx-chain.js';
 import { read, save } from './storage.js';
 import { el, renderParams, card } from './plugin-ui.js';
 import { pluginWindow } from './plugin-window.js';
+import { mountView } from './plugin-editor.js';
 import { initializeWamHost } from './vendor/webaudiomodules-sdk.js';
 
 const CACHE = 'zip-plugins-v1';
@@ -134,7 +135,7 @@ async function instantiate(rec) {
   const info = await node.getParameterInfo();
   const params = Object.values(info).map(p => ({ id: p.id, label: p.label || p.id, min: p.minValue, max: p.maxValue, step: p.discreteStep || (p.maxValue - p.minValue) / 100, value: p.defaultValue, unit: p.units }));
   const gui = await wam.createGui().catch(() => null);
-  return { name: rec.name, input: node, output: node, params, gui,
+  return { name: rec.name, input: node, output: node, params, gui, editor: gui ? { framework: 'html' } : undefined,
    setParam: (id, value) => node.setParameterValues({ [id]: { id, value, normalized: false } }),
    destroy: () => { if (gui) wam.destroyGui?.(gui); node.disconnect(); node.destroy?.(); } };
  }
@@ -171,7 +172,7 @@ export function createPluginHost() {
   el('p', { className: 'module-hint' }, 'Loads Web Audio Modules 2.0 and web-plugin archives (.zip, .tar, .tar.gz). Native plugins (.vst3, .component, .dll, .pkg installers, or archives of them) are identified instead: browsers cannot run compiled code, so the closest built-in effect is offered.'),
   capturePanel, found, list);
  const live = new Map();
- const teardown = id => { const item = live.get(id); if (!item) return; item.slot.clear(); item.plugin?.destroy?.(); item.box.remove(); item.win.remove(); live.delete(id); };
+ const teardown = id => { const item = live.get(id); if (!item) return; item.view?.close(); item.slot.clear(); item.plugin?.destroy?.(); item.box.remove(); item.win.remove(); live.delete(id); };
  const say = (text, error) => { status.textContent = text; status.classList.toggle('error', !!error); };
 
  // Each plug-in gets a row in this widget and its own window with its controls; closing the window keeps it running.
@@ -193,12 +194,13 @@ export function createPluginHost() {
    onChange: open => { openButton.textContent = open ? 'Close' : 'Open'; openButton.setAttribute('aria-expanded', open); persist(); } });
   openButton.textContent = win.open ? 'Close' : 'Open'; openButton.setAttribute('aria-expanded', win.open);
   openButton.onclick = () => win.toggle();
-  const params = el('div', { className: 'plugin-params' }), gui = el('div', { className: 'plugin-gui' }), extra = el('span', { className: 'sequence-toolbar' });
+  // The generic controls are made first, so they are there whatever happens to the plug-in's own editor.
+  const generic = el('div', { className: 'plugin-params' }), viewBox = el('div', { className: 'plugin-view' }), extra = el('span', { className: 'sequence-toolbar' });
   win.content.append(
    el('div', { className: 'sequence-toolbar' }, extra, el('label', {}, bypass, 'Bypass'),
     ...(rec.format === 'capture' ? [el('button', { textContent: 'Export .zip', onclick: () => exportCapture(rec) })] : []),
     el('button', { textContent: 'Remove', onclick: remove })),
-   params, gui);
+   viewBox);
   const item = { slot: { clear() {} }, box, win, plugin: null };
   live.set(rec.id, item);
   try {
@@ -208,8 +210,14 @@ export function createPluginHost() {
    if (plugin.name) { rowName.textContent = plugin.name; win.setTitle(plugin.name); }
    if (plugin.classes) { vst3Controls(rec, plugin, extra); rowBadge.textContent = `VST3 · ${plugin.instrument ? 'Instrument' : 'Effect'}`; }
    Object.entries(rec.values).forEach(([id, v]) => plugin.setParam?.(id, v));
-   if (plugin.gui) gui.append(plugin.gui);
-   else if (plugin.params?.length) renderParams(params, plugin.params.map(p => ({ ...p, value: rec.values[p.id] ?? p.value })), (id, v) => { rec.values[id] = v; plugin.setParam(id, v); persist(); });
+   const shown = plugin.params?.length ? renderParams(generic, plugin.params.map(p => ({ ...p, value: rec.values[p.id] ?? p.value })), (id, v) => { rec.values[id] = v; plugin.setParam(id, v); item.view?.editor?.param?.(id, v); persist(); })
+    : (generic.append(el('p', { className: 'module-hint', textContent: 'This plug-in has no controls to show.' })), null);
+   // Then its own editor, where it has one; an edit there reaches the processor and moves the generic control.
+   const toggle = el('span'); win.addToHeader(toggle);
+   item.view = mountView({ box: viewBox, header: toggle, generic, plugin, choice: rec.view || 'editor',
+    onChoice: mode => { rec.view = mode; persist(); }, onSize: w => win.fitContent(w),
+    bridge: { edit: (id, v) => { rec.values[id] = v; plugin.setParam(id, v, 'editor'); shown?.set(id, v); persist(); } } });
+   plugin.onOutput = (id, v) => shown?.set(id, v); // meters and other values the processor reports
    win.place();
    const setBypass = on => { rec.bypass = bypass.checked = rowBypass.checked = on; on ? slot.clear() : slot.set(plugin); };
    bypass.onchange = () => { setBypass(bypass.checked); persist(); };
@@ -217,7 +225,7 @@ export function createPluginHost() {
    setBypass(rec.bypass);
   } catch (e) {
    problem.textContent = 'Failed to start';
-   params.append(el('p', { className: 'module-hint error', textContent: 'Failed to start: ' + e.message }));
+   viewBox.append(el('p', { className: 'module-hint error', textContent: 'Failed to start: ' + e.message }));
   }
  };
 

@@ -724,6 +724,28 @@ plugin keeps running, and its row in the Plugins widget has **Open**,
 **Bypass** and **Remove**. Each window's position and whether it is open come
 back after a reload.
 
+**The plug-in's own editor, or its generic controls.** A window shows the
+plug-in's own editor where it has one (`js/plugin-editor.js`), and its generic
+controls always: they are built first, so they are there whatever happens to
+the editor. **Editor / Generic** in every window's title bar switches between
+them, and the choice is kept per plug-in. A change in either reaches the
+processor and moves the other. The window falls back to the generic controls
+by itself, saying *Editor unavailable, showing generic controls* and why, when
+the plug-in has no editor, when its GUI framework can't be shown yet, when the
+editor throws or its WebAssembly traps while opening, when it draws no first
+frame within 2 s or a blank one, or when it fails later (it is torn down).
+None of that can touch the sound: the editor runs apart from the AudioWorklet
+that plays the plug-in. Every GUI framework sits behind one adapter interface
+(open on a canvas, size and resize, pointer, wheel and keyboard input, a frame
+loop, parameter edits both ways), with shared services for all of them: the
+canvas at the screen's pixel ratio, input, the frame loop and a blank-frame
+check. A Web Audio Module's own HTML GUI is one more adapter.
+`node tests/plugin-editor.mjs` loads a real VST3 into the chain while a note
+plays and forces every one of those failures with stand-in editors, checking
+each time that the generic controls show with the notice, that their Gain
+still reaches the processor, and that the sound is unchanged; and with a
+working stand-in, the switch, the kept choice and edits both ways.
+
 Web plugins that load and run:
 
 - **Web Audio Modules 2.0**: an archive with `index.js` (default export is the
