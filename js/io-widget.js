@@ -1,5 +1,8 @@
 // Import / Export: records or bounces the master output to WAV/AIFF, writes and reads Standard MIDI Files,
-// and imports audio clips that can be auditioned, run through the effect chain and converted.
+// and imports audio clips that can be auditioned, run through the effect chain and converted. It also backs up
+// the whole workspace (js/backup.js) and puts a backup back, and exports and imports controller presets
+// (js/controllers/): a preset's .json, or a .zip of several (any script in one is left out: imported presets are
+// JSON only).
 import { FORMATS, AUDIO_EXTENSIONS, encodeAudio, decodeAudioFile } from './audio-files.js';
 import { writeMidi, readMidi, songFromNotes } from './midi-file.js';
 import { transcribe, transcribeChords } from './listen-dsp.js';
@@ -8,6 +11,9 @@ import { listening } from './listening.js';
 import { timing } from './timing-widget.js';
 import { read, save } from './storage.js';
 import { el, card } from './plugin-ui.js';
+import { makeBackup, isBackup, restoreBackup } from './backup.js';
+import { controllers } from './controllers/runtime.js';
+import { readArchive, writeZip } from './archive.js';
 
 const NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 // Same numbering as the synth's MIDI input: "C5" is note 60, middle C.
@@ -32,7 +38,7 @@ export function createIoWidget(sequencer) {
  const status = el('span', { role: 'status', textContent: 'Drop audio or MIDI files here.' });
  const say = (text, error) => { status.textContent = text; status.classList.toggle('error', !!error); };
  const recordButton = el('button', { textContent: '● Record' }), renderButton = el('button', { textContent: 'Render audio' });
- const picker = el('input', { type: 'file', multiple: true, hidden: true, accept: '.wav,.wave,.aif,.aiff,.aifc,.flac,.mp3,.ogg,.oga,.opus,.m4a,.aac,.caf,.webm,.mid,.midi,.smf,audio/*' });
+ const picker = el('input', { type: 'file', multiple: true, hidden: true, accept: '.wav,.wave,.aif,.aiff,.aifc,.flac,.mp3,.ogg,.oga,.opus,.m4a,.aac,.caf,.webm,.mid,.midi,.smf,.json,.zip,audio/*' });
  const clips = el('div', { className: 'plugin-list' });
  content.append(
   el('div', { className: 'sequence-toolbar' }, el('strong', { textContent: 'Export' }), el('label', {}, 'Audio format ', format)),
@@ -43,7 +49,11 @@ export function createIoWidget(sequencer) {
   el('div', { className: 'sequence-toolbar io-row' }, el('strong', { textContent: 'Import' }), el('button', { textContent: '+ Import file…', onclick: () => picker.click() }), el('label', {}, 'MIDI into ', midiTarget), status, picker),
   el('p', { className: 'module-hint' }, 'Audio: WAV and AIFF at any bit depth, plus FLAC, MP3, Ogg and M4A where the browser can decode them. MIDI: .mid type 0 or 1, with its tempo map. A loop slot keeps the full timing and plays with the current patch; the step sequencer takes the first bar, snapped to sixteenths on its rows.'),
   el('div', { className: 'sequence-toolbar' }, el('strong', { textContent: 'Clips' }), el('label', {}, throughFx, 'Play through effects')),
-  clips);
+  clips,
+  el('div', { className: 'sequence-toolbar io-row' }, el('strong', { textContent: 'Workspace' }),
+   el('button', { textContent: 'Back up the workspace', onclick: () => { download(new Blob([makeBackup()], { type: 'application/json' }), `midi-workspace-${new Date().toISOString().slice(0, 10)}.json`); say('Saved the workspace backup.'); } }),
+   el('button', { textContent: 'Export controller presets', onclick: () => exportPresets() })),
+  el('p', { className: 'module-hint' }, 'A backup is everything this app keeps in the browser: the layout, the patch, the sequence and lanes, settings, the teacher\'s conversations and course, and controller presets with what each controller learned (not the plug-in files). + Import file… takes a backup back (the page reloads), a controller preset (.json), or a .zip of presets.'));
 
  // Master recorder. Blocks arrive stamped with their audio-clock frame so bounces can be cut sample-accurately.
  let recorder = null, take = null;
@@ -287,9 +297,46 @@ export function createIoWidget(sequencer) {
   say(`${name}: ${seconds.toFixed(1)} s. Download saves it as ${FORMATS[format.value].label}.`);
  };
 
+ // The user's own presets and those in use, as one .zip (an official preset's hooks with it).
+ const exportPresets = async () => {
+  const list = [...new Set([...controllers.userPresets(), ...controllers.devices.map(d => d.preset)])];
+  if (!list.length) { say('There is no controller preset in use or of your own to export.', true); return; }
+  const enc = new TextEncoder(), files = new Map();
+  for (const p of list) {
+   files.set(`${p.id}.json`, enc.encode(controllers.exportPreset(p)));
+   if (p.hooks && p.status === 'official') { const r = await fetch(new URL(`./controllers/presets/${p.id.split('/')[0]}/${p.hooks}`, import.meta.url)).catch(() => null); if (r?.ok) files.set(`${p.id.split('/')[0]}/${p.hooks}`, new Uint8Array(await r.arrayBuffer())); }
+  }
+  download(writeZip(files), 'controller-presets.zip');
+  say(`Exported ${list.length} controller preset${list.length === 1 ? '' : 's'}.`);
+ };
+ const importPreset = text => {
+  let p;
+  try { p = controllers.importPreset(text); }
+  catch (err) { if (!/already a preset/.test(err.message) || !confirm(`${err.message}. Replace it?`)) throw err; p = controllers.importPreset(text, { overwrite: true }); }
+  return p;
+ };
+ const importText = (text, name) => {
+  if (isBackup(text)) {
+   const when = JSON.parse(text).saved?.slice(0, 16).replace('T', ' ') || 'an earlier day';
+   if (!confirm(`Put back the workspace backed up ${when}? Everything the app keeps in this browser is replaced, and the page reloads.`)) { say('The backup wasn\'t put back.'); return; }
+   const n = restoreBackup(text); say(`Put back ${n} settings; reloading…`); setTimeout(() => location.reload(), 300);
+   return;
+  }
+  const p = importPreset(text);
+  say(`Imported the controller preset ${p.name}${/left out/.test(p.description || '') ? ' (its script was left out)' : ''}.`);
+  void name;
+ };
  const load = async file => {
   try {
    const bytes = new Uint8Array(await file.arrayBuffer());
+   if (/\.json$/i.test(file.name) || file.type === 'application/json') return importText(new TextDecoder().decode(bytes), file.name);
+   if (/\.zip$/i.test(file.name)) {
+    const entries = [...(await readArchive(new Blob([bytes]), file.name))].filter(([path]) => /\.json$/i.test(path));
+    if (!entries.length) throw new Error(`${file.name} has no controller preset (.json) in it.`);
+    const names = []; for (const [, data] of entries) names.push(importPreset(new TextDecoder().decode(data instanceof Uint8Array ? data : new Uint8Array(await data.blob().then(b => b.arrayBuffer())))).name);
+    say(`Imported ${names.join(', ')}.`);
+    return;
+   }
    if (/\.(mid|midi|smf)$/i.test(file.name) || String.fromCharCode(...bytes.subarray(0, 4)) === 'MThd') return importMidi(bytes, file.name);
    if (!AUDIO_EXTENSIONS.test(file.name) && !file.type.startsWith('audio/')) throw new Error(`${file.name} is not an audio or MIDI file.`);
    say(`Reading ${file.name}…`);

@@ -482,6 +482,45 @@ export async function runControllerTeacher() {
   if (window.synth.metronome) document.getElementById('metronomeToggle').click();
   d().setVariation('performance');
  });
+ await check('Import / Export: Export controller presets makes a .zip; a .zip of presets and a preset .json import (a script left out); a backup has the controller presets', async ok => {
+  const { writeZip, readArchive } = await import('../js/archive.js');
+  const picker = document.querySelector('#io-module input[type=file]'), status = () => document.querySelector('#io-module [role=status]').textContent;
+  const drop = async file => { const dt = new DataTransfer(); dt.items.add(file); picker.files = dt.files; picker.dispatchEvent(new Event('change')); await wait(150); };
+  const mine = { ...JSON.parse(controllers.exportPreset(controllers.preset('generic/pads'))), id: 'user/zip-pads', name: 'Zip pads', status: 'user' };
+  const enc = new TextEncoder(), zip = writeZip(new Map([['user/zip-pads.json', enc.encode(JSON.stringify(mine))], ['user/hooks.js', enc.encode('export default {}')]]));
+  await drop(new File([zip], 'presets.zip', { type: 'application/zip' }));
+  ok(controllers.preset('user/zip-pads')?.name === 'Zip pads', `zip import: ${status()}`);
+  const scripted = { ...mine, id: 'acme/thing', name: 'Scripted thing', status: 'official', hooks: 'thing.js' };
+  await drop(new File([JSON.stringify(scripted)], 'thing.json', { type: 'application/json' }));
+  const got = controllers.preset('user/thing');
+  ok(got && !got.hooks && got.status === 'community' && /left out/.test(status()), `json import: ${got?.id} ${got?.hooks} ${got?.status} · ${status()}`);
+  let zipped = null; const was = URL.createObjectURL; URL.createObjectURL = b => { zipped = b; return was.call(URL, b); };
+  [...document.querySelectorAll('#io-module button')].find(b => b.textContent === 'Export controller presets').click(); await wait(100);
+  URL.createObjectURL = was;
+  const names = zipped ? [...(await readArchive(zipped, 'controller-presets.zip')).keys()] : [];
+  ok(names.includes('user/zip-pads.json') && names.includes('arturia/minilab3.json'), `exported ${names.join(', ')}`);
+  const { makeBackup } = await import('../js/backup.js');
+  const b = JSON.parse(makeBackup());
+  ok(JSON.parse(b.keys['controller-presets-v1']).some(p => p.id === 'user/zip-pads') && b.keys['controller-choices-v1'], 'the backup lacks the controller presets or choices');
+  controllers.deletePreset('user/zip-pads'); controllers.deletePreset('user/thing');
+ });
+ await check('an unknown device: Learn this controller… makes it the Generic 8-knob preset, and its knobs, turned in order, become knobs 1, 2…', async ok => {
+  M.plug('Mystery Box'); await until(() => controllers.devices.some(x => x.port.name === 'Mystery Box'));
+  await wait(50);
+  const card = [...document.querySelectorAll('#controllers-module .ctl-device')].find(c => c.textContent.includes('Mystery Box'));
+  const btn = [...(card?.querySelectorAll('button') || [])].find(b => b.textContent === 'Learn this controller…');
+  ok(btn && !btn.hidden, 'no Learn this controller… for an unknown device');
+  btn?.click(); await wait(30);
+  const dev = controllers.devices.find(x => x.port.name === 'Mystery Box');
+  ok(dev?.preset.id === 'generic/knobs' && dev.use, `preset ${dev?.preset.id}`);
+  for (const v of [60, 61, 62, 63]) M.send('Mystery Box', [0xB0, 40, v]);
+  for (const v of [65, 65, 66]) M.send('Mystery Box', [0xB0, 41, v]);
+  await wait(30);
+  const learned = dev?.overlay.learned.learned || {};
+  ok(learned.knob1?.cc === 40 && learned.knob1.encoding === 'absolute' && learned.knob2?.cc === 41 && learned.knob2.encoding === 'binary-offset', JSON.stringify(learned));
+  ok(/learned \(CC 41, binary-offset\)/.test(document.querySelector('#controllers-module .ctl-learn').textContent), document.querySelector('#controllers-module .ctl-learn').textContent);
+  M.unplug('Mystery Box');
+ });
  await check('the main encoder browses the course: its click starts the lesson under it', async ok => {
   const dev = d(); dev.browse = { list: 'lessons', index: 0 };
   const list = controllers.teacher.lessons(), i = list.findIndex(l => l.id === 'ctl_pad_loop');

@@ -43,6 +43,7 @@ window.addEventListener('load',()=>{
  container.append(workspace);addAppSettings(setupWidgets(workspace).section);
  // The presets first, then the ports: a controller plugged in is matched as soon as it is seen. SysEx is asked
  // for at once only if it was allowed before (the browser remembers); otherwise from the Controllers widget.
- controllers.start().then(()=>midi.start({sysex:read('midi-sysex-v1',false)})).catch(err=>console.warn('Controllers:',err.message));
+ // If the presets can't load (offline, say), the ports still open and play as plain MIDI.
+ controllers.start().catch(err=>console.warn('Controllers:',err.message)).finally(()=>midi.start({sysex:read('midi-sysex-v1',false)}));
  window.dispatchEvent(new Event('resize'));
 });

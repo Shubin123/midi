@@ -62,7 +62,7 @@ export function createControllersWidget() {
  const showLearn = ({ device, learning, control, action, auto }) => {
   if (learning) { learnBar.hidden = false; learnBar.textContent = learning.param ? `Now move a knob, fader or pad on ${device.name} for ${learning.param}. (Escape cancels.)` : learning.action ? `Now press or move the control on ${device.name} that should ${describe(device, learning.action)}.` : `Click a control in the app, then move a knob, fader or pad on ${device.name}. (Escape cancels.)`; return; }
   document.documentElement.classList.remove('ctl-learning');
-  learnBar.textContent = control ? `${device.control(control)?.label || control}${auto ? ' learned' : ''} → ${describe(device, device.variation.mappings[control])}.` : 'MIDI learn cancelled.';
+  learnBar.textContent = control ? `${device.control(control)?.label || control}${auto ? ` learned (${(m => (m?.cc !== undefined ? `CC ${m.cc}${m.encoding !== 'absolute' ? `, ${m.encoding}` : ''}` : `note ${m?.note}`))(device.overlay.learned[device.programId]?.[control])})` : ''} → ${describe(device, device.variation.mappings[control])}.${auto ? ' Turn the next one, or Save as preset.' : ''}` : 'MIDI learn cancelled.';
   setTimeout(() => { if (!pick && !device.learning) learnBar.hidden = true; }, 4000);
   render();
  };
@@ -96,13 +96,20 @@ export function createControllersWidget() {
   const arpSel = aria(opts([['auto', 'found by itself'], ['on', 'on'], ['off', 'off']]), 'Controller arpeggiator'), clock = el('input', { type: 'checkbox' });
   const note = el('p', { className: 'module-hint ctl-note' }), knobs = el('div', { className: 'ctl-knobs' }), padGrid = el('div', { className: 'ctl-pads' }), bank = el('span', { className: 'ctl-bank' });
   const learn = el('button', { type: 'button', textContent: 'MIDI learn', title: 'Click a control in the app, then move one on the controller' });
+  // For a device no preset knows: Generic 8-knob takes its knobs in the order they are turned, then Save as preset.
+  const wizard = el('button', { type: 'button', textContent: 'Learn this controller…', title: 'Turn its knobs one by one: they become knobs 1 to 8; then save it as a preset' });
   const reset = el('button', { type: 'button', textContent: 'Reset to defaults', title: 'Forget what was learned and remapped for this device' });
   const saveAs = el('button', { type: 'button', textContent: 'Save as preset…' });
   const remap = el('details', { className: 'ctl-remap' }, el('summary', { textContent: 'Remap controls' }));
   const settings = el('div', { className: 'ctl-settings' },
    el('label', {}, 'Preset ', presetSel), el('label', {}, 'Variation ', variation), el('label', {}, 'Program ', program), el('label', {}, 'Page ', page),
    el('label', {}, 'Main encoder browses ', browseSel), el('label', {}, 'Its arpeggiator ', arpSel), el('label', { title: 'Sends the app\'s tempo as MIDI clock, so the controller\'s arpeggiator follows it (set its Sync to Ext)' }, clock, ' Send MIDI clock'));
-  root.append(head, useLabel, note, settings, el('div', { className: 'ctl-live' }, knobs, el('div', {}, bank, padGrid)), el('div', { className: 'sequence-toolbar' }, learn, reset, saveAs), remap);
+  root.append(head, useLabel, note, settings, el('div', { className: 'ctl-live' }, knobs, el('div', {}, bank, padGrid)), el('div', { className: 'sequence-toolbar' }, wizard, learn, reset, saveAs), remap);
+  wizard.onclick = () => {
+   const fresh = controllers.choosePreset(d, 'generic/knobs');
+   cards.delete(d); cards.set(fresh, deviceCard(fresh)); render();
+   learnBar.hidden = false; learnBar.textContent = `Turn the knobs of ${fresh.port.name} one at a time, in the order you want them (up to eight): each becomes the next knob and moves the Synth page. Keys, wheels and the pedal already play. Then Save as preset, and use MIDI learn for anything else.`;
+  };
   use.onchange = () => d.setUse(use.checked);
   presetSel.onchange = () => { const fresh = controllers.choosePreset(d, presetSel.value); cards.delete(d); cards.set(fresh, deviceCard(fresh)); render(); };
   variation.onchange = () => d.setVariation(variation.value);
@@ -132,6 +139,7 @@ export function createControllersWidget() {
    page.replaceChildren(...d.pages.map((p, i) => el('option', { value: i, textContent: p.name }))); page.value = d.pageIndex;
    browseSel.value = d.browse.list; arpSel.value = d.arpMode; clock.checked = midi.settings.clockOut.includes(d.port.name);
    [variation, program, page, browseSel, arpSel, learn, saveAs].forEach(x => { x.disabled = !d.use; });
+   wizard.hidden = !(d.by === 'generic' || d.preset.id === 'generic/knobs') || d.preset.id === 'generic/knobs' && Object.keys(d.overlay.learned.learned || {}).length >= 8;
    const g = d.program, f = d.preset.feedback, lines = [];
    if (d.use) {
     if (g.template) lines.push(`${g.name}: ${g.description || ''}`);

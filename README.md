@@ -642,6 +642,11 @@ KeyLab Essential, Novation Launchkey and Launchpad, Akai MPK Mini and APC,
 Native Instruments Komplete Kontrol M32 (MIDI mode), Korg nanoKONTROL and
 microKEY, M-Audio Oxygen, and MPE controllers.
 
+**An unknown device** plays as a plain keyboard at once. Learn this
+controller… makes it the Generic 8-knob preset: its knobs, turned one by one,
+become knobs 1 to 8 (each learned CC is shown, and a relative encoder is told
+from a knob by its values), then Save as preset makes it yours.
+
 **Remapping.** MIDI learn (Controllers widget): click a control in the app, then
 move a knob, fader or pad; it now moves that control (a control the preset
 doesn't know is learned, CC or note, and a relative encoder is told from a knob
@@ -652,6 +657,9 @@ can be renamed, duplicated, deleted, exported as JSON and imported again.
 
 ### The preset format
 
+[js/controllers/README.md](js/controllers/README.md) is the guide to writing
+one: where its messages must come from, each field, testing it from captures
+without the device, checking it on hardware, and sending it.
 js/controllers/schema.json is the format (version 1), and every preset is
 checked against it when it loads; one that fails is left out and its problems
 are listed in the widget's Presets. A preset has: `id` (maker/model, its path),
@@ -805,6 +813,17 @@ continues until the output falls silent (up to 10 s), so plug-in releases,
 echoes and reverb tails are kept. Note numbers
 match the synth's MIDI input, so 60 is middle C. Clips live in memory for the
 session; download the ones you want to keep.
+
+**The workspace and controller presets.** Back up the workspace saves
+everything the app keeps in the browser as one .json (js/backup.js): the
+layout, the patch, the sequence and lanes, settings, the teacher's
+conversations and course, and controller presets with what each controller
+learned; only the app's own keys, nothing secret (provider keys are cookies),
+and not the plug-in files kept in IndexedDB. + Import file… takes it back
+(asking first; the page reloads). Export controller presets saves your own
+presets and the ones in use as a .zip; + Import file… takes a preset's .json or
+a .zip of them, checked against the schema, and JSON only: a script in one is
+left out.
 
 `node tests/formats.mjs` round-trips every format and, on macOS, checks the
 files against Core Audio (`afinfo`, `afconvert`).

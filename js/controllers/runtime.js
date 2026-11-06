@@ -390,7 +390,9 @@ export class Device {
 export function describe(dev, a) {
  if (!a) return 'nothing';
  const p = a.do === 'param' ? param(a.param) : a.do === 'page' ? dev.slotParam(a.slot) : null;
- const words = { notes: 'plays notes', bend: 'pitch bend', mod: `mod (${a.to || midi.settings.mod})`, sustain: 'sustain', hold: 'hold / latch', page: `knob ${a.slot} of the page${p ? ` (${p.name})` : ''}`, param: `${p?.name || a.param}`,
+ // A parameter that isn't there now (no noise oscillator, no plug-in): what it would be.
+ const absent = ref => { const m = /^osc:(\w+):(\w+)$/.exec(ref) || []; return `${m[1] ? `${/^\d/.test(m[1]) ? `osc ${m[1]}` : m[1]} ${m[2]}` : ref} (not there now)`; };
+ const words = { notes: 'plays notes', bend: 'pitch bend', mod: `mod (${a.to || midi.settings.mod})`, sustain: 'sustain', hold: 'hold / latch', page: `knob ${a.slot} of the page${p ? ` (${p.name})` : ''}`, param: p?.name || absent(a.param),
   'page-next': 'next page', 'page-prev': 'previous page', 'set-page': `page ${a.page}`, browse: 'browse', confirm: 'select', tempo: 'tempo', loop: `loop slot ${a.slot}`, metronome: 'metronome on/off', tap: 'tap tempo', record: 'record',
   panic: 'PANIC', step: `sequencer step ${a.index}`, 'step-page': 'steps 1-8 / 9-16', drum: `drum ${a.note ?? a.index}`, note: `note ${a.note}`, play: 'play', stop: 'stop', 'loop-toggle': 'loops play/stop', arp: 'arpeggiator', variation: 'next preset', octave: `octave ${a.by > 0 ? 'up' : 'down'}`, shift: 'shift', 'lesson-pad': 'lesson pad', none: 'nothing' }[a.do] || a.do;
  return `${words}${a.hold ? `; held: ${describe(dev, a.hold)}` : ''}${a.shift ? `; with Shift: ${describe(dev, a.shift)}` : ''}`;
@@ -589,4 +591,4 @@ export const controllers = {
  },
  exportPreset(p) { const copy = { ...p }; delete copy._hooks; return JSON.stringify(copy, null, 1); },
 };
-export const shortName = c => (c.role ? c.role.replace(/^knob /, 'K').replace(/^fader /, 'F').replace(/^pad /, 'P').replace(/^encoder /, 'E') : c.label);
+export const shortName = c => (/^(knob|fader|pad) \d+$/.test(c.role || '') ? c.role.replace(/^knob /, 'K').replace(/^fader /, 'F').replace(/^pad /, 'P') : c.label);

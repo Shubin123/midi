@@ -174,7 +174,7 @@ check('relative encodings: binary offset, two\'s complement, signed bit', () => 
  assert.deepEqual([65, 63, 70].map(v => relativeDelta('binary-offset', v)), [1, -1, 6]);
  assert.deepEqual([1, 127, 120].map(v => relativeDelta('twos-complement', v)), [1, -1, -8]);
  assert.deepEqual([1, 65, 3, 67].map(v => relativeDelta('signed-bit', v)), [1, -1, 3, -3]);
- assert.equal(guessEncoding([65, 66, 65]), 'binary-offset'); assert.equal(guessEncoding([1, 2, 127]), 'twos-complement'); assert.equal(guessEncoding([1, 66, 2]), 'signed-bit'); assert.equal(guessEncoding([10, 40, 90]), 'absolute');
+ assert.equal(guessEncoding([65, 66, 65]), 'binary-offset'); assert.equal(guessEncoding([1, 2, 127]), 'twos-complement'); assert.equal(guessEncoding([1, 66, 2]), 'signed-bit'); assert.equal(guessEncoding([10, 40, 90]), 'absolute'); assert.equal(guessEncoding([60, 61, 62]), 'absolute'); assert.equal(guessEncoding([2, 1, 0]), 'absolute');
  assert.deepEqual(learnedMessage(decode([0xB3, 21, 9]), { relative: 'binary-offset' }), { cc: 21, channel: 4, encoding: 'binary-offset' });
 });
 check('Mackie Control: V-Pots signed bit, faders 14-bit pitch bend on their own channels, transport notes', () => {
@@ -188,6 +188,25 @@ check('Mackie Control: V-Pots signed bit, faders 14-bit pitch bend on their own 
 check('decode: note-on of velocity 0 is a note-off; clock; SysEx; pitch bend centre', () => {
  assert.equal(decode([0x91, 60, 0]).type, 'noteoff'); assert.equal(decode([0xF8]).what, 'tick'); assert.equal(decode([0xF0, 1, 0xF7]).type, 'sysex');
  assert.equal(decode([0xE0, 0, 0x40]).value, 8192);
+});
+
+/* ---- Workspace backups (js/backup.js) ---- */
+const { makeBackup, restoreBackup, isBackup, isAppKey } = await import('../js/backup.js');
+const store = entries => { const m = new Map(entries); return { get length() { return m.size; }, key: i => [...m.keys()][i] ?? null, getItem: k => m.get(k) ?? null, setItem: (k, v) => m.set(k, String(v)), removeItem: k => m.delete(k), map: m }; };
+check('a backup has the app\'s keys (controller presets and choices among them), not another page\'s or a sign-in verifier', () => {
+ const st = store([['controller-presets-v1', '[{"id":"user/x"}]'], ['controller-choices-v1', '{}'], ['synth-layout-v1', '{}'], ['teacher-course-v1', '[]'], ['synthTheme', 'forest-calm'], ['other-demo-score', '9'], ['openrouter_pkce_verifier', 'secret']]);
+ const b = JSON.parse(makeBackup(st, new Date('2026-11-06T10:00:00Z')));
+ assert.deepEqual(Object.keys(b.keys).sort(), ['controller-choices-v1', 'controller-presets-v1', 'synth-layout-v1', 'synthTheme', 'teacher-course-v1']);
+ assert.equal(b.saved, '2026-11-06T10:00:00.000Z'); assert.ok(isBackup(JSON.stringify(b))); assert.ok(!isBackup('{"format":1}'));
+ assert.ok(!isAppKey('openrouter_pkce_verifier') && isAppKey('midi-settings-v1') && isAppKey('listen-mappings-v1'));
+});
+check('restoring a backup puts its keys back, drops the app\'s keys it didn\'t have, leaves other pages\' alone, and refuses anything else', () => {
+ const text = makeBackup(store([['controller-presets-v1', '[1]'], ['synth-air-v1', '{"a":1}']]));
+ const st = store([['controller-presets-v1', '[]'], ['timing-on-v1', 'false'], ['other-demo-score', '9']]);
+ assert.equal(restoreBackup(text, st), 2);
+ assert.deepEqual(Object.fromEntries(st.map), { 'controller-presets-v1': '[1]', 'synth-air-v1': '{"a":1}', 'other-demo-score': '9' });
+ assert.throws(() => restoreBackup('{"keys":{}}', st), /isn't a workspace backup/);
+ assert.throws(() => restoreBackup('not json', st), /isn't a backup/);
 });
 
 console.log(`\n${failed ? `${failed} failed, ${passed} passed` : `controller presets: all ${passed} checks passed`}`);

@@ -163,9 +163,12 @@ export function learnedMessage(m, { relative = null } = {}) {
  return null;
 }
 // Guesses whether a CC that just moved is a relative encoder from its first few values: they stay by 64 (binary
-// offset), or by 0 and 127 (two's complement or signed bit), where a knob's values wander the whole range.
+// offset), or by 0 and 127 (two's complement or signed bit), and repeat as it turns (65, 65, 66), where a knob's
+// run one way a step at a time (60, 61, 62).
 export function guessEncoding(values) {
  if (values.length < 3) return 'absolute';
+ const steps = values.slice(1).map((v, i) => v - values[i]);
+ if ((steps.every(d => d > 0) || steps.every(d => d < 0)) && steps.every(d => Math.abs(d) <= 8)) return 'absolute';
  if (values.every(v => v >= 56 && v <= 72 && v !== 64)) return 'binary-offset';
  if (values.every(v => v <= 8 || v >= 120) && values.some(v => v >= 120)) return 'twos-complement';
  if (values.every(v => (v >= 1 && v <= 8) || (v >= 65 && v <= 72))) return 'signed-bit';

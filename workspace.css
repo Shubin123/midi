@@ -178,7 +178,9 @@ html:not(.teach-buttons-on) .teach-btn{display:none!important}
 .ctl-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px}
 .ctl-head .badge,.ctl-preset-row .badge{font-size:.72em;padding:1px 6px;border-radius:9px;border:1px solid var(--border-color);color:var(--text-muted-color)}
 .badge.ctl-official{border-color:var(--accent-color);color:var(--accent-color)}
-.ctl-settings{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:.88em}
+.ctl-settings{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px 12px;font-size:.88em}
+.ctl-settings label{display:flex;align-items:center;gap:6px;margin:0;min-width:0}
+.ctl-settings select{flex:1;min-width:0;margin:0}
 .ctl-note{margin:0}
 .ctl-live{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}
 .ctl-knobs{display:grid;grid-template-columns:repeat(4,minmax(90px,1fr));gap:4px;flex:1;min-width:260px}

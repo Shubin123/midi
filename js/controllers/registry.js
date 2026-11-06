@@ -98,10 +98,13 @@ export function widgetParams(w) {
 
 // The widgets the main encoder steps through: every shown widget, then the open plug-in windows.
 export const browsable = () => ws.widgets().filter(w => !w.menu && !w.hidden && (!w.plugin || !w.el.hidden));
-// The plug-in window a Plugin page shows: the one picked last, or the first open, or the first loaded.
+// The plug-in window a Plugin page shows: the one picked with the main encoder, else the one last clicked,
+// else the first open, else the first loaded.
+let touched = null;
+if (typeof document !== 'undefined') document.addEventListener('pointerdown', e => { const el = e.target.closest?.('.plugin-window'); if (el) touched = ws.widgets().find(w => w.el === el)?.id || touched; }, true);
 export function pluginWindow(picked) {
  const wins = ws.widgets().filter(w => w.plugin);
- return wins.find(w => w.id === picked) || wins.find(w => !w.el.hidden) || wins[0] || null;
+ return wins.find(w => w.id === picked) || wins.find(w => w.id === touched) || wins.find(w => !w.el.hidden) || wins[0] || null;
 }
 
 // The selected automation lane's steps as parameters (lane 1 unless another is picked).
