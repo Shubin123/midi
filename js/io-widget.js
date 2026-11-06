@@ -270,6 +270,7 @@ export function createIoWidget(sequencer) {
     play,
     el('button', { textContent: 'Download', onclick: () => { const f = FORMATS[format.value]; download(encodeAudio(channels, sampleRate, format.value), `${fileName(name)}.${f.ext}`); } }),
     toMidi, midiLink,
+    el('button', { textContent: 'Match this sound', title: 'Find a synth patch that sounds like this clip\'s first note (Sound match)', onclick: () => window.dispatchEvent(new CustomEvent('synth:match-sound', { detail: { channels, sampleRate, name } })) }),
     el('button', { textContent: 'Remove', onclick: () => { if (play.source) stopPlaying(); box.remove(); } })));
   play.onclick = () => {
    if (play.source && playing === play.source) { stopPlaying(); return; }

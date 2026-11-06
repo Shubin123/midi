@@ -9,6 +9,7 @@ import { mountTiming } from './timing-widget.js';
 import { createListeningWidget } from './listening-widget.js';
 import { mountListenTools } from './listen-tools.js';
 import { mountMappings, mountMonitor } from './listen-map.js';
+import { createSoundMatch } from './sound-match.js';
 // The oscillator bank is filled in now, before the synth (js/synth.js) reads it on load.
 window.oscillatorBank = mountBank(document.getElementById('oscillators-group'));
 window.addEventListener('load',()=>{
@@ -28,7 +29,7 @@ window.addEventListener('load',()=>{
  const wrap=(selector,id,title)=>{const content=document.querySelector(selector);const panel=document.createElement('section');panel.id=id;panel.dataset.title=title;panel.dataset.wide='true';panel.className='wide';panel.append(content);workspace.append(panel);};
  wrap('.launchpad-looper-container','looper-module','Loop recorder');
  wrap('.visualizer','scope-module','Oscilloscope');
- workspace.append(createAirWidget(),createPluginHost(),createIoWidget(api));
+ workspace.append(createAirWidget(),createPluginHost(),createIoWidget(api),createSoundMatch()); // Sound match: a patch from a recorded note
  document.querySelector('.controls').remove();document.querySelector('.looper-toggle-bar').remove();
  const looper=workspace.querySelector('#launchpadLooperContainer');looper.classList.add('open');looper.style.display='grid';
  mountListenTools(api,workspace); // Record from audio, audio loops, and the scope's Input (Listening)

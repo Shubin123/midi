@@ -443,6 +443,61 @@ Every switch is kept, so the page comes back as you left it after a reload.
 - **Widgets**: show and hide each widget, minimise or expand them all, and
   reset the layout.
 
+### Sound match: a patch from a recorded note
+
+The **Sound match** widget (`js/sound-match.js`, `js/patch-infer.js`) finds a
+patch for the built-in synth that sounds like a recorded note. **● Record a
+note** takes one from the Listening widget's input (from the first sound
+until it fades, at most 4 s); or drop a short audio file on the widget, or
+press **Match this sound** on a clip in Import / Export.
+
+1. **Reading the note**: its pitch (MPM over the steady part); its level every
+   5 ms, read the way the synth's envelope draws it (the attack to the peak,
+   the decay to 90% of the way to the sustain level, and the release from
+   where the level starts to fall in a straight line in dB, as the synth's
+   does, so its length comes from the slope); its harmonics in the steady
+   part; how much of it lies between them (noise); and its brightness.
+2. **A first guess**: the waveform whose series fits the lowest harmonics (a
+   sine has one, a triangle odd ones falling as 1/h², a square odd ones as
+   1/h, a sawtooth all of them), a lowpass where the harmonics fall 3 dB below
+   that series (or at a resonant bump in it), noise for what isn't harmonic,
+   and the envelope as read.
+3. **Listening to its own guesses**: each candidate is rendered offline just
+   as the synth plays a note (the bank's own `buildVoice`, the envelope as
+   `synth.js` schedules it, the filter) and compared with the recording by a
+   multi-resolution spectral distance (STFTs of 512, 1024 and 2048 samples:
+   spectral convergence plus mean log-magnitude difference, on
+   loudness-matched sound). The waveform is chosen first, then a second
+   oscillator of any waveform an octave up or down, the two oscillators'
+   balance on a grid, and then the envelope, filter, levels, detune and
+   noise by coordinate descent; the waveforms are tried again, and the dials
+   once more. All of it runs twice, from the guessed filter and from an open
+   one (a guessed resonance can be a trap), in about 200 renders, a few
+   seconds.
+
+It reports how close it got as a **match** (0-100%, from the distance) beside
+the first guess's, what it heard (*Heard C4 (261.6 Hz): attack 20 ms, decay
+200 ms, sustain 50%, release 300 ms, bright*) and the patch in words. **▶ A**
+plays the recording and **▶ B** the patch at the same pitch, to compare;
+**Apply to the synth** puts the patch on the oscillator bank, envelope and
+filter, and **Undo** puts the old one back. The synth's filter doesn't move
+during a note, so a sound whose brightness changes is matched on average. A
+note with an oscillator an octave down is heard at that lower pitch, as its
+period is that oscillator's; the patch is then relative to it.
+
+The teacher can do it too: "make it sound like this" records a note and finds
+its patch, and the agent's `match_sound` and `apply_inferred_patch` (which
+asks first, since it replaces the patch) do the same from System 2.
+
+`node tests/patch-infer.mjs` renders six random known patches (each waveform,
+one with a square an octave down, one with noise; random envelope and
+resonant lowpass) and infers each back: always closer than the first guess,
+at least 85% alike, the pitch within 3 cents, the envelope found and a wrong
+waveform clearly further. Then it records a note through the widget (the
+match and what was heard shown, A and B both sounding, Apply setting the
+synth, Undo putting it back), matches a clip sent from Import / Export, and
+has the teacher match a note from "make it sound like this".
+
 ## Modular sequencer workspace
 
 The workspace adds a 16-step polyphonic sequencer and automation lanes for tempo
@@ -514,6 +569,7 @@ Source files:
 - `js/voice-mode.js`: talk or singing, spoken requests, sing it back
 - `js/agent-actions.js`: the teacher's actions on every widget, and what it may do
 - `js/poly-model.js`: Basic Pitch, downloaded on demand, for chords in clips
+- `js/patch-infer.js`, `js/sound-match.js`: a synth patch from a recorded note, and the Sound match widget
 - `js/commands.js`: requests to change a setting, read without a model
 - `js/automation.js`: automation targets, interpolation, and parameter application
 - `js/widgets.js`: responsive widget layout, dragging, and visibility
@@ -728,8 +784,9 @@ as notes or audio), **stop_loop_recording**, **play_loop_slot**,
 **bypass_plugin**, **import_file** (it can only point at the button: the
 student chooses the file), **export_midi**, **render_audio**,
 **show_widget**, **hide_widget**, **focus_widget**, **start_listening**,
-**stop_listening**, **set_listening_mode**, **play_example_phrase** and
-**set_exercise**. Arguments are checked before anything changes, and a wrong
+**stop_listening**, **set_listening_mode**, **map_feature**, **record_lane**,
+**sing_back**, **match_sound**, **apply_inferred_patch**,
+**play_example_phrase** and **set_exercise**. Arguments are checked before anything changes, and a wrong
 call is refused with the reason ("bpm must be from 30 to 300, not 500",
 "none of D#5 is on the sequencer's rows"), which the model reads and the
 panel shows. A model without tools (Qwen on the device, or a provider that

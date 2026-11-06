@@ -16,6 +16,11 @@ export const GUIDES = {
   how: [['Press 🎙 Listen and allow the microphone; the red Mic on pill at the top says it is open.', 'listen-toggle'], ['Choose the input: a microphone or an audio interface\'s input.', 'listen-device'], ['Tick Snap to the sequencer\'s key and scale so every note lands in the key.', 'listen-snap'], ['With headphones on, tick I\'m wearing headphones, then Play what I sing through the synth to hear it as the patch.', 'listen-headphones'], ['Raise the noise gate if the room is heard as notes.', 'listen-gate'], ['Calibrate latency once, so notes land on the beat you sang them on.', 'listen-calibrate'], ['Mode: Melody, Chords (a piano or guitar, approximate), Rhythm only (claps), or Speech (talk to the teacher). The teacher\'s 🎙 Talk listens to talk and singing together.', 'listen-mode']],
   keywords: ['listen', 'listening', 'microphone', 'mic', 'sing', 'singing', 'hum', 'whistle', 'voice', 'tuner', 'audio in', 'latency', 'headphones', 'in tune', 'cents'],
  },
+ 'Sound match': {
+  what: 'Finds a patch for the synth that sounds like a recorded note: its waveform, a second oscillator, noise, the envelope and the filter, by listening to its own guesses. It says how close it got.',
+  how: [['Record a note from the microphone, or drop a short audio file on it (or press Match this sound on a clip in Import / Export).', 'match-record'], ['Compare ▶ A (the recording) with ▶ B (the patch).', 'match-a'], ['Apply puts the patch on the synth; Undo puts the old one back.', 'match-apply']],
+  keywords: ['match', 'sound like', 'sounds like', 'copy a sound', 'patch from', 'resynthesis', 'clone', 'imitate'],
+ },
  'Step sequencer': {
   what: 'A 16-step pattern player. Each row is a note of the chosen key and scale; each column is a sixteenth note.',
   how: [['Click cells to turn steps on.', 'Step sequencer'], ['Choose the key, scale and octave the rows follow; changing them moves the pattern with them.', 'seq-scale'], ['Set the speed with Base BPM.', 'seq-bpm'], ['Press ▶ Play to hear it, ■ Stop to stop.', 'seq-play'], ['Clear notes empties the grid.', 'seq-clear'], ['● Record from audio: sing or play one bar into the microphone after a bar of count-in, and it becomes the pattern, on sixteenths, in the key and scale.', 'seq-record']],

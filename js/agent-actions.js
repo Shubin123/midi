@@ -16,6 +16,8 @@ import { timing } from './timing-widget.js';
 import { parseChordName, parseScaleName, NOTE_NAMES } from './pitch-analyzer.js';
 import { readPattern } from './timing.js';
 import { mappings, FEATURES, TARGETS as MAP_TARGETS, recordLane } from './listen-map.js';
+import { soundMatch } from './sound-match.js';
+import { describePatch } from './patch-infer.js';
 
 const $ = id => document.getElementById(id);
 const KEYS = { C: 0, 'C#': 1, DB: 1, D: 2, 'D#': 3, EB: 3, E: 4, F: 5, 'F#': 6, GB: 6, G: 7, 'G#': 8, AB: 8, A: 9, 'A#': 10, BB: 10, B: 11 };
@@ -281,6 +283,16 @@ export const ACTIONS = {
  record_lane: { kind: 'change', says: 'Record an automation lane from the microphone: the sequencer plays one bar while a feature of what the student sings or plays is read at each step.',
   params: { feature: str('loudness, pitch, brightness, density or tempo', { enum: Object.keys(FEATURES) }), target: str('The lane', { enum: Object.keys(LANES) }) }, required: ['feature', 'target'],
   run: async ({ feature, target }) => { const s = seq(), was = s.lanes.find(l => l.target === target)?.points.slice(); const points = await recordLane(s, feature, target); return { text: `${LANES[target].label} recorded from ${FEATURES[feature].label.toLowerCase()}: ${points.map(Math.round).join(' ')}`, undo: () => { const l = s.lanes.find(x => x.target === target); if (l && was) l.points.splice(0, 16, ...was); } }; } },
+ match_sound: { kind: 'change', danger: () => !listening.active, says: 'Make it sound like this: record one note the student plays or sings (or use the one in Sound match already) and find a synth patch for it; says how close it got. Apply it with apply_inferred_patch.',
+  params: { again: bool('Record a new note even if there is one') },
+  run: async ({ again = false }) => {
+   if (again || !soundMatch.take) { const t = await soundMatch.record(); await soundMatch.match(t.samples, t.sampleRate, 'your note'); }
+   else if (!soundMatch.result) await soundMatch.match(soundMatch.take.samples, soundMatch.take.sampleRate, soundMatch.take.name);
+   const r = soundMatch.result;
+   return { text: `match ${r.match}% (first guess ${r.guessMatch}%): ${describePatch(r.patch)}` };
+  } },
+ apply_inferred_patch: { kind: 'destructive', says: 'Put the patch Sound match found on the synth (the oscillators, envelope and filter), replacing the current one; Undo brings it back.', params: {},
+  run: () => soundMatch.apply() },
  play_example_phrase: { kind: 'change', says: 'Play an example through the synth, lighting the keys: notes in order, chords one per beat, or a scale up and down.',
   params: { notes: { type: 'array', items: { type: ['string', 'integer'] }, maxItems: 32, description: 'Note names, e.g. ["C4", "E4", "G4"]' }, chords: { type: 'array', items: { type: 'string' }, maxItems: 16, description: 'Chord symbols, e.g. ["Dm7", "G7", "Cmaj7"]' }, scale: str('e.g. "A minor pentatonic"'), bpm: num('Speed', 30, 300) },
   run: ({ notes, chords, scale, bpm }, env) => {

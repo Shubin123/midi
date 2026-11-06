@@ -105,6 +105,7 @@ export function readIntent(text) {
  if (/\b(play|start)\b.*\b(slot|loop)\b/.test(q) && slot) return { action: 'play_loop_slot', args: { slot, on: true }, say: `Playing slot ${slot}.` };
  if (/\bstop\b.*\b(slot|loop)\b/.test(q) && slot) return { action: 'play_loop_slot', args: { slot, on: false }, say: `Stopped slot ${slot}.` };
  if (/\b(start|begin) listening\b|\blisten to me\b/.test(q)) return { action: 'start_listening', args: {}, say: 'Listening.' };
+ if (/\b(make (it|the synth|this) sound like (this|that|me)|match (this|that|my) sound|copy (this|that) sound)\b/.test(q)) return { action: 'match_sound', args: { again: true }, say: 'Play or sing one note, and I\'ll find a patch like it.' };
  if (/\bstop listening\b/.test(q)) return { action: 'stop_listening', args: {}, say: 'I\'ve stopped listening.' };
  if (/\bsing (it|that|this|them) back\b|\bsing-?back\b(?! to)|\bcall and response\b|\bear training\b/.test(q) && !/\bsomething to sing\b/.test(q)) return { action: 'sing_back', args: {}, say: 'Listen, then sing it back.' };
  // "tempo 90" and "the metronome at 100" are System 1's commands already (js/commands.js); this is "slow it down to 80".
