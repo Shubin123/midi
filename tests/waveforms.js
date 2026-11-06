@@ -68,6 +68,10 @@ export function highShare(x, hz, from = SKIP) {
 export const maxDiff = (a, b) => { let m = 0; for (let i = 0; i < a.length; i++) m = Math.max(m, Math.abs(a[i] - b[i])); return m; };
 const sumOf = parts => parts.reduce((acc, x) => acc.map((v, i) => v + x[i]));
 const fingerprint = x => ({ h: harmonics(x).map(v => +v.toFixed(4)), rms: +rms(x).toFixed(4) });
+// How a fingerprint has moved from the one recorded in tests/waveforms.golden.json: one line per harmonic (or
+// the RMS) further off than `tolerance(recorded value)`.
+export const moved = (was, now, tolerance = () => 0.005) => [...was.h.map((v, i) => [`harmonic ${i + 1}`, v, now.h[i]]), ['RMS', was.rms, now.rms]]
+ .filter(([, a, b]) => !(Math.abs(a - b) <= tolerance(a))).map(([what, a, b]) => `${what} moved from ${a} to ${b} (tests/waveforms.golden.json)`);
 
 /* ---- The fixed oscillators, as they were built before the bank ---- */
 
@@ -247,10 +251,8 @@ export async function runLab({ golden = null, update = false } = {}) {
    if (x) {
     print = fingerprint(x);
     const was = golden?.[name];
-    if (was && !update) {
-     const moved = [...was.h.map((v, i) => [`harmonic ${i + 1}`, v, print.h[i]]), ['RMS', was.rms, print.rms]].filter(([, a, b]) => !near(a, b, 0.005));
-     moved.forEach(([what, a, b]) => problems.push(`${what} moved from ${a} to ${b} (tests/waveforms.golden.json)`));
-    } else if (golden && !was && !update) problems.push('no fingerprint in tests/waveforms.golden.json yet: run node tests/waveforms.mjs --update');
+    if (was && !update) problems.push(...moved(was, print));
+    else if (golden && !was && !update) problems.push('no fingerprint in tests/waveforms.golden.json yet: run node tests/waveforms.mjs --update');
    }
   } catch (err) { problems.push(`threw: ${err.message}`); }
   checks.push({ name, ok: !problems.length, problems, fingerprint: print, ms: Math.round(performance.now() - t) });

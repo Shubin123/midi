@@ -1,0 +1,23 @@
+{
+ "sine: harmonics follow its Fourier series": {"h":[0.7,0,0,0,0,0,0,0],"rms":0.495},
+ "square: harmonics follow its Fourier series": {"h":[0.756,0,0.252,0,0.1512,0,0.108,0],"rms":0.5913},
+ "sawtooth: harmonics follow its Fourier series": {"h":[0.3781,0.1891,0.126,0.0945,0.0756,0.063,0.054,0.0473],"rms":0.3409},
+ "triangle: harmonics follow its Fourier series": {"h":[0.5675,0,0.0631,0,0.0227,0,0.0116,0],"rms":0.4042},
+ "sine: level 0.7 is a sine of amplitude 0.7": {"h":[0.7,0,0,0,0,0,0,0],"rms":0.495},
+ "pulse, width 0.5: high 0.5 of each cycle, no DC, harmonics of that pulse": {"h":[0.8913,0,0.2971,0,0.1783,0,0.1273,0],"rms":0.6972},
+ "pulse, width 0.25: high 0.25 of each cycle, no DC, harmonics of that pulse": {"h":[0.6302,0.4456,0.2101,0,0.126,0.1485,0.09,0],"rms":0.6021},
+ "pulse, width 0.1: high 0.1 of each cycle, no DC, harmonics of that pulse": {"h":[0.2754,0.2619,0.2404,0.2119,0.1783,0.1413,0.103,0.0655],"rms":0.4144},
+ "pulse, width 0.75: high 0.75 of each cycle, no DC, harmonics of that pulse": {"h":[0.6302,0.4456,0.2101,0,0.126,0.1485,0.09,0],"rms":0.6039},
+ "pulse, width 0.02: no DC, harmonics of that pulse": {"h":[0.056,0.0559,0.0557,0.0554,0.0551,0.0547,0.0542,0.0537],"rms":0.1856},
+ "pulse, width 0.98: no DC, harmonics of that pulse": {"h":[0.056,0.0559,0.0557,0.0554,0.0551,0.0547,0.0542,0.0537],"rms":0.1864},
+ "white noise: flat, at the level of uniform noise": {"h":[0.0035,0.0048,0.0059,0.0086,0.0094,0.0102,0.0143,0.0036],"rms":0.4025},
+ "pink noise: rolled off above 1.5 kHz": {"h":[0.004,0.0052,0.0073,0.0098,0.007,0.0053,0.0055,0.0011],"rms":0.1281},
+ "layers: a stack is exactly the sum of its oscillators": {"h":[0.4582,0.1757,0.1399,0.1204,0.0535,0.0846,0.0642,0.0207],"rms":0.5473},
+ "a full bank: 8 oscillators, every waveform, all sounding": {"h":[0.0499,0.0144,0.0079,0.0145,0.0082,0.0066,0.0109,0.0072],"rms":0.5097},
+ "the default stack sounds exactly as Oscillator 1, Oscillator 2 and the Sub did": {"h":[0.7563,0.3781,0.2521,0.1891,0.1513,0.126,0.108,0.0945],"rms":0.8013},
+ "every other legacy setting sounds the same in the bank (to below −80 dB)": {"h":[0.4497,0.0633,0.0439,0.0041,0.0122,0.0004,0.0049,0.0005],"rms":0.5971},
+ "app: the default sound, through the whole synth": {"h":[0.1795,0,0.06,0.254,0.0362,0,0.026,0.1282,0.0204,0,0.0169,0.0876,0.0145,0,0.0128,0.068,0.0115,0,0.0106,0.0568,0.0098,0,0.0092,0.0498,0.0086,0,0.0082,0.0451,0.0079,0,0.0075,0.0415],"rms":0.2714},
+ "app: a resonant lowpass at 800 Hz": {"h":[0.1746,0.1544,0.0232,0.008,0.0037,0.0021,0.0013,0.0008],"rms":0.1657},
+ "app: a highpass at 2 kHz": {"h":[0.0062,0.0134,0.0222,0.0297,0.0304,0.0263,0.0219,0.0185],"rms":0.0534},
+ "app: the settings a session starts with": {"settings":{"baseOctave":"4","oscSlop":"0.005","enableAdsr":true,"attack":"0.05","decay":"0.1","sustain":"0.6","release":"0.5","enableFilter":true,"filterType":"lowpass","filterCutoff":"5000","filterResonance":"2.001","masterVolume":"0.7","numOctavesSelect":"2","oscillators":"[{\"waveform\":\"sawtooth\",\"octave\":0,\"detune\":0,\"level\":0.7,\"delay\":0,\"pulseWidth\":0.5,\"on\":true},{\"waveform\":\"sawtooth\",\"octave\":0,\"detune\":0,\"level\":0.7,\"delay\":0,\"pulseWidth\":0.5,\"on\":true},{\"waveform\":\"square\",\"octave\":-2,\"detune\":0,\"level\":0.5,\"delay\":0,\"pulseWidth\":0.5,\"on\":true}]"}}
+}

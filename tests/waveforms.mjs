@@ -16,6 +16,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const GOLDEN = join(ROOT, 'tests/waveforms.golden.json');
 const update = process.argv.includes('--update'), labOnly = process.argv.includes('--lab');
+const golden = existsSync(GOLDEN) ? JSON.parse(await readFile(GOLDEN, 'utf8')) : null;
+const prints = {}; // this run's fingerprints, written back with --update
 const t0 = Date.now();
 
 /* ---- Serving the repo ---- */
@@ -102,21 +104,18 @@ const print = (title, checks) => {
 let failed = 0;
 try {
  await open(`${base}/tests/waveforms.html`);
- const golden = existsSync(GOLDEN) && !update ? JSON.parse(await readFile(GOLDEN, 'utf8')) : null;
  const lab = await evaluate(`import('./waveforms.js').then(m => m.runLab({ golden: ${JSON.stringify(golden)}, update: ${update} }))`);
  print(`Waveform lab: ${lab.passed} of ${lab.checks.length} in ${lab.ms} ms (rendered offline by the browser's Web Audio)`, lab.checks);
  failed += lab.failed;
- if (update) {
-  const prints = Object.fromEntries(lab.checks.filter(c => c.fingerprint).map(c => [c.name, c.fingerprint]));
-  await writeFile(GOLDEN, `{\n${Object.entries(prints).map(([k, v]) => ` ${JSON.stringify(k)}: ${JSON.stringify(v)}`).join(',\n')}\n}\n`); // a line per check, so a diff names it
-  console.log(`  wrote ${Object.keys(prints).length} fingerprints to tests/waveforms.golden.json`);
- } else if (!golden) console.log('  (no tests/waveforms.golden.json: run with --update to record the fingerprints)');
+ lab.checks.filter(c => c.fingerprint).forEach(c => { prints[c.name] = c.fingerprint; });
+ if (!golden && !update) console.log('  (no tests/waveforms.golden.json: run with --update to record the fingerprints)');
 
  if (!labOnly) {
   errors.length = 0;
   await open(`${base}/index.html`);
   await evaluate('new Promise(r => { const ready = () => (window.oscillatorBank && document.getElementById("workspace") ? r() : setTimeout(ready, 50)); ready(); })');
-  const app = await evaluate(`import('./tests/waveforms-app.js').then(m => m.runApp())`);
+  const app = await evaluate(`import('./tests/waveforms-app.js').then(m => m.runApp({ golden: ${JSON.stringify(golden)}, update: ${update} }))`);
+  app.checks.filter(c => c.fingerprint).forEach(c => { prints[c.name] = c.fingerprint; });
   // Web MIDI is refused in a headless browser; anything else the page logged as an error counts.
   const unexpected = errors.filter(e => !/Web MIDI|requestMIDIAccess|MIDI/i.test(e));
   app.checks.push({ name: 'no errors in the page', ok: !unexpected.length, problems: unexpected });
@@ -130,5 +129,11 @@ try {
  ws.close(); chrome.kill(); server.close();
  await rm(profile, { recursive: true, force: true }).catch(() => {});
 }
+// --update keeps the fingerprints this run didn't make (the app's, with --lab), and only after a clean run.
+if (update && !failed) {
+ const all = { ...golden, ...prints };
+ await writeFile(GOLDEN, `{\n${Object.entries(all).map(([k, v]) => ` ${JSON.stringify(k)}: ${JSON.stringify(v)}`).join(',\n')}\n}\n`); // a line per check, so a diff names it
+ console.log(`\nWrote ${Object.keys(prints).length} fingerprints to tests/waveforms.golden.json.`);
+} else if (update) console.log('\nNot updating tests/waveforms.golden.json: fix the failures first.');
 console.log(`\n${failed ? `${failed} failed` : 'waveforms: all checks passed'} (${((Date.now() - t0) / 1000).toFixed(1)} s)`);
 process.exit(failed ? 1 : 0);

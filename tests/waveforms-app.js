@@ -2,7 +2,7 @@
 // used and saved as a student would, then every waveform and a layered stack played through the real synth
 // (envelope, filter, master and limiter) and measured at its output. Returns { checks: [{ name, ok, problems }] }.
 import { DEFAULT_STACK, WAVEFORMS, MAX_OSCILLATORS } from '../js/oscillators.js';
-import { frequency, cents } from './waveforms.js';
+import { frequency, cents, moved } from './waveforms.js';
 import { widgets, controls } from '../js/workspace.js';
 import { apply } from '../js/automation.js';
 
@@ -158,13 +158,58 @@ check('a loop slot plays with the sound it was recorded with', async expect => {
  expect(pure, 'the loop took the new oscillators instead of its own sine');
 });
 
-export async function runApp() {
+// The whole sound path, fingerprinted: the default sound, the filter and the envelope, measured at the
+// synth's output as harmonic amplitudes of a steady note (Hann-windowed, so timing doesn't matter) and RMS.
+// A fingerprint may move by 5% (or 0.003) before it fails: a live capture is close to, but not exactly,
+// the same twice, and a regression moves it much further.
+// The synth's settings as the session started, recorded before any check changes them: the checks go back to
+// these (not to values written here), so a changed default changes what they hear.
+const SETTINGS = ['baseOctave', 'oscSlop', 'enableAdsr', 'attack', 'decay', 'sustain', 'release', 'enableFilter', 'filterType', 'filterCutoff', 'filterResonance', 'masterVolume', 'numOctavesSelect'];
+const snapshot = () => ({ ...Object.fromEntries(SETTINGS.map(id => [id, $(id).type === 'checkbox' ? $(id).checked : $(id).value])), oscillators: JSON.stringify(plain(bank().list())) });
+let initial = null;
+const defaults = () => { SETTINGS.forEach(id => setUI(id, initial[id])); bank().set(JSON.parse(initial.oscillators)); setUI('oscSlop', 0); };
+const print = (x, rate, f0, n) => ({ h: Array.from({ length: n }, (_, k) => +amplitudeAt(x, f0 * (k + 1), rate).toFixed(4)), rms: +rmsOf(x).toFixed(4) });
+check('app: the settings a session starts with', async () => ({ settings: initial }));
+check('app: the default sound, through the whole synth', async () => {
+ defaults();
+ const { x, rate } = await playAndListen('A5', 400);
+ return print(x, rate, A5 / 4, 32); // the sub, two octaves down, is the fundamental; up to 3.5 kHz
+});
+check('app: a resonant lowpass at 800 Hz', async () => {
+ defaults(); bank().set([{ waveform: 'sawtooth', level: 0.7 }]); setUI('filterCutoff', 800); setUI('filterResonance', 10);
+ const { x, rate } = await playAndListen('A5', 400);
+ return print(x, rate, A5, 8);
+});
+check('app: a highpass at 2 kHz', async () => {
+ defaults(); bank().set([{ waveform: 'sawtooth', level: 0.7 }]); setUI('filterType', 'highpass'); setUI('filterCutoff', 2000); setUI('filterResonance', 1);
+ const { x, rate } = await playAndListen('A5', 400);
+ return print(x, rate, A5, 8);
+});
+check('app: the envelope holds a note at its sustain level', async expect => {
+ defaults(); bank().set([{ waveform: 'sine', level: 0.5 }]); setUI('enableFilter', false);
+ const held = rmsOf((await playAndListen('A5', 400)).x);
+ setUI('enableAdsr', false);
+ const full = rmsOf((await playAndListen('A5', 400)).x);
+ const sustain = Number($('sustain').value);
+ expect(Math.abs(held / full - sustain) < 0.03, `held at ${(held / full).toFixed(3)} of full level, not the sustain ${sustain}`);
+});
+
+// Runs every check; fingerprints are compared with `golden` (see tests/waveforms.js runLab).
+export async function runApp({ golden = null, update = false } = {}) {
  const checks = [];
+ initial = snapshot();
  for (const { name, fn } of CHECKS) {
   const problems = [];
-  try { await fn((ok, why) => { if (!ok) problems.push(why); }); } catch (err) { problems.push(`threw: ${err.message}`); }
-  checks.push({ name, ok: !problems.length, problems });
+  let fingerprint = null;
+  try {
+   fingerprint = (await fn((ok, why) => { if (!ok) problems.push(why); })) || null;
+   const was = golden?.[name];
+   if (fingerprint?.settings && was && !update) Object.keys({ ...was.settings, ...fingerprint.settings }).forEach(k => { if (was.settings[k] !== fingerprint.settings[k]) problems.push(`${k} starts at ${fingerprint.settings[k]}, was ${was.settings[k]} (tests/waveforms.golden.json)`); });
+   else if (fingerprint && was && !update) problems.push(...moved(was, fingerprint, v => Math.max(0.003, Math.abs(v) * 0.05)));
+   else if (fingerprint && golden && !was && !update) problems.push('no fingerprint in tests/waveforms.golden.json yet: run node tests/waveforms.mjs --update');
+  } catch (err) { problems.push(`threw: ${err.message}`); }
+  checks.push({ name, ok: !problems.length, problems, fingerprint });
  }
- bank().reset(); setUI('oscSlop', 0.005); setUI('enableFilter', true);
+ defaults(); setUI('oscSlop', initial.oscSlop);
  return { checks };
 }

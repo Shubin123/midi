@@ -67,8 +67,42 @@ seconds.
 - **In the app** (`tests/waveforms-app.js`), the Oscillators widget is used as
   a person would: rows added up to eight and removed, every control changed,
   the bank saved, an automation lane moving the first detune. Then every
-  waveform, a layered stack and a level change on a held note are played
-  through the real synth (envelope, filter, limiter) and measured at its output.
+  waveform, a layered stack, a level and a pulse-width change on a held note, a
+  loop slot (which keeps the sound it was recorded with) and the oscilloscope's
+  sources are played through the real synth (envelope, filter, limiter) and
+  measured at its output.
+
+### Checking for regressions
+
+`node tests/all.mjs` runs every suite in parallel (about ten seconds) and fails
+if any does. The waveform checks don't just look for "about right": each one
+also leaves a **fingerprint** in `tests/waveforms.golden.json`, so a change
+anywhere in the sound shows up even when it stays inside the checks' own
+tolerances. A fingerprint is the first harmonics' amplitudes and the RMS, and
+there are three kinds:
+
+- **Each waveform, rendered offline**: deterministic, so they must match to
+  0.005.
+- **The whole sound path, played live** (the default sound up to 3.5 kHz, a
+  resonant lowpass, a highpass, the envelope's sustain), measured as harmonic
+  amplitudes of a steady note so timing doesn't matter. A live capture is
+  close to, but not exactly, the same twice, so these may move by 5%; the
+  regressions below move them further.
+- **The settings a session starts with** (every synth control and the
+  oscillator bank), exactly, so a changed default names itself.
+
+The method was checked by breaking the code on purpose. Each of these failed
+the run: the octave sign flipped; every level 2% loud; the pulse series off by
+1%; oscillators past the sixth dropped; slop halved; sustain 15% low; resonance
+halved; the limiter's threshold at −20 dB; the cutoff applied 30% low; the
+default cutoff at 3 kHz.
+
+`node tests/waveforms.mjs --lab` runs the offline part alone, in under a
+second. When a sound changes on purpose, check that the failures name only
+what you meant to change, then record the new fingerprints with
+`node tests/waveforms.mjs --update` (it writes only after a clean run of the
+other checks) and commit the file with the change: each check is one line, so
+the diff shows exactly what moved.
 
 ## Features
 
@@ -666,7 +700,8 @@ adapted texts in `js/lessons.js` are shared under the same license
 
 The service worker needs `https://` or `http://localhost`. Tests:
 
-- `node tests/waveforms.mjs`: every waveform rendered by the browser's own Web Audio and measured, then the Oscillators widget used and played through the synth in the app (headless Chrome, no dependencies; see *Testing the waveforms*)
+- `node tests/all.mjs`: every suite below, in parallel, with one answer (see *Checking for regressions*)
+- `node tests/waveforms.mjs`: every waveform rendered by the browser's own Web Audio and measured, then the Oscillators widget used and played through the synth in the app, all compared with recorded fingerprints (headless Chrome, no dependencies; see *Testing the waveforms*)
 - `node tests/oscillators.mjs`: the oscillator bank's settings
 - `node tests/archive.mjs`: archive reading and writing
 - `node tests/formats.mjs`: WAV, AIFF and MIDI reading and writing
