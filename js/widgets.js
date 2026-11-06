@@ -5,8 +5,9 @@ import { read, save } from './storage.js';
 // whole columns, any height), minimised to their title bar, or hidden; order, sizes, minimised and hidden
 // state all persist.
 const ROW = 2; // px; matches grid-auto-rows in workspace.css
-// Outlines drawn on the page while a module is dragged: where it was lifted from, and where it will land.
-export const marker=(rect,kind,text)=>{const m=document.createElement('div');m.className=`drag-marker ${kind}`;m.dataset.label=text;m.setAttribute('aria-hidden','true');document.body.append(m);placeMarker(m,rect);return m;};
+// Outlines drawn on the page while a module is dragged: where it was lifted from (an empty outline: the open
+// space it will drop into says enough), and where it will land.
+export const marker=(rect,kind,text)=>{const m=document.createElement('div');m.className=`drag-marker ${kind}`;if(text)m.dataset.label=text;m.setAttribute('aria-hidden','true');document.body.append(m);placeMarker(m,rect);return m;};
 export const placeMarker=(m,r)=>Object.assign(m.style,{left:`${r.left+scrollX}px`,top:`${r.top+scrollY}px`,width:`${r.width}px`,height:`${r.height}px`});
 
 // A resize grip for a widget or window corner. onMove(dx, dy, start) runs as it is dragged (start is the
@@ -91,8 +92,8 @@ export function setupWidgets(workspace) {
   const handle = document.createElement('button'); handle.className='drag-handle'; handle.textContent='⠿ '+name; handle.title='Drag to reorder. Use arrow keys to move. Double-click to minimise.';
   const move = delta => { const all=[...workspace.children]; const at=all.indexOf(el); const other=all[at+delta]; if(other){workspace.insertBefore(el,delta<0?other:other.nextSibling);layout();persist();} };
   handle.onkeydown=e=>{if(e.key==='ArrowUp'||e.key==='ArrowLeft'){e.preventDefault();move(-1);}if(e.key==='ArrowDown'||e.key==='ArrowRight'){e.preventDefault();move(1);}};
-  // Dragging lifts the module out of the grid: it follows the pointer, a dashed outline stays at the liftoff
-  // point, and a highlighted outline shows where it will land as the other modules make room. Escape (or a
+  // Dragging lifts the module out of the grid: it follows the pointer, an empty dashed outline stays at the
+  // liftoff point, and a highlighted outline shows where it will land as the other modules make room. Escape (or a
   // cancelled touch) puts it back where it was. A press that doesn't move stays a click.
   let drag=null;
   // Moving the module in the page drops the handle's pointer capture, so the drag listens on the window.
@@ -116,7 +117,7 @@ export function setupWidgets(workspace) {
     drag.lifted=true;
     el.classList.add('dragging');el.classList.remove('settling');el.style.transform=''; // picked up again while still settling from a drop
     const r=el.getBoundingClientRect();drag.from={left:r.left+scrollX,top:r.top+scrollY,width:r.width,height:r.height};
-    drag.liftoff=marker(r,'liftoff','Lifted from here');drag.landing=marker(r,'landing','Drops here');
+    drag.liftoff=marker(r,'liftoff');drag.landing=marker(r,'landing','Drops here');
     document.documentElement.style.overflowAnchor='none'; // the page must not scroll itself as modules make room
     refollow=()=>follow(drag.last);
    }

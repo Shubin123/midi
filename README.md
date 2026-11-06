@@ -211,17 +211,19 @@ The original loop recorder still uses recorded event durations; tempo automation
 does not time-stretch those recordings.
 
 Drag a module by its header with a mouse or finger: it lifts and follows the
-pointer exactly, a dashed outline marks the liftoff point, and the space it
-will drop into is already open and highlighted (**Drops here**) as the other
-modules make room; Escape puts it back. Carried past the middle of another
+pointer exactly, an empty dashed outline marks the liftoff point (no label: the
+open space says where it is going), and the space it will drop into is already
+open and highlighted (**Drops here**) as the other modules make room; Escape
+puts it back. Carried past the middle of another
 module, the space moves to that module's far side, and back only when carried
 back past the middle, so resting on a module never makes the space jump back
 and forth. While a module is held the page doesn't scroll or shrink under it.
-Plug-in windows show their liftoff point the same way while they move.
+Plug-in windows leave the same empty outline where they were while they move.
 `node tests/widgets.mjs` carries every module onto every other one, at four,
 two and one columns, and checks at each step that the space is open, outlined
-exactly where the module lands, empty of other modules and steady, and that
-every place can be reached and no two modules overlap.
+exactly where the module lands, empty of other modules and steady, that the
+liftoff outline (a plug-in window's too) carries no words, and that every place
+can be reached and no two modules overlap.
 
 Every widget and plug-in window has a **resize grip** in its bottom-right corner.
 A widget's width snaps to whole columns (one to four) and its height is free: a

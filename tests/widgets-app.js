@@ -1,8 +1,9 @@
 // Checks run inside the app (index.html) by node tests/widgets.mjs: dragging widgets, as a pointer would. Every
 // widget is lifted and carried onto every other one, and at each step the place it will drop must be a space
 // already open, outlined, and empty of other widgets, with the widget itself under the pointer; resting on a
-// widget must not make the space jump back and forth; Escape puts everything back; and a drop lands exactly
-// in the outlined space. Returns { checks: [{ name, ok, problems }] }.
+// widget must not make the space jump back and forth; Escape puts everything back; a drop lands exactly in
+// the outlined space; and the outline left where it was lifted from is empty, with no words, for widgets and
+// plug-in windows alike. Returns { checks: [{ name, ok, problems }] }.
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const workspace = () => document.getElementById('workspace');
@@ -26,7 +27,10 @@ const pointer = (type, x, y, target = window) => target.dispatchEvent(new Pointe
 const clampY = y => Math.max(90, Math.min(innerHeight - 90, y)); // clear of the edges, where dragging scrolls the page
 
 // Everything that must hold at every moment of a drag. `grab` is where on the widget the pointer holds it.
+// The outline where a widget or window was lifted from is left empty: no label, drawn or in the markup.
+const liftoffWords = () => { const m = document.querySelector('.drag-marker.liftoff'); return m && (m.dataset.label || getComputedStyle(m, '::before').content.replace(/^none$|^normal$|^""$/, '') || m.textContent); };
 function steady(el, x, y, grab, say) {
+ if (liftoffWords()) say(`the liftoff outline says "${liftoffWords()}"; it should be empty`);
  const landing = markerRect('landing'), space = slot(el);
  if (!landing) { say('no "Drops here" outline'); return; }
  if (!same(landing, space)) say(`"Drops here" is at ${fmt(landing)}, but the widget would drop at ${fmt(space)}`);
@@ -121,6 +125,29 @@ export async function runWidgets() {
  const all = visible(), overlaps = [];
  all.forEach((a, i) => all.slice(i + 1).forEach(b => { if (overlap(slot(a), slot(b)) > 4) overlaps.push(`${title(a)} overlaps ${title(b)}`); }));
  add('no two widgets overlap', overlaps);
+ // A plug-in window, carried by its title bar, leaves an empty outline where it was, gone once it is let go.
+ // Last: loading the plug-in makes the Plugins widget taller, and the layout follows a frame later.
+ {
+  const problems = [], host = document.getElementById('plugin-host-module'), pick = host.querySelector('select[aria-label="Built-in effect"]');
+  pick.value = [...pick.options].find(o => /delay/i.test(o.textContent)).value;
+  [...host.querySelectorAll('button')].find(b => b.textContent === 'Add built-in').click();
+  for (let i = 0; i < 40 && !document.querySelector('.plugin-window:not([hidden]) .drag-handle'); i++) await wait(50);
+  const handle = document.querySelector('.plugin-window:not([hidden]) .drag-handle');
+  if (!handle) problems.push('no plug-in window opened');
+  else {
+   handle.setPointerCapture = () => {}; // synthetic pointers can't be captured
+   const h = handle.getBoundingClientRect(), x = h.left + 30, y = h.top + h.height / 2;
+   pointer('pointerdown', x, y, handle);
+   for (let i = 1; i <= 5; i++) pointer('pointermove', x + 30 * i, y + 20 * i, handle);
+   const m = document.querySelector('.drag-marker.liftoff');
+   if (!m) problems.push('no outline where it was lifted from');
+   else if (liftoffWords()) problems.push(`the liftoff outline says "${liftoffWords()}"; it should be empty`);
+   pointer('pointerup', x + 150, y + 100, handle);
+   if (document.querySelector('.drag-marker')) problems.push('an outline was left behind');
+   handle.closest('.plugin-window').querySelector('.widget-header button[title^="Close"]')?.click();
+  }
+  add('a plug-in window leaves an empty outline where it was lifted from', problems);
+ }
  window.scrollTo(0, 0);
  return { checks };
 }

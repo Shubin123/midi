@@ -55,11 +55,11 @@ export function pluginWindow({ title, state, opener, onChange }) {
  close.onclick = () => show(false);
 
  let drag = null;
- // While it moves, a dashed outline marks where it was lifted from.
+ // While it moves, an empty dashed outline marks where it was lifted from.
  handle.onpointerdown = e => { if (e.button !== 0) return; drag = { dx: e.clientX - state.x, dy: e.clientY - state.y, from: win.getBoundingClientRect(), liftoff: null }; handle.setPointerCapture(e.pointerId); };
  handle.onpointermove = e => {
   if (!drag) return;
-  if (!drag.liftoff) { drag.liftoff = marker(drag.from, 'liftoff', 'Lifted from here'); drag.liftoff.style.position = 'fixed'; drag.liftoff.style.left = `${drag.from.left}px`; drag.liftoff.style.top = `${drag.from.top}px`; drag.liftoff.style.zIndex = front; win.classList.add('moving'); }
+  if (!drag.liftoff) { drag.liftoff = marker(drag.from, 'liftoff'); drag.liftoff.style.position = 'fixed'; drag.liftoff.style.left = `${drag.from.left}px`; drag.liftoff.style.top = `${drag.from.top}px`; drag.liftoff.style.zIndex = front; win.classList.add('moving'); }
   state.x = e.clientX - drag.dx; state.y = e.clientY - drag.dy; place();
  };
  handle.onpointerup = handle.onpointercancel = () => { if (drag) { drag.liftoff?.remove(); win.classList.remove('moving'); drag = null; onChange?.(true); } };
