@@ -23,13 +23,13 @@ import { buildMove, describePlayed } from './coach.js';
 import { LESSONS, UNITS, OMT, Attempt, explainPrompt } from './lessons.js';
 import { RHYTHM_UNIT, RHYTHM_LESSONS } from './rhythm-lessons.js';
 import { WORKSPACE_UNIT, WORKSPACE_LESSONS, guideFor, KEYWORDS, profiles } from './workspace-guide.js';
-import { learnPlugin, cachedProfile, keepProfile, summarize, KINDS } from './plugin-profile.js';
+import { learnPlugin, cachedProfile, keepProfile, summarize, KINDS, ROLES } from './plugin-profile.js';
 import * as ws from './workspace.js';
 import { Conversations, describeConversation } from './conversations.js';
 import { modelCacheInfo, clearModelCache, formatBytes } from './model-cache.js';
 import { answer as systemOneAnswer, nextTip, isSoundControl } from './system-one.js';
 import { meetRequest } from './requests.js';
-import { readCommand } from './commands.js';
+import { readCommand, pluginWords } from './commands.js';
 import { Voice, canListen, canSpeak, ENGINES as VOICE_ENGINES, loadEngine, BROWSER, SPEED as VOICE_SPEED, speedFrom } from './voice.js';
 import { PROVIDERS, GROUPS, SYSTEM_ONE, NO_SYSTEM_TWO, providerById, getProviderId, setProviderId, getKey, setKey, clearKey, getModelFor, setModelFor, getBase, setBase, engineFor, listModels, pickModel, fetchOpenRouterModels } from './providers.js';
 import { signIn, completeSignIn } from './ai-auth.js';
@@ -929,6 +929,7 @@ export class TeacherBridge {
   if (this._voiceSpeedRequest(q)) return;
   const req = await meetRequest(q, { last: this._lastExample, pick: this.laya ? (...a) => this.laya.pick(...a) : null }).catch(() => null);
   if (req) return this._playRequest(q, req);
+  await this._learnAll(); // what each plug-in's controls are for, so "more reverb" finds the reverb's mix
   if (this._command(q)) return;
   const compose = COMPOSE.test(q);
   if (compose && this.teacher.isConfigured) return this._question(q, [], { compose });
@@ -951,7 +952,42 @@ export class TeacherBridge {
  _toSystem2(q, focus = [], { compose = false, quick = '', onConfirm = null, note = '' } = {}) {
   this._askedAt = performance.now();
   const context = [this._workspaceContext(q, focus, compose), note && `[ALREADY PLAYED] The app has just played this for the student: ${note} Explain in two or three sentences what it is and why it fits the request.`].filter(Boolean).join('\n\n');
-  this.teacher.ask(q, { think: this.mode === 'slow', context, quick, onConfirm });
+  this.teacher.ask(q, { think: this.mode === 'slow', context, quick, onConfirm, tools: this._tools() });
+ }
+ // The tools a hosted System 2 model may call while it answers (js/providers.js): read the widgets, a
+ // widget's or plug-in's controls and what each does, change a control, hide, show or minimise a widget, and
+ // point at a control. Changes go the same way as the student's requests: each listed with Show and Undo.
+ _tools() {
+  const name = { type: 'string', description: 'As the workspace names it: "Widget › Control", e.g. "Filter › Cutoff (Hz)" or "Delay › Mix"' };
+  const fn = (n, description, properties = {}, required = []) => ({ type: 'function', function: { name: n, description, parameters: { type: 'object', properties, required } } });
+  const definitions = [
+   fn('list_widgets', 'Every widget, plug-in window and the Settings menu, one line each, with what each is doing.'),
+   fn('get_controls', 'A widget\'s or plug-in\'s controls with their current values and ranges or options.', { widget: { type: 'string', description: 'Its title, e.g. "Filter", "Oscillators", "Reverb", "Settings"' } }, ['widget']),
+   fn('describe_plugin', 'What a loaded plug-in is and what each of its controls does, with their values.', { plugin: { type: 'string', description: 'Its window title, e.g. "Delay"' } }, ['plugin']),
+   fn('set_control', 'Change one control as the student would; it is listed for them with Undo. Numbers are clamped to the range; a choice is matched by its name; a switch takes true or false.', { control: name, value: { type: ['string', 'number', 'boolean'], description: 'The new value' } }, ['control', 'value']),
+   fn('arrange_widget', 'Hide, show or minimise a whole widget.', { widget: { type: 'string' }, state: { type: 'string', enum: ['hidden', 'shown', 'minimised'] } }, ['widget', 'state']),
+   fn('show_control', 'Point at a control: it is brought into view and pulses for a moment.', { control: name }, ['control']),
+  ];
+  const who = `System 2 · ${this._who()}`;
+  const run = async (tool, a = {}) => {
+   await this._learnAll();
+   if (tool === 'list_widgets') return ws.describe([]);
+   if (tool === 'get_controls' || tool === 'describe_plugin') {
+    const hit = ws.find(a.widget ?? a.plugin);
+    if (!hit) return `There is no widget or plug-in called "${a.widget ?? a.plugin}". ${ws.describe([])}`;
+    const w = hit.widget, p = w.plugin && profiles.get(w.title);
+    const lines = ws.describe([w.id]).split('\n').slice(1);
+    if (p) lines.push(`${w.title} is ${KINDS[p.kind]?.says || 'a plug-in'}.`, ...ws.controls(w).filter(c => p.roles[c.label]).map(c => `${c.label}: ${ROLES[p.roles[c.label]]?.does || 'one of its settings'} (now ${ws.valueOf(c)}).`));
+    return lines.join('\n');
+   }
+   if (tool === 'set_control' || tool === 'arrange_widget') {
+    const done = this._apply([{ name: a.control ?? a.widget, value: a.value ?? a.state }], who);
+    return done.length ? `Done: ${done.join(', ')}.` : `Not changed. ${done.failed.join(' ')}`;
+   }
+   if (tool === 'show_control') { const shown = ws.show(a.control); return shown ? `Pointing at ${shown}.` : `There is no control called "${a.control}".`; }
+   return `There is no tool called ${tool}.`;
+  };
+  return { definitions, run };
  }
  // Words that find each widget and plug-in: the written ones, and for a plug-in what was learned about it.
  _keywords() { return { ...KEYWORDS, ...Object.fromEntries([...profiles].map(([title, p]) => [title, [...KINDS[p.kind].words, ...Object.keys(p.roles)]])) }; }
@@ -971,9 +1007,9 @@ export class TeacherBridge {
   this._apply(set.map(([name, value]) => ({ name, value })));
  }
  // Makes changes as the student would, each listed with Show and Undo: a control is set, a whole widget is
- // hidden, shown or minimised. Returns what was done, in words.
+ // hidden, shown or minimised. Returns what was done and what couldn't be, in words.
  _apply(list, who = '') {
-  const done = [];
+  const done = [], failed = [];
   for (const { name, value } of list) {
    try {
     const hit = ws.find(name);
@@ -987,15 +1023,26 @@ export class TeacherBridge {
     const r = ws.set(hit || name, value);
     this._add({ kind: 'change', who, name: r.name, raw: r.from, fromText, to: r.to });
     done.push(`${r.name.split(' › ').pop()} ${r.to}`);
-   } catch (err) { this._msg('info', `${who ? 'I' : 'The teacher'} tried to change ${name}, but: ${err.message}`); }
+   } catch (err) { failed.push(`${name}: ${err.message}`); this._msg('info', `${who ? 'I' : 'The teacher'} tried to change ${name}, but: ${err.message}`); }
   }
-  return done;
+  return Object.assign(done, { failed });
+ }
+ // The controls as js/commands.js reads them, a plug-in's with the words and unit learned for each.
+ _commandItems() {
+  return ws.commandItems((w, c) => {
+   const p = w.plugin && profiles.get(w.title);
+   if (!w.plugin) return {};
+   const words = p ? pluginWords(p.roles[c.label], p.kind, KINDS[p.kind]?.words || [], c.el) : {};
+   // The unit the plug-in shows beside its slider ("375 ms") is surer than one guessed from the range.
+   const shown = c.el.closest('.plugin-param')?.querySelector('output')?.textContent.match(/\s(ms|s|%|hz|khz)$/i)?.[1].toLowerCase();
+   return shown && shown !== 'khz' ? { ...words, unit: shown } : words;
+  });
  }
  // System 1 changes settings when asked, at once and with no model (js/commands.js): "set the cutoff to 800",
  // "turn off oscillator 2", "louder", "hide the oscilloscope". Words that fit several controls ask which, with
  // a button for each; anything it can't read goes on to Laya or System 2.
  _command(q) {
-  const r = readCommand(q, ws.commandItems());
+  const r = readCommand(q, this._commandItems());
   if (!r || r.problem) return false;
   this._msg('user', q);
   if (r.ask) {

@@ -221,7 +221,8 @@ export function restore(name, raw) {
 }
 
 // Every control the teacher may change and every widget it may arrange, as js/commands.js reads them.
-export function commandItems() {
+// `more(widget, control)` adds what else is known about a control (a plug-in's learned words and unit).
+export function commandItems(more = () => ({})) {
  const out = [];
  for (const w of widgets()) {
   if (!w.plugin && !w.menu) out.push({ name: w.title, widget: w.title, label: w.title, id: w.id, kind: 'widget', value: layoutOf(w) });
@@ -230,7 +231,7 @@ export function commandItems() {
    const e = c.el;
    out.push({ name: nameOf({ widget: w, control: c }), widget: w.title, label: c.label, id: e.id, kind: c.kind, min: e.min ?? '', max: e.max ?? '', step: e.step ?? '',
     value: c.kind === 'checkbox' ? e.checked : c.kind === 'number' ? Number(e.value) : e.value,
-    options: c.kind === 'select' ? [...e.options].map(o => ({ value: o.value, text: clean(o.textContent) })) : undefined });
+    options: c.kind === 'select' ? [...e.options].map(o => ({ value: o.value, text: clean(o.textContent) })) : undefined, ...more(w, c) });
   }
  }
  return out;

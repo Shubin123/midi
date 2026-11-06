@@ -82,27 +82,54 @@ function httpError(status, data) {
 }
 const apiError = (status, data) => Object.assign(new Error(httpError(status, data)), { status });
 
-// An engine for any OpenAI-compatible chat endpoint: POST {base}/chat/completions with a Bearer key.
+// An engine for any OpenAI-compatible chat endpoint: POST {base}/chat/completions with a Bearer key. With
+// `tools` ({ definitions, run(name, args) → text }) the model may call them, in up to four rounds, each call's
+// answer sent back before it replies; the teacher's tools read and change the workspace (js/teacher-bridge.js).
+// A model or provider that won't take tools is asked again without them, and from then on the teacher's JSON
+// line is how it changes things (js/ai-teacher.js).
+export const TOOL_ROUNDS = 4;
+const refusesTools = err => [400, 404, 405, 422].includes(err.status) && /tool|function/i.test(err.message);
 export function openAiEngine({ base, apiKey, model, headers = {} }) {
  const url = base.replace(/\/$/, '') + '/chat/completions';
- let controller = null;
+ let controller = null, noTools = false;
+ const post = async body => {
+  const res = await fetch(url, {
+   method: 'POST',
+   headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, ...headers },
+   body: JSON.stringify(body),
+   signal: controller.signal,
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data) throw apiError(res.status, data);
+  if (data.error) throw new Error(data.error.message || 'The provider returned an error.');
+  return data;
+ };
  return {
-  async generate(messages) {
+  get toolsRefused() { return noTools; },
+  async generate(messages, { tools = null } = {}) {
    controller = new AbortController();
-   const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, ...headers },
-    body: JSON.stringify({ model, messages, max_tokens: 1024 }),
-    signal: controller.signal,
-   });
-   const data = await res.json().catch(() => null);
-   if (!res.ok || !data) throw apiError(res.status, data);
-   if (data.error) throw new Error(data.error.message || 'The provider returned an error.');
-   const choice = data.choices?.[0];
-   if (choice?.finish_reason === 'content_filter' || choice?.message?.refusal) {
-    throw new Error('The model declined to answer that one. Try rephrasing it.');
+   const convo = [...messages];
+   for (let round = 0; ; round++) {
+    const offer = tools && !noTools && round < TOOL_ROUNDS;
+    let data;
+    try { data = await post({ model, messages: convo, max_tokens: 1024, ...(offer ? { tools: tools.definitions, tool_choice: 'auto' } : {}) }); }
+    catch (err) { if (offer && refusesTools(err)) { noTools = true; round--; continue; } throw err; }
+    const choice = data.choices?.[0], msg = choice?.message;
+    if (choice?.finish_reason === 'content_filter' || msg?.refusal) {
+     throw new Error('The model declined to answer that one. Try rephrasing it.');
+    }
+    if (offer && msg?.tool_calls?.length) {
+     convo.push({ role: 'assistant', content: msg.content || null, tool_calls: msg.tool_calls });
+     for (const call of msg.tool_calls) {
+      let args = {};
+      try { args = JSON.parse(call.function?.arguments || '{}'); } catch { /* answered as a mistake below */ }
+      const result = await Promise.resolve(tools.run(call.function?.name, args)).catch(err => `Error: ${err.message}`);
+      convo.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
+     }
+     continue;
+    }
+    return msg?.content || '';
    }
-   return choice?.message?.content || '';
   },
   interrupt() { controller?.abort(); },
  };

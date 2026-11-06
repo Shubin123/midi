@@ -402,7 +402,11 @@ Ask the teacher to change something and it does, at once, with no model loaded
 "set the key to D minor", "tempo 90", "turn on the metronome at 100 bpm",
 "theme forest calm", "hide the oscilloscope", "turn on the panic button". The
 words are matched against every control the teacher can see, so a plug-in's
-controls work as soon as it loads ("set the delay feedback to 0.6"). Values are
+controls work as soon as it loads ("set the delay feedback to 60"), and by what
+the teacher learned each control does (`js/plugin-profile.js`): "more reverb"
+is more of the reverb's mix, "a bigger reverb" its decay, "make the delay
+wetter", "fewer repeats" its feedback, "set the delay to 500 ms" the one
+control in milliseconds, in the unit the plug-in shows beside its slider. Values are
 read in the control's own unit (2k is 2000 Hz, 200 ms is 0.2 s for the
 envelope, 50% of a 0–1 slider is 0.5) and held to its range; "up", "down",
 "brighter", "a little more" move a frequency or time by half again (or two
@@ -411,13 +415,27 @@ change is listed with **Show** and **Undo**, and read aloud in talk mode.
 Nothing is guessed: words that fit several controls ("set the level to 0.5")
 ask which, with a button for each; a question ("how do I turn off the
 filter?") goes to the guides; and requests to play something stay with the
-composer. A System 2 model's own `{"set": …}` goes through the same path. The
+composer. A System 2 model's own changes go through the same path.
+
+**Tools for System 2.** A hosted model is given real tools (OpenAI-style function
+calling, `js/providers.js`) while it answers: `list_widgets`, `get_controls`
+(a widget's or plug-in's controls with values and ranges), `describe_plugin`
+(what the plug-in is and what each control does), `set_control`,
+`arrange_widget` (hide, show, minimise) and `show_control`. It may call them in
+up to four rounds before it replies, and every change it makes is listed with
+Show and Undo, marked as System 2's. A model or provider that won't take tools
+is asked again without them, and the JSON line (`{"set": …}`) is how it changes
+things from then on; Qwen on the device always uses the JSON line. A change made
+with a tool isn't made again from the JSON line. The
 teacher's own switch in Settings is the one setting it leaves to you.
 
-`node tests/commands.mjs` reads about a hundred requests against the app's real
-controls (and the ones that must change nothing); `node tests/teacher-panel.mjs`
-types them into the panel in headless Chrome and checks the controls, the synth
-and Undo.
+`node tests/commands.mjs` reads over a hundred requests against the app's real
+controls and the built-in Delay and Reverb (and the ones that must change
+nothing); `node tests/teacher.mjs` runs the tool loop against a stubbed provider
+(four rounds, then an answer; a provider that refuses tools); and
+`node tests/teacher-panel.mjs` types requests into the panel in headless Chrome
+with real plug-ins loaded, and has a stubbed hosted model call every tool,
+checking the controls, the synth and Undo.
 
 ### The teacher and the workspace
 

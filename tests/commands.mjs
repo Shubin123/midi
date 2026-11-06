@@ -1,7 +1,8 @@
 // node tests/commands.mjs: requests to change a setting (js/commands.js), read without a model, against the
 // controls the app really has (as js/workspace.js lists them), a plug-in and the Settings menu.
 import assert from 'node:assert/strict';
-import { readCommand, normalize } from '../js/commands.js';
+import { readCommand, normalize, pluginWords } from '../js/commands.js';
+import { KINDS } from '../js/plugin-profile.js';
 
 const opts = (...texts) => texts.map(t => (typeof t === 'string' ? { value: t.toLowerCase().replace(/\s+/g, '-'), text: t } : t));
 const num = (widget, label, id, value, min, max, step = 0.01) => ({ name: `${widget} › ${label}`, widget, label, id, kind: 'number', value, min, max, step });
@@ -13,6 +14,13 @@ const osc = n => [box('Oscillators', `Oscillator ${n} on`, `enableOsc${n}`, true
  sel('Oscillators', `Oscillator ${n} octave`, `octaveOsc${n}`, n === 3 ? '-2' : '0', ['-2', '-1', '0', '1', '2'].map(v => ({ value: v, text: v }))),
  num('Oscillators', `Oscillator ${n} detune`, `detuneOsc${n}`, 0, -100, 100, 1), num('Oscillators', `Oscillator ${n} level`, `levelOsc${n}`, 0.7, 0, 1), num('Oscillators', `Oscillator ${n} start delay`, `delayOsc${n}`, 0, 0, 50, 1)];
 
+// A plug-in's controls carry what the teacher learned about them (its kind, each control's role), as the
+// bridge passes them: the Delay and Reverb built in, with their real ranges.
+const plug = (widget, kind, label, role, value, min, max, step = 1) => ({ ...num(widget, label, '', value, min, max, step), ...pluginWords(role, kind, KINDS[kind].words, { min, max }) });
+const plugins = () => [
+ plug('Delay', 'delay', 'Time', 'time', 375, 10, 2000), plug('Delay', 'delay', 'Feedback', 'feedback', 35, 0, 90), plug('Delay', 'delay', 'Tone', 'tone', 5000, 500, 16000), plug('Delay', 'delay', 'Mix', 'mix', 30, 0, 100), box('Delay', 'Bypass', '', false),
+ plug('Reverb', 'reverb', 'Decay', 'decay', 2.2, 0.3, 8, 0.1), plug('Reverb', 'reverb', 'Pre-delay', 'time', 15, 0, 200), plug('Reverb', 'reverb', 'Tone', 'tone', 7000, 1000, 18000), plug('Reverb', 'reverb', 'Mix', 'mix', 25, 0, 100), box('Reverb', 'Bypass', '', false),
+];
 const items = () => [
  widget('Keyboard'), box('Keyboard', 'Falling notes', 'synthesiaToggle', true),
  widget('Step sequencer'), num('Step sequencer', 'Base BPM', 'seq-bpm', 120, 30, 300, 1),
@@ -30,7 +38,7 @@ const items = () => [
  sel('Master & Settings', 'UI Theme', 'uiTheme', 'midnight-drive', opts('Midnight Drive', 'Forest Calm', 'Ocean Depth', 'Pastel Dream')), num('Master & Settings', 'UI Scale (%)', 'uiScale', 100, 75, 150, 5),
  widget('Loop recorder'), widget('Oscilloscope'), widget('Air'), box('Air', 'Enabled', '', false), num('Air', 'Mid Air', '', 0, 0, 10, 0.1),
  widget('Import / Export'), box('Import / Export', 'Release tail', '', true),
- widget('Delay'), num('Delay', 'Time', '', 0.3, 0, 2), num('Delay', 'Feedback', '', 0.4, 0, 0.95), num('Delay', 'Mix', '', 0.3, 0, 1), box('Delay', 'Bypass', '', false),
+ ...plugins(),
  box('Settings', 'PANIC button on the page', 'settings-panic-button', false), box('Settings', '🎓 buttons on widgets, each opening its guide', 'settings-teach-buttons', false),
 ];
 
@@ -64,7 +72,7 @@ expect('set the metronome to 100', 'Step sequencer › Base BPM = 100');
 expect('set oscillator 3 detune to -12', 'Oscillators › Oscillator 3 detune = -12');
 expect('detune the second osc by 7 cents', 'Oscillators › Oscillator 2 detune = 7');
 expect('ui scale 120', 'Master & Settings › UI Scale (%) = 120');
-expect('set the delay feedback to 0.6', 'Delay › Feedback = 0.6');
+expect('set the delay feedback to 60', 'Delay › Feedback = 60');
 // Out of range: held to the control's range.
 expect('set the cutoff to 50000', 'Filter › Cutoff (Hz) = 20000');
 expect('cutoff to max', 'Filter › Cutoff (Hz) = 20000');
@@ -85,6 +93,23 @@ expect('lower the tempo by 20 bpm', 'Step sequencer › Base BPM = 100');
 expect('more octaves on the keyboard', 'Master & Settings › Keyboard Octaves = 3');
 expect('raise the keyboard octave', 'Oscillators › Keyboard Octave = 5');
 expect('make the attack longer and the release shorter', 'Envelope (ADSR) › Attack (s) = 0.075', 'Envelope (ADSR) › Release (s) = 0.333');
+
+/* ---- Plug-ins, by what the teacher learned about them ---- */
+expect('more reverb', 'Reverb › Mix = 35');
+expect('less echo', 'Delay › Mix = 20');
+expect('make the delay wetter', 'Delay › Mix = 40');
+expect('set the reverb mix to 50%', 'Reverb › Mix = 50');
+expect('set the delay to 500 ms', 'Delay › Time = 500');
+expect('delay time half a second', 'Delay › Time = 500');
+expect('set the delay time to 0.25 s', 'Delay › Time = 250');
+expect('reverb decay 4 seconds', 'Reverb › Decay = 4');
+expect('a bigger reverb', 'Reverb › Decay = 3.3');
+expect('fewer repeats on the delay', 'Delay › Feedback = 26');
+expect('make the delay longer', 'Delay › Time = 563');
+expect('a longer reverb', 'Reverb › Decay = 3.3');
+expect('make the reverb brighter', 'Reverb › Tone = 10500');
+expect('make it brighter', 'Filter › Cutoff (Hz) = 7500');
+expect('turn off the reverb', 'Reverb › Bypass = true');
 
 /* ---- Choices by name ---- */
 expect('set oscillator 2 to square', 'Oscillators › Oscillator 2 waveform = square');

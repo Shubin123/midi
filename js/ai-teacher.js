@@ -24,6 +24,10 @@ Leave the line out if there is nothing worth playing.
 
 The app is also a synth workspace with widgets (oscillators, envelope, filter, step sequencer, loop recorder, automation, plug-ins, import and export) and a Settings menu. When the student asks about one, a [WORKSPACE] block lists the widgets and the current settings of the relevant ones; teach from those real names and values. In the same JSON line you can add "show" to point at a control, e.g. {"show": "Filter › Cutoff (Hz)"}, and, only when the student asks you to change something, "set" with the new value, e.g. {"set": {"Filter › Cutoff (Hz)": 800}}; a whole widget can be set to "hidden", "shown" or "minimised", and the tempo is "Step sequencer › Base BPM". Never claim to press buttons; tell the student which one to press.`;
 
+// Said too when the teacher's tools are offered (hosted models; js/providers.js). A change made with a tool is
+// not made again from the JSON line.
+export const TOOLS_PROMPT = 'You also have tools that read and change the workspace. Use get_controls or describe_plugin to read a widget or plug-in before teaching it, and set_control or arrange_widget when the student asks you to change something; then say in a sentence what you changed. Use the exact names the tools give.';
+
 // Reasoning models write their thinking inline; only the answer after it is shown. A reply that is still
 // inside an unfinished <think> block (it ran out of room) has no answer yet.
 export function stripThinking(text) {
@@ -149,7 +153,8 @@ export class AiTeacher {
   return this._queue = this._queue.then(() => generation === this._generation ? this._request(msg, opts) : null);
  }
 
- async _request(msg, { think = false, context = '', quick = '', onConfirm = null } = {}) {
+ // opts.tools ({ definitions, run }) are the workspace tools a hosted model may call while answering.
+ async _request(msg, { think = false, context = '', quick = '', onConfirm = null, tools = null } = {}) {
   if (!this.engine) { this.onError?.('Set up a model in Settings first.'); return null; }
   this.onStatus?.(think ? 'reasoning' : 'thinking');
   const history = this.conversationHistory, generation = this._generation, started = performance.now();
@@ -160,7 +165,9 @@ export class AiTeacher {
    // Supervising: the app already gave a quick answer (System 1); the model confirms it or answers itself.
    const asked = quick ? `${msg}\n\n(The app's quick answer was: "${quick}". If that answers the question correctly, reply with just OK. Otherwise answer the question yourself.)` : msg;
    const turn = context || quick ? [...history.slice(0, -1), { role: 'user', content: context ? `${context}\n\n${asked}` : asked }] : history;
-   const raw = await this.engine.generate([{ role: 'system', content: SYSTEM_PROMPT }, ...turn], { think });
+   const used = new Set(), withTools = tools && { definitions: tools.definitions, run: (name, args) => { used.add(name); return tools.run(name, args); } };
+   const raw = await this.engine.generate([{ role: 'system', content: tools ? `${SYSTEM_PROMPT}\n\n${TOOLS_PROMPT}` : SYSTEM_PROMPT }, ...turn], withTools ? { think, tools: withTools } : { think });
+   this._toolsUsed = used;
    if (generation !== this._generation) { history.pop(); return null; } // reset() while generating: discard
    reply = stripThinking(raw);
    if (!reply) throw new Error(/<think>/.test(raw) ? 'The model ran out of room while thinking. Try again, or switch to Fast.' : 'The model returned nothing. Try again, or pick another model.');
@@ -179,6 +186,7 @@ export class AiTeacher {
   history.push({ role: 'assistant', content: reply });
   this.onStatus?.('ready');
   const { text, play, actions = null } = parsePlayCommand(reply);
+  if (actions && (this._toolsUsed?.has('set_control') || this._toolsUsed?.has('arrange_widget'))) actions.set = []; // done already, by the tools
   const seconds = (performance.now() - started) / 1000;
   this.onResponse?.(text, play, { think, seconds, actions });
   return { text, playCmd: play, seconds, actions };

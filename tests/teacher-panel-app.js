@@ -174,6 +174,50 @@ export async function runTeacherPanel() {
   await ask('talk at normal speed');
   expect(bridge.voiceSpeed === 1, `back to normal is ${bridge.voiceSpeed}`);
  });
+ /* ---- Plug-ins: changed by name and by what the teacher learned they do ---- */
+ const host = $('#plugin-host-module'), pick = host.querySelector('select[aria-label="Built-in effect"]');
+ const addEffect = async re => { pick.value = [...pick.options].find(o => re.test(o.textContent)).value; [...host.querySelectorAll('button')].find(b => b.textContent === 'Add built-in').click(); for (let i = 0; i < 40 && !ws.widgets().some(w => w.plugin && re.test(w.title)); i++) await wait(50); };
+ await addEffect(/^delay$/i); await addEffect(/^reverb$/i);
+ const param = name => ws.find(name)?.control?.el;
+ await check('plug-ins: "set the delay feedback to 60", "more reverb", "the delay to 500 ms", "turn off the delay"', async expect => {
+  await ask('set the delay feedback to 60');
+  expect(param('Delay › Feedback')?.value === '60', `the delay's feedback is ${param('Delay › Feedback')?.value}`);
+  await ask('more reverb');
+  expect(param('Reverb › Mix')?.value === '35', `asked for more reverb, its mix is ${param('Reverb › Mix')?.value} (was 25)`);
+  await ask('set the delay to 500 ms');
+  expect(param('Delay › Time')?.value === '500', `the delay time is ${param('Delay › Time')?.value}`);
+  await ask('turn off the delay');
+  expect(param('Delay › Bypass')?.checked === true, 'the delay is not bypassed');
+  messages().filter(m => m.classList.contains('change')).reverse().forEach(m => buttonIn(m, 'Undo')?.click());
+  expect(param('Delay › Feedback').value === '35' && param('Reverb › Mix').value === '25' && param('Delay › Time').value === '375' && !param('Delay › Bypass').checked, 'Undo did not put the plug-ins back');
+ });
+
+ /* ---- Tools: a hosted System 2 reads and changes the workspace by calling them ---- */
+ await check('a hosted model\'s tool calls: it reads a plug-in, sets a control and hides a widget, each listed with Undo', async expect => {
+  const results = {};
+  bridge.teacher.setEngine({ generate: async (messages, opts) => {
+   expect(opts.tools?.definitions.map(d => d.function.name).join() === 'list_widgets,get_controls,describe_plugin,set_control,arrange_widget,show_control', 'the tools were not offered');
+   results.describe = await opts.tools.run('describe_plugin', { plugin: 'Reverb' });
+   results.controls = await opts.tools.run('get_controls', { widget: 'Filter' });
+   results.set = await opts.tools.run('set_control', { control: 'Reverb › Decay', value: 6 });
+   results.bad = await opts.tools.run('set_control', { control: 'Reverb › Size of the moon', value: 3 });
+   results.hide = await opts.tools.run('arrange_widget', { widget: 'Oscilloscope', state: 'hidden' });
+   return 'A long decay is what a cathedral sounds like, so I made it six seconds.';
+  } });
+  bridge._active = { id: 'groq', model: 'test' };
+  await ask('could the reverb feel like a cathedral?', 300);
+  expect(/a reverb/.test(results.describe) && /Mix: how much of the effect/.test(results.describe), `describe_plugin said: ${results.describe}`);
+  expect(/Cutoff \(Hz\) = 5000 \(20 to 20000\)/.test(results.controls), `get_controls said: ${results.controls}`);
+  expect(param('Reverb › Decay')?.value === '6' && /^Done/.test(results.set), `set_control: decay ${param('Reverb › Decay')?.value}, said "${results.set}"`);
+  expect(/^Not changed/.test(results.bad), `a control that isn't there: "${results.bad}"`);
+  expect($('#scope-module').hidden && /^Done/.test(results.hide), 'arrange_widget did not hide the oscilloscope');
+  const changes = messages().filter(m => m.classList.contains('change')).slice(-2);
+  expect(changes.length === 2 && changes.every(m => /System 2 · Groq/.test(m.textContent) && buttonIn(m, 'Undo')), 'the changes are not listed as System 2\'s, with Undo');
+  changes.reverse().forEach(m => buttonIn(m, 'Undo')?.click());
+  expect(param('Reverb › Decay').value === '2.2' && !$('#scope-module').hidden, 'Undo did not put them back');
+  bridge.teacher.setEngine(null); bridge._active = null;
+ });
+
  await check('a name with a slash in it is one widget: Import / Export › Audio export format', async expect => {
   const hit = ws.find('Import / Export › Audio export format');
   expect(hit?.widget.title === 'Import / Export' && hit?.control?.label === 'Audio export format', `found ${hit && ws.nameOf(hit)}`);

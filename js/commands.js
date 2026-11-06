@@ -8,7 +8,9 @@
 //
 // An item is one control or widget: { name ("Widget › Control"), widget, label, id, kind ('number', 'select',
 // 'checkbox' or 'widget'), value (a number, the option's value, true/false, or for a widget 'shown', 'hidden'
-// or 'minimised'), min, max, step, options: [{ value, text }] }. readCommand() returns null when the words are
+// or 'minimised'), min, max, step, options: [{ value, text }], and for a plug-in's control what the teacher
+// learned about it (js/plugin-profile.js, through pluginWords()): aliases, the words it goes by ("wet",
+// "reverb" for a reverb's Mix), and unit, the unit its numbers are in ('ms', 's', '%', 'hz') }. readCommand() returns null when the words are
 // not a request to change something, or { changes: [{ item, value, say }] }, { ask: { text, choices } } when
 // they fit several controls, or { problem } when they name a control but not a value it can take.
 
@@ -36,6 +38,25 @@ export const ALIASES = {
  'seq-key': ['sequencer key', 'key of the sequencer'],
  'seq-scale': ['sequencer scale', 'scale of the sequencer'],
 };
+// What a plug-in's control goes by, from the role the teacher learned it has, and the unit its numbers are in
+// when its range makes that plain. A mix control also goes by the plug-in's own kind, less surely ("more
+// reverb" is more of the reverb's mix, but "a bigger reverb" its decay), except for words that are another
+// role's ("repeats" is a delay's feedback). A delay's time is what makes it longer or shorter.
+const ROLE_WORDS = {
+ mix: ['mix', 'wet', 'wetter', 'wetness', 'dry', 'drier', 'blend', 'amount'], time: ['time', 'delay time'], feedback: ['feedback', 'repeats', 'regeneration'],
+ decay: ['decay', 'size', 'tail', 'room size', 'bigger', 'smaller', 'longer', 'shorter'], tone: ['tone', 'brighter', 'darker', 'brightness'], drive: ['drive', 'distortion', 'grit', 'crunch'],
+ level: ['output', 'level', 'volume'], threshold: ['threshold'], ratio: ['ratio'], attack: ['attack'], release: ['release'], rate: ['rate', 'speed'], depth: ['depth'], resonance: ['resonance'],
+};
+export function pluginWords(role, kind = 'other', kindWords = [], { min, max } = {}) {
+ if (!role || !ROLE_WORDS[role]) return { aliases: [], unit: '' };
+ const taken = new Set(Object.values(ROLE_WORDS).flat());
+ const aliases = [...ROLE_WORDS[role], ...(role === 'time' && kind === 'delay' ? ['longer', 'shorter'] : [])];
+ const kinds = role === 'mix' ? kindWords.filter(w => !taken.has(w)) : [];
+ const lo = Number(min), hi = Number(max);
+ const unit = role === 'mix' && hi === 100 ? '%' : (role === 'time' && hi > 50) ? 'ms' : role === 'decay' && hi <= 30 ? 's' : role === 'tone' && hi > 1000 && lo >= 10 ? 'hz' : '';
+ return { aliases, kinds, unit };
+}
+
 // Words that mean a control without naming it.
 const IMPLIED = [
  { words: /\b(louder|quieter|softer)\b/, id: 'masterVolume', dir: m => (m === 'louder' ? 1 : -1) },
@@ -55,6 +76,7 @@ export function normalize(text) {
  s = s.replace(new RegExp(`\\boscillator\\s+(${Object.keys(NUMBERS).join('|')})\\b`, 'g'), (_, n) => `oscillator ${NUMBERS[n]}`);
  s = s.replace(/\b(high|low|band)[\s-]pass\b/g, '$1pass').replace(/\bcut[\s-]off\b/g, 'cutoff').replace(/\bper ?cent\b/g, '%').replace(/\bsaw\b(?!tooth)/g, 'sawtooth');
  s = s.replace(/\b(\d+(?:\.\d+)?)\s*k(?:hz)?\b/g, (_, n) => `${Number(n) * 1000} hz`);
+ s = s.replace(/\bhalf a second\b/g, '0.5 s').replace(/\ba quarter of a second\b/g, '0.25 s').replace(/\b(a|one) second\b/g, '1 s');
  return s.replace(/[!?.;]+(\s|$)/g, ' ').replace(/\s+/g, ' ').trim();
 }
 const stem = w => (w.length > 3 && /[^s]s$/.test(w) ? w.slice(0, -1) : w);
@@ -80,7 +102,7 @@ function intentOf(c) {
  else if (/\b(unhide|expand|restore|unminimi[sz]e|bring back|show)\b/.test(c)) out.layout = 'shown';
  if (/\b(max(imum)?|all the way up|full)\b/.test(c)) out.extreme = 'max';
  else if (/\b(min(imum)?|all the way down)\b/.test(c)) out.extreme = 'min';
- const up = c.match(/\b(up|increase|raise|more|higher|boost|bump|louder|brighter|faster|longer|bigger|wider|next)\b/), down = c.match(/\b(down|decrease|reduce|lower|less|drop|quieter|softer|darker|duller|slower|shorter|smaller|narrower|previous)\b/);
+ const up = c.match(/\b(up|increase|raise|more|higher|boost|bump|louder|brighter|faster|longer|bigger|wider|wetter|next)\b/), down = c.match(/\b(down|decrease|reduce|lower|less|fewer|drop|quieter|softer|darker|duller|slower|shorter|smaller|narrower|drier|dryer|previous)\b/);
  if (up && !down) out.dir = 1; else if (down && !up) out.dir = -1;
  out.amount = /\b(a (little|bit|touch)|slightly|a tad)\b/.test(c) ? 0.5 : /\b(a lot|much|way)\b/.test(c) ? 2 : 1;
  return out;
@@ -105,7 +127,10 @@ const target = c => c.match(/\b(?:to|=|at|into)\s+(.+)$/)?.[1].trim() || '';
 
 /* ---- Matching controls ---- */
 
-const unitOf = item => (item.label.match(/\((hz|s|ms|%|cents?)\)/i)?.[1] || (item.id === 'seq-bpm' ? 'bpm' : /detune/i.test(item.label) ? 'cent' : /delay/i.test(item.label) && Number(item.max) <= 100 ? 'ms' : '')).toLowerCase().replace(/^cents$/, 'cent');
+const unitOf = item => (item.unit || item.label.match(/\((hz|s|ms|%|cents?)\)/i)?.[1] || (item.id === 'seq-bpm' ? 'bpm' : /detune/i.test(item.label) ? 'cent' : /delay/i.test(item.label) && Number(item.max) <= 100 ? 'ms' : '')).toLowerCase().replace(/^cents$/, 'cent');
+// Whether a number in `unit` can go into a control in `own` units: the same, seconds for milliseconds, or a
+// percentage of any range. A control of no known unit takes anything.
+const fitsUnit = (unit, own) => !own || unit === own || unit === '%' || (/^(ms|s)$/.test(unit) && /^(ms|s)$/.test(own)) || unit === 'x';
 const optionFor = (item, words) => {
  if (!words) return null;
  const want = normalize(words).replace(/^(a|an|the)\s+/, '').replace(/\s+(wave|waveform|theme|mode|filter|scale|key)$/, '');
@@ -123,7 +148,7 @@ const optionByWord = (item, words) => { const found = (item.options || []).filte
 // the names it goes by. 0 means not named at all.
 // A switch called On, Enabled or Bypass is named by its widget alone ("turn off the filter", "bypass the delay");
 // so is a choice whose option the words give ("switch the filter to highpass").
-function score(item, words, c, to) {
+function score(item, words, c, to, num) {
  const index = c.match(/\boscillator (\d)\b/)?.[1], own = item.label.match(/\boscillator (\d)\b/i)?.[1];
  if (index && own && index !== own) return 0;
  const label = tokens(item.label).filter(w => !['on', 'enabled', 'bypass'].includes(w) && (w !== own || index));
@@ -131,9 +156,12 @@ function score(item, words, c, to) {
  const hit = w => (words.includes(w) ? 1 : words.map(stem).includes(stem(w)) ? 0.9 : 0);
  const l = label.length ? label.reduce((s, w) => s + hit(w), 0) / label.length : 0;
  const wTokens = [...tokens(item.widget), ...(WIDGET_WORDS[item.widget] || []).flatMap(tokens)], widget = wTokens.some(w => hit(w) > 0);
- const alias = (ALIASES[item.id] || []).some(a => has(c, a)) || (item.kind === 'widget' && (WIDGET_WORDS[item.widget] || []).some(a => has(c, a)));
- if (l < 0.5 && !alias && !(widget && (item.kind === 'widget' || !label.length || option))) return 0;
- return 4 * l + (l === 1 ? 2 : 0) + (widget ? 2 : 0) + (alias ? 5 : 0) + (item.kind === 'widget' && widget ? 1 : 0);
+ const alias = [...(ALIASES[item.id] || []), ...(item.aliases || [])].some(a => has(c, a)) || (item.kind === 'widget' && (WIDGET_WORDS[item.widget] || []).some(a => has(c, a)));
+ const kindWord = (item.kinds || []).some(a => has(c, a));
+ // "set the delay to 500 ms": in a named plug-in, the one control whose numbers are in milliseconds.
+ const unit = !!(widget && num?.unit && item.unit && (num.unit === item.unit || (/^(ms|s)$/.test(num.unit) && /^(ms|s)$/.test(item.unit))));
+ if (l < 0.5 && !alias && !kindWord && !unit && !(widget && (item.kind === 'widget' || !label.length || option))) return 0;
+ return 4 * l + (l === 1 ? 2 : 0) + (widget ? 2 : 0) + (alias ? 5 : kindWord ? 3 : 0) + (unit ? 3 : 0) + (item.kind === 'widget' && widget ? 1 : 0);
 }
 
 const round = (v, item) => { const step = Number(item.step) || 0; const d = step && step < 1 ? Math.min(4, String(step).split('.')[1]?.length || 0) : step ? 0 : 3; return Number(v.toFixed(d)); };
@@ -187,12 +215,13 @@ function readClause(c, items, carried = {}) {
   }
   if (item.kind === 'number') {
    if (intent.on !== undefined && !num && !intent.dir) return null;
+   if (num?.unit && !fitsUnit(num.unit, unitOf(item))) return null; // 500 ms is not a mix
    const v = numberValue(item, intent, num);
    return v === null || !Number.isFinite(v) ? null : { value: round(clamp(v, item), item) };
   }
   return null;
  };
- let ranked = items.map(item => ({ item, s: implied?.id === item.id ? 6 : score(item, words, c, to) })).filter(x => x.s > 0);
+ let ranked = items.map(item => ({ item, s: implied?.id === item.id ? 6 : score(item, words, c, to, num) })).filter(x => x.s > 0);
  if (implied && !ranked.some(x => x.item.id !== implied.id && x.s >= 6)) { intent.dir ??= implied.dir; }
  const named = ranked.length > 0;
  ranked = ranked.map(x => { const f = fits(x.item); return f && { ...x, ...f, s: x.s + (f.option ? 3 : 0) }; }).filter(Boolean);
@@ -208,7 +237,7 @@ function readClause(c, items, carried = {}) {
 const shown = (item, v) => (item.kind === 'checkbox' ? (v ? 'on' : 'off') : item.kind === 'select' ? (item.options || []).find(o => String(o.value) === String(v))?.text ?? v : item.kind === 'widget' ? v : String(v));
 const same = (item, v) => (item.kind === 'number' ? Math.abs(Number(item.value) - Number(v)) < 1e-9 : String(item.value) === String(v));
 // Words that ask for a change without a verb ("filter off", "louder").
-const DIRECTION = /\b(on|off|up|down|louder|quieter|softer|brighter|darker|higher|lower|more|less|faster|slower|longer|shorter|max(imum)?|min(imum)?)\b/;
+const DIRECTION = /\b(on|off|up|down|louder|quieter|softer|brighter|darker|higher|lower|more|less|fewer|faster|slower|longer|shorter|bigger|smaller|wider|narrower|wetter|drier|dryer|max(imum)?|min(imum)?)\b/;
 
 // The whole request: clauses joined by "and", "then" or commas are read one by one. One that names a control
 // without saying what to do takes the last clause's on/off or up/down ("turn off the filter and the

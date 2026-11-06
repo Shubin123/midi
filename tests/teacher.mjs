@@ -177,6 +177,50 @@ class FakeEngine {
  await assert.rejects(inflight, { name: 'AbortError' });
 }
 
+/* ---- Tools: a hosted model reads and changes the workspace by calling them ---- */
+{
+ const engine = P.openAiEngine({ base: 'https://api.example/v1', apiKey: 'k', model: 'm' }), calls = [];
+ const tools = { definitions: [{ type: 'function', function: { name: 'set_control', parameters: { type: 'object', properties: {} } } }], run: async (name, args) => { calls.push([name, args]); return 'Done: Cutoff (Hz) 800.'; } };
+ const turns = [
+  { choices: [{ message: { content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'set_control', arguments: '{"control":"Filter › Cutoff (Hz)","value":800}' } }] } }] },
+  { choices: [{ message: { content: 'I set the cutoff to 800 Hz, so it sounds darker.' } }] },
+ ];
+ requests.length = 0;
+ respond = () => ({ ok: true, status: 200, body: turns.shift() });
+ const reply = await engine.generate([{ role: 'user', content: 'make it darker' }], { tools });
+ assert.equal(reply, 'I set the cutoff to 800 Hz, so it sounds darker.');
+ assert.deepEqual(calls, [['set_control', { control: 'Filter › Cutoff (Hz)', value: 800 }]], 'the tool ran with the model\'s arguments');
+ assert.equal(requests[0].body.tools.length, 1, 'the tools were offered');
+ assert.deepEqual(requests[1].body.messages.slice(-2).map(m => m.role), ['assistant', 'tool'], 'the call and its answer went back to the model');
+ assert.equal(requests[1].body.messages.at(-1).content, 'Done: Cutoff (Hz) 800.');
+ assert.equal(requests[1].body.messages.at(-1).tool_call_id, 'c1');
+
+ // A model that keeps calling tools gets four rounds, then must answer without them.
+ requests.length = 0;
+ respond = () => ({ ok: true, status: 200, body: requests.length <= 4 ? { choices: [{ message: { tool_calls: [{ id: 'x', function: { name: 'set_control', arguments: '{}' } }] } }] } : { choices: [{ message: { content: 'done' } }] } });
+ assert.equal(await engine.generate([], { tools }), 'done');
+ assert.equal(requests.length, 5);
+ assert.ok(!requests[4].body.tools, 'the last request has no tools');
+
+ // A provider that won't take tools is asked again without them, and not offered them again.
+ requests.length = 0;
+ let first = true;
+ respond = () => { if (first) { first = false; return { ok: false, status: 404, body: { error: { message: 'No endpoints found that support tool use.' } } }; } return { ok: true, status: 200, body: { choices: [{ message: { content: 'plain reply {"set": {"Filter › Cutoff (Hz)": 800}}' } }] } }; };
+ assert.match(await engine.generate([], { tools }), /plain reply/);
+ assert.equal(engine.toolsRefused, true);
+ await engine.generate([], { tools });
+ assert.ok(requests.every((r, i) => i === 0 || !r.body.tools), 'not offered again');
+
+ // The teacher: tools offered with the prompt that explains them; a change made with a tool is not made again
+ // from the JSON line, while "show" still is.
+ const t = new AiTeacher(), seen = [];
+ t.setEngine({ generate: async (messages, opts) => { seen.push({ system: messages[0].content, opts }); await opts.tools.run('set_control', { control: 'Filter › Cutoff (Hz)', value: 800 }); return 'Done.\n{"set": {"Filter › Cutoff (Hz)": 800}, "show": "Filter › Cutoff (Hz)"}'; } });
+ let got = null; t.onResponse = (text, play, info) => { got = info.actions; };
+ await t.ask('darker please', { tools: { definitions: [], run: async () => 'ok' } });
+ assert.match(seen[0].system, /You also have tools/);
+ assert.deepEqual(got, { show: ['Filter › Cutoff (Hz)'], set: [] });
+}
+
 /* ---- Provider settings live in cookies ---- */
 {
  assert.equal(P.getProviderId(), 'local', 'defaults to on-device');
