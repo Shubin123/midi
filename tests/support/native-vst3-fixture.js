@@ -32,7 +32,7 @@ export function nativeFixture({ code = [0xb8, 42, 0, 0, 0, 0xc3], importName, im
  const bindOffset = importNames.length ? 0xb00 : 0x880;
  bytes.set(bind, bindOffset);
  word(command, 0x80000022); word(command + 4, 48); word(command + 8, 0x800); word(command + 12, rebase.length); word(command + 16, bindOffset); word(command + 20, bind.length); command += 48;
- const symbols = [['_GetPluginFactory', 0x200], ['_probe', 0x300], ...(bundleEntry ? [['_bundleEntry', 0x380]] : [])];
+ const symbols = [['_GetPluginFactory', 0x200], ['_probe', 0x300], ...(bundleEntry ? [['_bundleEntry', 0x700]] : [])];
  word(command, 2); word(command + 4, 24); word(command + 8, 0x900); word(command + 12, symbols.length); word(command + 16, 0xa00);
  let stringOffset = 1;
  symbols.forEach(([symbol, address], index) => {
@@ -56,7 +56,20 @@ export function nativeFixture({ code = [0xb8, 42, 0, 0, 0, 0xc3], importName, im
   else { bytes.set([0xbf, 8, 0, 0, 0], 0x300); relative(0x305, [0xff, 0x25], 0x1600); }
  }
  if (initializer) { pointer(0x1700, 0x380); bytes.set(code, 0x380); }
+ if (bundleEntry) bytes.set([0xb8, 1, 0, 0, 0, 0xc3], 0x700);
  return bytes;
+}
+
+export function nativeBundleFixture() {
+ const importNames = ['_CFRetain', '_CFBundleCopyBundleURL', '_CFURLGetFileSystemRepresentation', '_CFRelease'];
+ const bytes = nativeFixture({ importNames, initializer: true, bundleEntry: true }), view = new DataView(bytes.buffer);
+ let offset = 0x700;
+ const emit = values => { bytes.set(values, offset); offset += values.length; };
+ const relative = (prefix, address) => { emit(prefix); view.setInt32(offset, address - offset - 4, true); offset += 4; };
+ const call = index => relative([0xff, 0x15], 0x1600 + index * 8);
+ emit([0x53]); call(0); emit([0x48, 0x89, 0xc7]); call(1); emit([0x48, 0x89, 0xc3, 0x48, 0x89, 0xc7, 0xbe, 1, 0, 0, 0]);
+ relative([0x48, 0x8d, 0x15], 0x1500); emit([0xb9, 128, 0, 0, 0]); call(2); relative([0x88, 0x05], 0x1400);
+ emit([0x48, 0x89, 0xdf]); call(3); emit([0xb8, 1, 0, 0, 0, 0x5b, 0xc3]); return bytes;
 }
 
 export function nativeStringFixture(constructor = 'C1') {

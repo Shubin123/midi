@@ -7,6 +7,8 @@ const uc = await createRequire(import.meta.url)('../vendor/unicorn/unicorn.cjs')
 const guest = new NativeVst3Guest(uc, nativeFixture());
 const call = (name, args = []) => guest.call(guest.resolve(name, 0, 'bind'), args);
 try {
+ const thread = call('_pthread_self'); assert.ok(thread); assert.equal(call('_pthread_self'), thread);
+ assert.equal(call('_pthread_equal', [thread, thread]), 1); assert.throws(() => call('_pthread_equal', [thread, 0]), /identity/);
  const output = guest.allocate(16), destructor = guest.export('_GetPluginFactory');
  assert.equal(call('_pthread_key_create', [output, destructor]), 0);
  const key = guest.pointer(output); assert.equal(guest.threadStorage.keys.get(key).destructor, destructor);

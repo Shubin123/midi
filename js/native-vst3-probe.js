@@ -1,6 +1,6 @@
-export function probeNativeVst3(file, { mode = 'startup', timeout = 30000, signal, onProgress = () => {} } = {}) {
+export function probeNativeVst3(file, { mode = 'startup', timeout = 30000, render = {}, signal, onProgress = () => {} } = {}) {
  if (!(file instanceof Blob)) return Promise.reject(new Error('Expected a plugin Blob or File'));
- if (!['startup', 'factory'].includes(mode)) return Promise.reject(new Error('Unknown native probe mode'));
+ if (!['startup', 'factory', 'processor', 'render'].includes(mode)) return Promise.reject(new Error('Unknown native probe mode'));
  if (!Number.isFinite(timeout) || timeout <= 0 || timeout > 120000) return Promise.reject(new Error('Invalid native probe timeout'));
  if (signal?.aborted) return Promise.reject(new DOMException('Native probe cancelled', 'AbortError'));
  return new Promise((resolve, reject) => {
@@ -23,6 +23,6 @@ export function probeNativeVst3(file, { mode = 'startup', timeout = 30000, signa
   };
   worker.onerror = event => { event.preventDefault(); finish(new Error(event.message || 'Native worker failed')); };
   worker.onmessageerror = () => finish(new Error('Could not read native worker result'));
-  try { worker.postMessage({ file, mode }); } catch (error) { finish(error); }
+  try { worker.postMessage({ file, mode, render }); } catch (error) { finish(error); }
  });
 }

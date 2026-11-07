@@ -1574,9 +1574,13 @@ executes mutex, math, guest resource-limit, clock and dynamic Objective-C
 registration imports, libc++ strings/locales, Darwin character tables, embedded
 font metadata/ownership, CoreFoundation strings/numbers/dictionaries, autorelease
 pools and thread-local key creation. **All 768 static initializers complete in
-the browser.** Startup then stops explicitly because the CFBundle compatibility
-layer for `bundleEntry` is still missing. Generated fixtures also verify actual
-guest Objective-C and locale-facet method dispatch in the browser.
+the browser.** The real `bundleEntry` now succeeds and initialized factory class
+IDs are valid. Processor creation then stops at the unsupported Cocoa
+`NSNotificationCenter` class, before any Arcade audio is processed. The experiment
+now has a bounded VST3 processor/MIDI bridge and an offline WAV preview, verified
+with generated x86 fixtures; this does not make Arcade playable or provide
+realtime native MIDI hosting. Generated fixtures also verify actual guest
+Objective-C and locale-facet method dispatch in the browser.
 **Arcade does not play audio.**
 The report always says `playable: false`; passing the harness tests does not
 certify native plugin playback.

@@ -106,7 +106,10 @@ export class GuestObjC {
    this.names.set('NSString', handle);
   }
   const record = this.classes.get(handle);
-  if (!record) throw new GuestObjCError('Unknown Objective-C class', { receiver: `0x${handle.toString(16)}` });
+  if (!record) {
+   const imported = this.memory.imports.get(handle)?.name, className = imported?.startsWith('_OBJC_CLASS_$_') ? imported.slice('_OBJC_CLASS_$_'.length) : null;
+   throw new GuestObjCError(className ? `Imported Objective-C class is not implemented: ${className}` : 'Unknown Objective-C class', { receiver: `0x${handle.toString(16)}`, ...(className ? { className } : {}) });
+  }
   return record;
  }
  lookup(start, selector, field = 'methods') {

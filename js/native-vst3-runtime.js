@@ -9,6 +9,8 @@ import { GuestLocales, localeImports } from './native-vst3-locale.js';
 import { GuestCoreFoundation, coreImports, coreStringConstants, coreCallbackConstants } from './native-vst3-corefoundation.js';
 import { GuestStdio, stdioImports, stdioGlobals } from './native-vst3-stdio.js';
 import { GuestThreadStorage, tlsImports } from './native-vst3-tls.js';
+import { GuestBundles, bundleImports } from './native-vst3-bundle.js';
+import { GuestRunLoop, runLoopImports } from './native-vst3-runloop.js';
 
 const IMAGE = 0x10000000, HEAP = 0x30000000, HEAP_SIZE = 32 << 20;
 const STACK = 0x40000000, STACK_SIZE = 1 << 20, IMPORTS = 0x50000000, IMPORT_SIZE = 1 << 20;
@@ -27,7 +29,7 @@ export class NativeExecutionError extends Error {
 }
 
 export class NativeVst3Guest {
- constructor(uc, bytes, { files = new Map(), monotonicClock = () => performance.now(), wallClock = () => Date.now() } = {}) {
+ constructor(uc, bytes, { files = new Map(), bundlePath = '/plugin/Plugin.vst3', monotonicClock = () => performance.now(), wallClock = () => Date.now() } = {}) {
   this.uc = uc;
   this.image = parseMachO(bytes);
   this.slide = IMAGE - this.image.minimum;
@@ -36,10 +38,12 @@ export class NativeVst3Guest {
   this.mutexes = new GuestMutexes(this);
   this.threadStorage = new GuestThreadStorage(this);
   this.files = new GuestFiles(files);
+  this.bundles = new GuestBundles(this, bundlePath); this.startupStage = 'mapped'; this.startupFailure = null;
   this.objc = new GuestObjC(this);
   this.locales = new GuestLocales(this);
   this.strings = new GuestStrings(this);
   this.core = new GuestCoreFoundation(this);
+  this.runLoop = new GuestRunLoop(this);
   this.stdio = new GuestStdio(this);
   this.monotonicClock = monotonicClock; this.wallClock = wallClock; this.lastTick = 0n;
   this.engine = new uc.Unicorn(uc.ARCH_X86, uc.MODE_64);
@@ -179,6 +183,29 @@ export class NativeVst3Guest {
   const args = ['RDI', 'RSI', 'RDX', 'RCX', 'R8', 'R9'].map(name => this.register(name));
   const [destination, source, size] = args;
   this.calls.set(entry.name, (this.calls.get(entry.name) || 0) + 1);
+  if (entry.name.startsWith('__midi_vst3_')) {
+   try {
+    if (!this.audioHost) throw new Error('No VST3 host callback owner');
+    return this.audioHost.invoke(entry.name, args);
+   } catch (error) {
+    if (error instanceof WebAssembly.RuntimeError) this.poisoned = true;
+    throw new NativeExecutionError(error.message || String(error), { ...entry, kind: this.poisoned ? 'emulator-fault' : 'unsupported-vst3-host' });
+   }
+  }
+  if (runLoopImports.has(entry.name)) {
+   try { return this.runLoop.invoke(entry.name, args); }
+   catch (error) {
+    if (error instanceof WebAssembly.RuntimeError) this.poisoned = true;
+    throw new NativeExecutionError(error.message || String(error), { ...entry, kind: this.poisoned ? 'emulator-fault' : 'unsupported-runloop' });
+   }
+  }
+  if (bundleImports.has(entry.name)) {
+   try { return this.bundles.invoke(entry.name, args); }
+   catch (error) {
+    if (error instanceof WebAssembly.RuntimeError) this.poisoned = true;
+    throw new NativeExecutionError(error.message || String(error), { ...entry, kind: this.poisoned ? 'emulator-fault' : 'unsupported-bundle' });
+   }
+  }
   if (stdioImports.has(entry.name) || entry.name.startsWith('__midi_stdio_')) {
    try { return this.stdio.invoke(entry.name, args); }
    catch (error) {
@@ -506,13 +533,23 @@ export class NativeVst3Guest {
  }
  initialize() {
   if (this.initialized) return;
-  for (const section of this.image.initializers) for (let offset = 0; offset < section.size; offset += 8) {
-   const address = this.pointer(section.address + this.slide + offset);
-   if (address) this.call(address);
-   this.initializersCompleted++;
+  if (this.startupFailure) throw this.startupFailure;
+  try {
+   this.startupStage = 'initializers';
+   for (const section of this.image.initializers) for (let offset = 0; offset < section.size; offset += 8) {
+    const address = this.pointer(section.address + this.slide + offset);
+    if (address) this.call(address);
+    this.initializersCompleted++;
+   }
+   if (this.image.symbols.has('_bundleEntry')) {
+    this.startupStage = 'bundle-entry';
+    this.call(this.export('_bundleEntry'), [this.bundles.main()]);
+    if (BigInt.asUintN(8, this.engine.reg_read_i64(this.uc.X86_REG_RAX)) !== 1n) throw new NativeExecutionError('bundleEntry rejected startup', { kind: 'bundle-entry-failed' });
+   }
+   this.initialized = true; this.startupStage = 'ready';
+  } catch (error) {
+   this.startupFailure = error; throw error;
   }
-  if (this.image.symbols.has('_bundleEntry')) throw new NativeExecutionError('bundleEntry requires a real CFBundle compatibility layer', { kind: 'unsupported-bundle-entry' });
-  this.initialized = true;
  }
  virtual(object, index, args = []) { return this.call(this.pointer(this.pointer(object) + index * 8), [object, ...args]); }
  factoryInfo() {

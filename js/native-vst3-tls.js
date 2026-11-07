@@ -1,8 +1,16 @@
-export const tlsImports = new Set(['_pthread_key_create', '_pthread_key_delete', '_pthread_getspecific', '_pthread_setspecific']);
+export const tlsImports = new Set(['_pthread_key_create', '_pthread_key_delete', '_pthread_getspecific', '_pthread_setspecific', '_pthread_self', '_pthread_equal']);
 
 export class GuestThreadStorage {
- constructor(memory) { this.memory = memory; this.keys = new Map(); }
+ constructor(memory) { this.memory = memory; this.keys = new Map(); this.current = 0; }
  invoke(name, first, second) {
+  if (name === '_pthread_self') {
+   if (!this.current) { this.current = this.memory.allocate(16); this.memory.write(this.current, new Uint8Array(16)); }
+   return this.current;
+  }
+  if (name === '_pthread_equal') {
+   if (first !== this.current || second !== this.current || !this.current) throw new Error('Unknown guest thread identity');
+   return 1;
+  }
   if (name === '_pthread_key_create') {
    if (second && !this.memory.isExecutable(second)) throw new Error('Invalid thread-local destructor');
    let key = 0; while (this.keys.has(key) && key < 512) key++;

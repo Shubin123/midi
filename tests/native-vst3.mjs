@@ -52,7 +52,7 @@ use(fixture, guest => {
  guest.setRegister('RDI', 100); assert.equal(guest.invokeImport({ name: '__ZNSt3__112__next_primeEm' }), 101);
  guest.setRegister('RDI', 1n << 63n); assert.throws(() => guest.invokeImport({ name: '__ZNSt3__112__next_primeEm' }), error => error.details.kind === 'unsupported-libcpp');
 });
-use(nativeFixture({ bundleEntry: true }), guest => assert.throws(() => guest.initialize(), /CFBundle/));
+use(nativeFixture({ bundleEntry: true }), guest => { guest.initialize(); assert.equal(guest.initialized, true); assert.equal(guest.startupStage, 'ready'); });
 use(nativeFixture({ importName: '_malloc' }), guest => { assert.ok(guest.call(guest.export('_probe')) >= 0x30000000); assert.equal(guest.report().calls._malloc, 1); });
 use(nativeSelectorFixture(), guest => {
  assert.equal(guest.image.initializers.length, 0); assert.equal(guest.image.selectors.length, 1);

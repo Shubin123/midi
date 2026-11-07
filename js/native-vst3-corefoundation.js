@@ -2,6 +2,8 @@ import { readSfnt, sfntName } from './native-vst3-font.js';
 
 export const coreStringConstants = new Map([['_kCTFontFamilyNameKey', 'CTFontFamilyName'], ['_kCTFontStyleNameKey', 'CTFontSubFamilyName'], ['_kCTFontPostScriptNameKey', 'CTFontPostScriptName'], ['_kCTFontAttributeName', 'NSFont'], ['_kCTLigatureAttributeName', 'NSLigature'], ['_kCTKernAttributeName', 'NSKern']]);
 export const coreCallbackConstants = new Set(['_kCFTypeDictionaryKeyCallBacks', '_kCFTypeDictionaryValueCallBacks', '_kCFTypeArrayCallBacks']);
+coreStringConstants.set('_kCFRunLoopDefaultMode', 'kCFRunLoopDefaultMode');
+coreStringConstants.set('_kCFRunLoopCommonModes', 'kCFRunLoopCommonModes');
 
 export const coreImports = new Set(['_CFDataCreate', '_CFDataCreateWithBytesNoCopy', '_CFDataGetLength', '_CFDataGetBytePtr', '_CFDataCreateCopy', '_CFRetain', '_CFGetRetainCount', '_CGDataProviderCreateWithCFData', '_CGDataProviderRetain', '_CGDataProviderRelease', '_CGFontCreateWithDataProvider', '_CGFontRetain', '_CGFontRelease', '_CTFontManagerRegisterGraphicsFont', '_CTFontManagerUnregisterGraphicsFont', '_CFErrorGetCode', '_CTFontCreateWithGraphicsFont', '_CTFontGetAscent', '_CTFontGetDescent', '_CTFontGetLeading', '_CTFontGetSize', '_CTFontGetUnitsPerEm', '_CTFontGetGlyphCount', '_CTFontCopyName', '_CTFontCopyFamilyName', '_CTFontCopyPostScriptName', '_CGFontCopyPostScriptName', '_CGFontCopyFullName', '_CFStringGetLength', '_CFStringGetCString', '_CFStringGetCStringPtr', '_CFStringGetCharacters', '_CFStringGetMaximumSizeForEncoding', '_CFStringCreateWithCString']);
 coreImports.add('_CFStringGetBytes');

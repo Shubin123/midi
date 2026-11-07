@@ -6,7 +6,8 @@ try {
  await browser.open('tools/native-vst3.html');
  const checks = await browser.evaluate(`(async () => {
   const { probeNativeVst3 } = await import('../js/native-vst3-probe.js');
-  const { nativeFixture, nativePackage, nativeScanFixture, nativeMutexFixture, nativeLimitFixture, nativeObjCFixture, nativeStringFixture, nativeLocaleFixture } = await import('../tests/support/native-vst3-fixture.js');
+  const { nativeFixture, nativePackage, nativeScanFixture, nativeMutexFixture, nativeLimitFixture, nativeObjCFixture, nativeStringFixture, nativeLocaleFixture, nativeBundleFixture } = await import('../tests/support/native-vst3-fixture.js');
+  const { nativeAudioFixture } = await import('../tests/support/native-audio-fixture.js');
   const file = new File([nativeFixture()], 'fixture');
   const checks = [];
   const check = (name, ok) => checks.push({ name, ok });
@@ -27,6 +28,17 @@ try {
   check('native libc++ string copy constructor writes an independent object in the worker', stringCopy.initialized && stringCopy.factory?.classes[0].cid === '0c636f70696564000000000000000000');
   const locale = await probeNativeVst3(new File([nativeLocaleFixture()], 'locale-fixture'));
   check('native locale facet dispatch and Darwin rune-table reads execute in the worker', locale.initialized && locale.factory?.classes[0].cid === '0a89050041060708090a0b0c0d0e0f10');
+  const bundle = await probeNativeVst3(new File([nativeBundleFixture()], 'bundle-fixture'));
+  check('native bundleEntry executes and resolves its real guest bundle path', bundle.initialized && bundle.calls._CFBundleCopyBundleURL === 1 && bundle.calls._CFURLGetFileSystemRepresentation === 1);
+  const audioFile = new File([nativeAudioFixture()], 'audio-fixture');
+  const processor = await probeNativeVst3(audioFile, { mode: 'processor' });
+  check('native processor opens actual component/audio vtables and host callbacks', processor.stage === 'processor-ready' && processor.configuration.outputs[0] === 2 && processor.processor.blocksProcessed === 0);
+  const audio = await probeNativeVst3(audioFile, { mode: 'render', render: { frames: 16, maxBlock: 4, velocity: 0.5, inputs: [[new Float32Array(16).fill(1), new Float32Array(16).fill(-1)]] } });
+  check('native worker transfers real processed stereo audio and MIDI note-off silence', audio.stage === 'rendered' && audio.audio.peak === 0.5 && audio.audio.buses[0][0] instanceof Float32Array && audio.audio.buses[0][0].slice(0, 12).every(value => value === 0.5) && audio.audio.buses[0][0].slice(12).every(value => value === 0) && audio.processor.blocksProcessed === 4);
+  check('offline rendering never claims realtime playability', !audio.playable && !audio.audio.realtime);
+  const rejectedAudio = nativeAudioFixture(); rejectedAudio.set([0x48, 0xc7, 0xc0, 255, 255, 255, 255, 0xc3], 0x600);
+  const rejectedRender = await probeNativeVst3(new File([rejectedAudio], 'rejected-audio'), { mode: 'render', render: { frames: 16 } });
+  check('native processing failure preserves its stage and never publishes fabricated audio', rejectedRender.stage === 'processing' && rejectedRender.error?.message.includes('process failed (-1)') && !rejectedRender.audio && rejectedRender.processor.blocksProcessed === 0 && !rejectedRender.playable);
   check('native initializer creates a class and executes its x86 method through Objective-C dispatch', objectiveC.initialized && objectiveC.factory?.classes[0].cid === '2a00000005060708090a0b0c0d0e0f10' && objectiveC.objc.dynamicClasses === 1 && objectiveC.objc.methods === 1 && objectiveC.objc.instances === 1);
   const unsupported = await probeNativeVst3(new File([nativeFixture({ code: [0x0f, 0x05, 0xc3], initializer: true })], 'syscall'));
   check('unsupported startup fails explicitly instead of faking success', unsupported.error?.kind === 'syscall' && unsupported.stage === 'initializers' && !unsupported.playable && !unsupported.initialized);
@@ -39,6 +51,20 @@ try {
   check('fresh worker succeeds after cancellation and timeout', fresh.factory?.vendor === 'Fixture vendor');
   const bad = await probeNativeVst3(new File(['not a plugin'], 'bad'));
   check('bad files produce a structured failure', !!bad.error && !bad.playable);
+  const transfer = new DataTransfer(); transfer.items.add(audioFile);
+  document.querySelector('#plugin').files = transfer.files; document.querySelector('#plugin').dispatchEvent(new Event('change'));
+  document.querySelector('#render').click();
+  const previewReport = await new Promise((resolve, reject) => {
+   const start = Date.now(), poll = () => {
+    const output = document.querySelector('#result').textContent;
+    if (output && !document.querySelector('#download').disabled) return resolve(JSON.parse(output));
+    if (Date.now() - start > 20000) return reject(new Error('Native preview UI did not finish'));
+    setTimeout(poll, 25);
+   }; poll();
+  });
+  const preview = document.querySelector('#preview'), wav = new Uint8Array(await (await fetch(preview.src)).arrayBuffer());
+  check('offline render UI exposes a real WAV preview without embedding samples in JSON', !preview.hidden && new TextDecoder().decode(wav.slice(0, 4)) === 'RIFF' && wav.length === 72044 && previewReport.audio.buses[0] === 2);
+  check('silent plugin output is labeled silence, never claimed as a working Arcade', previewReport.audio.silent && document.querySelector('#status').textContent.includes('silence') && !previewReport.playable);
   return checks;
  })()`, { timeout: 90000 });
  for (const check of checks) { console.log(`${check.ok ? 'ok' : 'FAIL'} ${check.name}`); assert.ok(check.ok, check.name); }
@@ -47,11 +73,11 @@ try {
   const { root } = await browser.page('DOM.getDocument');
   const { nodeId } = await browser.page('DOM.querySelector', { nodeId: root.nodeId, selector: '#plugin' });
   await browser.page('DOM.setFileInputFiles', { nodeId, files: [process.env.ARCADE_PKG] });
-  for (const mode of ['factory', 'startup']) {
+  for (const mode of ['factory', 'startup', 'processor']) {
    let report;
-   if (mode === 'startup') report = await browser.evaluate(`(async () => {
+   if (mode !== 'factory') report = await browser.evaluate(`(async () => {
     const { probeNativeVst3 } = await import('../js/native-vst3-probe.js');
-    return probeNativeVst3(document.querySelector('#plugin').files[0], { timeout: 120000 });
+    return probeNativeVst3(document.querySelector('#plugin').files[0], { mode: '${mode}', timeout: 120000 });
    })()`, { timeout: 125000 });
    else {
     await browser.evaluate(`document.querySelector('#${mode}').click()`);
@@ -70,10 +96,12 @@ try {
     assert.equal(report.factory.vendor, 'Output'); assert.equal(report.factory.classes[0].name, 'Arcade');
     assert.equal(report.initialized, false); assert.equal(report.initializerCount, 768);
     assert.ok(report.calls.__Znwm > 0 && report.calls._memcpy > 0);
-   } else {
-    assert.equal(report.stage, 'initializers'); assert.equal(report.error.kind, 'unsupported-bundle-entry');
-    assert.equal(report.initializersCompleted, 768); assert.equal(report.initializerCount, 768); assert.equal(report.initialized, false);
-    assert.equal(report.calls._CFUUIDCreate, 1); assert.equal(report.calls._CFUUIDGetUUIDBytes, 1); assert.equal(report.calls._CFRelease, 49);
+   } else if (mode === 'startup') {
+    assert.equal(report.stage, 'factory'); assert.equal(report.error, undefined);
+    assert.equal(report.initializersCompleted, 768); assert.equal(report.initializerCount, 768); assert.equal(report.initialized, true);
+    assert.deepEqual(report.factory.classes.map(entry => entry.cid), ['56535441524344617263616465000000', '56534541524344617263616465000000']);
+    assert.equal(report.calls._CFRetain, 1); assert.equal(report.calls._CFBundleCopyBundleURL, 1); assert.equal(report.calls._CFURLGetFileSystemRepresentation, 1);
+    assert.equal(report.calls._CFUUIDCreate, 1); assert.equal(report.calls._CFUUIDGetUUIDBytes, 1); assert.equal(report.calls._CFRelease, 50);
     assert.equal(report.calls._sprintf, 22); assert.equal(report.calls._strcpy, 2); assert.equal(report.calls._strcat, 20); assert.equal(report.calls._sscanf, 2);
     assert.equal(report.calls._pthread_mutex_init, 37); assert.equal(report.calls._pthread_mutex_lock, 6680); assert.equal(report.calls._pthread_mutex_unlock, 6680);
     assert.equal(report.calls._exp2, 378); assert.equal(report.calls._pow, 8237); assert.equal(report.calls._tan, 15);
@@ -86,6 +114,10 @@ try {
     assert.equal(report.calls._CFStringGetBytes, 48); assert.equal(report.calls.___exp10f, 3); assert.equal(report.calls._pthread_key_create, 1);
     assert.deepEqual(report.objc, { dynamicClasses: 3, registeredClasses: 5, selectors: 551, methods: 19, ivars: 4, instances: 0, protocols: 7 });
     assert.deepEqual(report.files.descriptorLimits, { soft: 256, hard: 256 });
+   } else {
+    assert.equal(report.stage, 'creating-component'); assert.equal(report.error.kind, 'unsupported-objc'); assert.equal(report.error.className, 'NSNotificationCenter');
+    assert.equal(report.initialized, true); assert.equal(report.initializersCompleted, 768); assert.equal(report.processor.componentCreated, false); assert.equal(report.processor.blocksProcessed, 0);
+    assert.equal(report.calls._pthread_self, 1); assert.equal(report.calls._CFRunLoopGetMain, 1); assert.equal(report.calls._CFRunLoopSourceCreate, 1); assert.equal(report.calls._CFRunLoopAddSource, 1);
    }
    console.log(`Arcade ${mode}: ${JSON.stringify(report)}`);
   }

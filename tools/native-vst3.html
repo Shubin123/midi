@@ -18,12 +18,15 @@
   <div class="actions">
    <button id="startup" disabled>Try normal startup</button>
    <button id="factory" disabled>Factory-only diagnostic</button>
+   <button id="processor" disabled>Try audio processor</button>
+   <button id="render" disabled>Render note 60 preview</button>
    <button id="stop" disabled>Stop</button>
   </div>
-  <p>Normal startup runs initializers and stops at the first missing macOS dependency. Factory-only mode deliberately skips initialization; its metadata can be incomplete or invalid. Neither mode produces playable audio.</p>
+  <p>Normal startup runs initializers and bundle entry. The processor probe attempts the real component and audio interfaces; the render probe processes a bounded quarter-second note offline and offers a WAV preview only if processing succeeds. This is not realtime MIDI playback. Unsupported macOS dependencies stop execution explicitly. Arcade currently stops during component creation at the unimplemented Cocoa notification center. Factory-only mode deliberately skips initialization; its metadata can be incomplete or invalid.</p>
   <p>The plugin stays on your machine. The patched, integrity-checked GPL-2.0 Unicorn.js engine loads from <code>vendor/unicorn</code>, which includes its corresponding source and license. No CDN or dependency installation is required. File parsing and emulation have size and execution limits; this is not a security audit of untrusted plugins.</p>
   <p id="status" role="status" aria-live="polite">Choose a plugin to begin.</p>
   <pre id="result" tabindex="0" aria-label="Execution report"></pre>
+  <audio id="preview" controls hidden aria-label="Rendered native plugin audio"></audio>
   <button id="download" disabled>Download report</button>
  </main>
  <script type="module" src="../js/native-vst3-lab.js"></script>

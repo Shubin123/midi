@@ -4,7 +4,7 @@
 
 This is an execution **experiment**, not an executable-to-Wasm converter,
 decompiler, or playable native VST3 host. It does not recover source code,
-produce a `wasm32-web` bundle, or wire a native plugin into the audio graph.
+produce a `wasm32-web` bundle, or wire a native plugin into the realtime audio graph.
 The existing `native/vst3web` source-build path remains the supported way to
 run VST3 DSP in this app. XMachOViewer is not bundled or used as a decompiler;
 the experiment's JavaScript loader implements the needed Mach-O parsing.
@@ -24,12 +24,18 @@ Open `tools/native-vst3.html` on that localhost server, or follow **Native
 execution experiment** from a macOS x86_64 VST3 card in the app. Select a
 `.pkg`, a ZIP containing one macOS VST3 executable, or the executable itself.
 
-- **Try normal startup** executes static initializers, stopping on faults or
-  unsupported dependencies. A CFBundle compatibility layer is still required
+- **Try normal startup** executes static initializers and the real bundle entry,
+  stopping on faults or unsupported dependencies. A bounded CFBundle/CFURL layer is supplied
   for plugins exporting `bundleEntry`.
 - **Factory-only diagnostic** skips all initialization and calls the native
   `GetPluginFactory`, `getFactoryInfo`, `countClasses`, and `getClassInfo`.
   An answer is not evidence of successful startup; even class IDs can be wrong.
+- **Try audio processor** runs normal startup, creates the actual VST3 component,
+  initializes it with host callbacks, queries IAudioProcessor, enumerates/activates
+  buses, and negotiates float32 offline processing. It then closes the processor.
+- **Render note 60 preview** attempts that pipeline and processes a bounded
+  quarter-second note into a WAV preview. Silence is explicitly labeled. This is
+  offline rendering, not realtime MIDI hosting; no stand-in oscillator is used.
 - **Stop** terminates the entire worker. Each new attempt uses a fresh worker.
 - **Download report** exports the result, including the failing stage and import
   or address, without exporting proprietary code.
@@ -89,9 +95,17 @@ In **Chrome**, with the package selected directly from disk:
    nil through a filesystem lookup, not an unconditional Foundation stub.
 10. Three single-precision `__exp10f` calls and one pthread key creation run.
     **All 768 static initializers complete**, verified in Node and Chrome.
-    Startup then stops explicitly at the missing CFBundle layer for `bundleEntry`.
-    `initialized` and `playable` remain false: static initialization alone is
-    neither full plugin startup nor a playable conversion.
+11. The real `bundleEntry` retains a guest bundle, copies its URL, obtains the
+    UTF-8 path `/plugin/Arcade.vst3` and returns true. Normal startup reaches the
+    factory with `initialized: true` and class IDs
+    `56535441524344617263616465000000` (component) and
+    `56534541524344617263616465000000` (controller).
+12. The processor probe invokes the real factory's `createInstance`. It executes
+    pthread identity, run-loop source creation/registration and guest Objective-C
+    instance creation, then stops at **`NSNotificationCenter defaultCenter`**.
+    This Cocoa class is not implemented. No Arcade processor has been returned
+    and **zero Arcade audio blocks have run**; `playable` remains false. A passing
+    generated audio fixture is not a passing Arcade playback test.
 
 The old published engine faulted at last CPU entry `0x100412c3`. Source
 profiling and ASAN isolated a TCI adapter temporary-lifetime leak: helper-call
@@ -104,8 +118,8 @@ changed to fix this host-engine defect.
 Fixing this emulator defect is not proof that Arcade will run:
 the binary imports 31 native libraries/frameworks, including Objective-C,
 Cocoa, WebKit, CoreAudio, Security, and Accelerate. Their behavior, plugin
-resources/content, bundle startup, licensing, VST3 object creation, event and
-audio processing, and real-time performance remain unverified/unimplemented.
+resources/content, licensing, complete VST3 object creation and Arcade event/audio
+processing remain unverified/unimplemented. Real-time performance is not established.
 No licensing checks are patched or suppressed.
 
 ## Boundaries
@@ -166,6 +180,28 @@ No licensing checks are patched or suppressed.
 - Up to 512 pthread keys track full-width values for the single guest thread.
   Creation records validated destructor addresses; deletion does not invoke them.
   Thread exit/destructor execution and real thread creation remain unsupported.
+- `pthread_self` supplies one stable guest-local opaque thread identity;
+  `pthread_equal` validates that identity. This does not expose a host thread.
+- Bundles implement retained identity and owned absolute file URLs, bounded UTF-8
+  filesystem representations and POSIX path copies. The bundle path comes from
+  the selected bundle name, not a host filesystem lookup. Bundle metadata/resource
+  APIs, dynamic loading and unload via `bundleExit` are not implemented. Failed
+  startup is cached so initializers are never rerun against a partially initialized
+  image. C++ boolean return values use AL, not undefined upper RAX bits.
+- A cooperative, single-threaded CFRunLoop subset tracks version-zero sources,
+  modes, ordering, coalesced signals, invalidation and retained registration.
+  Native perform callbacks execute between processing blocks, with bounded drain
+  counts. Custom ownership/schedule callbacks and blocking run-loop APIs remain
+  unsupported; this is not a Cocoa event loop or a thread scheduler.
+- The native audio bridge uses actual component/processor vtables and bounded
+  IHostApplication/IEventList callbacks. It supports float32 buses, note on/off,
+  at most 16 buses per direction and 128 audio channels per direction, and blocks
+  of 1–4096 frames at 8–192 kHz. Offline renders contain at most 48,000 frames.
+  Processing reuses guest allocations, rejects non-finite audio and control-voltage
+  buses, and propagates signed 32-bit VST3 failures without losing precision in
+  JavaScript. Host message creation, parameter changes, controllers/editors, timing
+  context and realtime AudioWorklet integration are not implemented. Reports keep
+  `playable: false` even when an offline fixture render succeeds.
 - Scalar double and selected single-precision math imports use full 16-byte XMM register reads/writes, with
   arguments in XMM0/XMM1 and results in XMM0. They provide numerical values, not
   a complete macOS libm floating-exception/errno environment or last-bit libm
@@ -248,6 +284,14 @@ and bounded diagnostics. TLS tests cover independent values, destructor registra
 deletion/reuse, invalid keys and 512-key exhaustion.
 The optional Arcade test separately verifies factory-only
 execution, **768/768 static initializers**, and the explicit CFBundle startup
-boundary, not audio playback. Its startup probe explicitly uses the supported
+success, followed by the actual Cocoa failure during processor creation, not
+Arcade audio playback. Its startup/processor probes explicitly use the supported
 120-second watchdog to tolerate concurrent test-suite CPU load; the interactive
-probe's default remains 30 seconds.
+startup probe's default remains 30 seconds. Processor/render UI probes use 120 seconds.
+Bundle fixtures execute actual x86 entry code, test UTF-8 path capacity and native
+boolean return width, and prevent repeated failed initialization. Run-loop tests
+execute ordered native callbacks and check registration ownership. Audio fixtures
+execute actual factory/component/processor vtables, process stereo samples with
+MIDI-controlled gain, verify signed failure returns and fixed guest allocation,
+and transfer the resulting PCM through a worker into the WAV preview UI. None
+contains proprietary plugin code or claims to reproduce Arcade's sound.
