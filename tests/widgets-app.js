@@ -1,10 +1,11 @@
 // Checks run inside the app (index.html) by node tests/widgets.mjs: dragging widgets, as a pointer would. Every
-// widget is lifted and carried onto every other one, and at each step the place it will drop must be a space
-// already open, outlined, and empty of other widgets, with the widget itself under the pointer; resting on a
-// widget must not make the space jump back and forth; Escape puts everything back; a drop lands exactly in
-// the outlined space; and the outline left where it was lifted from is empty, with no words, for widgets and
-// plug-in windows alike. First, nothing drawn inside a widget comes closer than 16 px to its left or right
-// edge. Returns { checks: [{ name, ok, problems }] }.
+// widget is lifted and carried onto every other one, and at each step no other widget moves (the space it was
+// lifted from stays open, outlined, until the drop), the place it will drop is outlined inside the workspace, and
+// the widget itself is under the pointer; resting on a widget must not make the outline jump back and forth;
+// Escape puts everything back; a drop lands exactly in the outlined space, and the others make room only then;
+// and the outline left where it was lifted from is empty, with no words, for widgets and plug-in windows alike.
+// First, nothing drawn inside a widget comes closer than 16 px to its left or right edge. Returns
+// { checks: [{ name, ok, problems }] }.
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const workspace = () => document.getElementById('workspace');
@@ -27,17 +28,22 @@ const fmt = r => `${Math.round(r.left)},${Math.round(r.top)} ${Math.round(r.widt
 const pointer = (type, x, y, target = window) => target.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: y, button: 0, buttons: type === 'pointerup' ? 0 : 1, pointerId: 1, isPrimary: true, pointerType: 'mouse', bubbles: true }));
 const clampY = y => Math.max(90, Math.min(innerHeight - 90, y)); // clear of the edges, where dragging scrolls the page
 
-// Everything that must hold at every moment of a drag. `grab` is where on the widget the pointer holds it.
-// The outline where a widget or window was lifted from is left empty: no label, drawn or in the markup.
+// Everything that must hold at every moment of a drag. `grab` is where on the widget the pointer holds it, and
+// `slots` where every widget sat when it was lifted. The outline where a widget or window was lifted from is left
+// empty: no label, drawn or in the markup.
 const liftoffWords = () => { const m = document.querySelector('.drag-marker.liftoff'); return m && (m.dataset.label || getComputedStyle(m, '::before').content.replace(/^none$|^normal$|^""$/, '') || m.textContent); };
-function steady(el, x, y, grab, say) {
+function steady(el, x, y, grab, slots, say) {
  if (liftoffWords()) say(`the liftoff outline says "${liftoffWords()}"; it should be empty`);
- const landing = markerRect('landing'), space = slot(el);
+ for (const other of visible()) if (other !== el && !same(slot(other), slots.get(other))) say(`${title(other)} moved from ${fmt(slots.get(other))} to ${fmt(slot(other))} before the drop`);
+ const own = slot(el), liftoff = markerRect('liftoff');
+ if (!same(own, slots.get(el))) say(`the space it was lifted from moved to ${fmt(own)}`);
+ if (liftoff && !liftoff.hidden && !same(liftoff, own)) say(`the liftoff outline is at ${fmt(liftoff)}, not on the space it was lifted from ${fmt(own)}`);
+ for (const other of visible()) if (other !== el && overlap(own, slot(other)) > 4) say(`${title(other)} took the space it was lifted from`);
+ const landing = markerRect('landing');
  if (!landing) { say('no "Drops here" outline'); return; }
- if (!same(landing, space)) say(`"Drops here" is at ${fmt(landing)}, but the widget would drop at ${fmt(space)}`);
+ if (liftoff?.hidden && !same(landing, own)) say(`the liftoff outline is hidden, but it drops at ${fmt(landing)}, away from ${fmt(own)}`);
  const ws = workspace().getBoundingClientRect();
- if (space.left < ws.left + scrollX - 1 || space.left + space.width > ws.right + scrollX + 1) say(`the space ${fmt(space)} is outside the workspace`);
- for (const other of visible()) if (other !== el && overlap(space, slot(other)) > 4) say(`the space overlaps ${title(other)}`);
+ if (landing.left < ws.left + scrollX - 1 || landing.left + landing.width > ws.right + scrollX + 1 || landing.top < ws.top + scrollY - 1) say(`"Drops here" ${fmt(landing)} is outside the workspace`);
  const r = el.getBoundingClientRect();
  if (Math.abs(r.left - (x - grab.x)) > 1.5 || Math.abs(r.top - (y - grab.y)) > 1.5) say(`the widget is at ${Math.round(r.left)},${Math.round(r.top)}, not under the pointer (${Math.round(x - grab.x)},${Math.round(y - grab.y)})`);
 }
@@ -49,12 +55,13 @@ async function drag(el, onto, { drop = false, at = [0.5, 0.5] } = {}) {
  const before = order();
  const handle = el.querySelector('.drag-handle');
  handle.scrollIntoView({ block: 'center' });
+ const slots = new Map(visible().map(w => [w, slot(w)]));
  const h = handle.getBoundingClientRect(), x0 = h.left + 20, y0 = h.top + h.height / 2;
  const r0 = el.getBoundingClientRect(), grab = { x: x0 - r0.left, y: y0 - r0.top };
  pointer('pointerdown', x0, y0, handle);
  pointer('pointermove', x0 + 12, y0 + 8); // past the 5 px that tells a drag from a click
  if (!el.classList.contains('dragging')) { say('it did not lift'); pointer('pointerup', x0, y0); return problems; }
- steady(el, x0 + 12, y0 + 8, grab, say);
+ steady(el, x0 + 12, y0 + 8, grab, slots, say);
  // Bring the target into view (the page scrolls under a held widget), then carry the widget to it, aiming each
  // step at where the target is now, as a person would while the widgets make room.
  const t = slot(onto);
@@ -66,24 +73,26 @@ async function drag(el, onto, { drop = false, at = [0.5, 0.5] } = {}) {
   [tx, ty] = aim();
   const x = sx + ((tx - sx) * i) / 10, y = sy + ((ty - sy) * i) / 10;
   pointer('pointermove', x, y);
-  steady(el, x, y, grab, say);
+  steady(el, x, y, grab, slots, say);
  }
- // Resting on the target, with the small movements a hand makes: the space may still settle once, but must
- // never go back to where it just was.
- const seen = [order()];
+ // Resting on the target, with the small movements a hand makes: the landing outline may still settle once, but
+ // must never go back to where it just was.
+ const outline = () => fmt(markerRect('landing'));
+ const seen = [outline()];
  for (const [dx, dy] of [[1, 0], [-1, 1], [0, -1], [1, 1], [-1, 0], [0, 0], [1, -1], [-1, -1]]) {
   pointer('pointermove', tx + dx, ty + dy);
-  steady(el, tx + dx, ty + dy, grab, say);
-  if (order() !== seen.at(-1)) { if (seen.includes(order())) say(`resting on ${title(onto)} moves the space back and forth`); seen.push(order()); }
+  steady(el, tx + dx, ty + dy, grab, slots, say);
+  if (outline() !== seen.at(-1)) { if (seen.includes(outline())) say(`resting on ${title(onto)} moves "Drops here" back and forth`); seen.push(outline()); }
  }
- if (seen.length > 2) say(`resting on ${title(onto)} moves the space ${seen.length - 1} times`);
+ if (seen.length > 2) say(`resting on ${title(onto)} moves "Drops here" ${seen.length - 1} times`);
+ if (order() !== before) say('the order changed before the drop');
  const landing = markerRect('landing');
  if (drop) {
   pointer('pointerup', tx, ty);
   await wait(260); // the widget settles into its space
   const r = el.getBoundingClientRect(), now = { left: r.left + scrollX, top: r.top + scrollY, width: r.width, height: r.height };
   if (landing && !same(now, landing)) say(`it dropped at ${fmt(now)}, not in the outlined space ${fmt(landing)}`);
-  if (el.style.transform) say(`it kept a transform (${el.style.transform}) after the drop`);
+  for (const w of visible()) if (w.style.transform || w.classList.contains('settling')) say(`${title(w)} is still moving (${w.style.transform || 'settling'}) after the drop`);
  } else {
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   if (order() !== before) say('Escape did not put the widgets back');
