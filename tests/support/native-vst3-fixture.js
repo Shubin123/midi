@@ -59,6 +59,17 @@ export function nativeFixture({ code = [0xb8, 42, 0, 0, 0, 0xc3], importName, im
  return bytes;
 }
 
+export function nativeStringFixture(constructor = 'C1') {
+ const bytes = nativeFixture({ importName: `__ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE${constructor}ERKS5_`, initializer: true }), view = new DataView(bytes.buffer);
+ let offset = 0x380;
+ const emit = values => { bytes.set(values, offset); offset += values.length; };
+ const relative = (prefix, address) => { emit(prefix); view.setInt32(offset, address - offset - 4, true); offset += 4; };
+ relative([0x48, 0x8d, 0x3d], 0x1540); relative([0x48, 0x8d, 0x35], 0x1500);
+ emit([0x48, 0x83, 0xec, 8]); relative([0xff, 0x15], 0x1600); emit([0x48, 0x83, 0xc4, 8]);
+ relative([0xf3, 0x0f, 0x6f, 0x05], 0x1540); relative([0xf3, 0x0f, 0x7f, 0x05], 0x1400); emit([0xc3]);
+ bytes.set([12, ...new TextEncoder().encode('copied')], 0x1500); return bytes;
+}
+
 export function nativeSelectorFixture() {
  const bytes = nativeFixture({ initializer: true }), view = new DataView(bytes.buffer), encoder = new TextEncoder();
  bytes.fill(0, 176, 192); bytes.set(encoder.encode('__objc_selrefs'), 176); view.setUint32(240, 0, true);

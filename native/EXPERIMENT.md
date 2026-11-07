@@ -67,7 +67,7 @@ In **Chrome**, with the package selected directly from disk:
 4. The patched emulator passes the previous Wasm memory-out-of-bounds crash.
    Integer scanning now parses the actual formatted class IDs. Initialization
    executes 22 `sprintf`, two `strcpy`, 20 `strcat`, and two `sscanf` calls.
-5. Eleven mutexes are initialized; 3,019 lock/unlock pairs execute using tracked
+5. Sixteen mutexes are initialized; 3,589 lock/unlock pairs execute using tracked
    single-threaded ownership/depth, not unconditional-success stubs. Floating
    imports execute 378 `exp2`, 8,237 `pow`, and 15 `tan` calls through the SSE ABI.
 6. Nine `getrlimit`/`setrlimit` attempts run against an actual bounded guest
@@ -79,9 +79,9 @@ In **Chrome**, with the package selected directly from disk:
    and four ivars. The bridge canonicalizes 551 selectors and reads seven
    protocol definitions, including the adopted `NSPasteboardItemDataProvider`.
    A tracked `realloc` also executes.
-8. **263 of 768 initializers complete.** Startup then stops explicitly at the
-   libc++ string copy constructor
-   `__ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEC1ERKS5_`.
+8. Twenty libc++ string copy constructors and two hash-table prime-sizing calls
+   execute. **347 of 768 initializers complete.** Startup then stops explicitly
+   at the libc++ locale constructor `__ZNSt3__16localeC1Ev`.
    This remains a startup failure, not a playable conversion.
 
 The old published engine faulted at last CPU entry `0x100412c3`. Source
@@ -119,6 +119,15 @@ No licensing checks are patched or suppressed.
   pointer conversions with register and stack arguments. Unsupported floating,
   wide-character, positional and `%n` conversions fail explicitly. `snprintf`
   returns the untruncated byte count and honors zero capacity.
+- The string copy bridge supports the observed x86_64 libc++ default 24-byte
+  layout, not the alternate layout or other standard libraries. Short strings
+  retain their inline representation; long strings get independent storage,
+  including embedded NUL bytes and a terminating NUL. Contents are bounded to
+  1 MiB and malformed sizes/capacities fail explicitly. Both C1/C2 constructor
+  entrypoints are supported, not general string mutation or locale operations.
+  `__next_prime` returns the lowest prime at least as large as its input, with
+  the libc++ zero special case; requests above 2^24 fail explicitly instead of
+  truncating 64-bit input or running an unbounded primality search.
 - `sscanf` supports bounded ASCII integer conversions, field widths, assignment
   suppression, length modifiers and literal/whitespace matching. It writes the
   declared integer size through register/stack pointer arguments and reports
@@ -173,6 +182,7 @@ node tests/native-vst3-scanf.mjs
 node tests/native-vst3-mutex.mjs
 node tests/native-vst3-files.mjs
 node tests/native-vst3-objc.mjs
+node tests/native-vst3-libcpp.mjs
 node tests/native-vst3-browser.mjs
 ARCADE_PKG='/absolute/path/to/Arcade_OSX_Install_2.2.0.R18263.pkg' node tests/native-vst3-browser.mjs
 npm test
@@ -195,5 +205,9 @@ Objective-C tests cover registration, inheritance, ivar tail padding, protocols,
 method replacement and explicit lifecycle failures. Generated native callbacks
 verify nested dispatch, stack arguments and nil vector returns. A browser
 fixture registers a class and executes its guest method to obtain a factory ID.
+String tests verify inline/boundary/long copies, independent ownership, embedded
+NULs, invalid representations, both native constructor entrypoints and a browser
+initializer. Prime-sizing tests compare an exhaustive small range with a sieve,
+check the supported upper boundary and reject oversized 64-bit requests.
 The optional Arcade test separately verifies factory-only
 execution and the **known startup failure**, not audio playback.

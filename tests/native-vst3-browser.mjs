@@ -6,7 +6,7 @@ try {
  await browser.open('tools/native-vst3.html');
  const checks = await browser.evaluate(`(async () => {
   const { probeNativeVst3 } = await import('../js/native-vst3-probe.js');
-  const { nativeFixture, nativePackage, nativeScanFixture, nativeMutexFixture, nativeLimitFixture, nativeObjCFixture } = await import('../tests/support/native-vst3-fixture.js');
+  const { nativeFixture, nativePackage, nativeScanFixture, nativeMutexFixture, nativeLimitFixture, nativeObjCFixture, nativeStringFixture } = await import('../tests/support/native-vst3-fixture.js');
   const file = new File([nativeFixture()], 'fixture');
   const checks = [];
   const check = (name, ok) => checks.push({ name, ok });
@@ -23,6 +23,8 @@ try {
   const limits = await probeNativeVst3(new File([nativeLimitFixture()], 'limit-fixture'));
   check('native initializer reads the real guest descriptor limits through the syscall ABI', limits.initialized && limits.factory?.classes[0].cid === '00010000000000000001000000000000' && limits.files.descriptorLimits.soft === 256 && limits.files.openDescriptors === 3);
   const objectiveC = await probeNativeVst3(new File([nativeObjCFixture()], 'objc-fixture'));
+  const stringCopy = await probeNativeVst3(new File([nativeStringFixture()], 'string-fixture'));
+  check('native libc++ string copy constructor writes an independent object in the worker', stringCopy.initialized && stringCopy.factory?.classes[0].cid === '0c636f70696564000000000000000000');
   check('native initializer creates a class and executes its x86 method through Objective-C dispatch', objectiveC.initialized && objectiveC.factory?.classes[0].cid === '2a00000005060708090a0b0c0d0e0f10' && objectiveC.objc.dynamicClasses === 1 && objectiveC.objc.methods === 1 && objectiveC.objc.instances === 1);
   const unsupported = await probeNativeVst3(new File([nativeFixture({ code: [0x0f, 0x05, 0xc3], initializer: true })], 'syscall'));
   check('unsupported startup fails explicitly instead of faking success', unsupported.error?.kind === 'syscall' && unsupported.stage === 'initializers' && !unsupported.playable && !unsupported.initialized);
@@ -61,14 +63,15 @@ try {
     assert.ok(report.calls.__Znwm > 0 && report.calls._memcpy > 0);
    } else {
     assert.equal(report.stage, 'initializers'); assert.equal(report.error.kind, 'unsupported-import');
-    assert.equal(report.error.name, '__ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEC1ERKS5_'); assert.equal(report.initializersCompleted, 263);
+    assert.equal(report.error.name, '__ZNSt3__16localeC1Ev'); assert.equal(report.initializersCompleted, 347);
     assert.equal(report.calls._CFUUIDCreate, 1); assert.equal(report.calls._CFUUIDGetUUIDBytes, 1); assert.equal(report.calls._CFRelease, 1);
     assert.equal(report.calls._sprintf, 22); assert.equal(report.calls._strcpy, 2); assert.equal(report.calls._strcat, 20); assert.equal(report.calls._sscanf, 2);
-    assert.equal(report.calls._pthread_mutex_init, 11); assert.equal(report.calls._pthread_mutex_lock, 3019); assert.equal(report.calls._pthread_mutex_unlock, 3019);
+    assert.equal(report.calls._pthread_mutex_init, 16); assert.equal(report.calls._pthread_mutex_lock, 3589); assert.equal(report.calls._pthread_mutex_unlock, 3589);
     assert.equal(report.calls._exp2, 378); assert.equal(report.calls._pow, 8237); assert.equal(report.calls._tan, 15);
     assert.equal(report.calls._getrlimit, 9); assert.equal(report.calls._setrlimit, 9);
     assert.equal(report.calls._mach_timebase_info, 1); assert.equal(report.calls._mach_absolute_time, 2); assert.equal(report.calls._gettimeofday, 1); assert.equal(report.calls._objc_msgSend, 3);
     assert.equal(report.calls._objc_allocateClassPair, 3); assert.equal(report.calls._objc_registerClassPair, 3); assert.equal(report.calls._class_addMethod, 19); assert.equal(report.calls._class_addIvar, 4); assert.equal(report.calls._class_addProtocol, 1); assert.equal(report.calls._realloc, 1);
+    assert.equal(report.calls.__ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEC1ERKS5_, 20); assert.equal(report.calls.__ZNSt3__112__next_primeEm, 2);
     assert.deepEqual(report.objc, { dynamicClasses: 3, registeredClasses: 4, selectors: 551, methods: 19, ivars: 4, instances: 0, protocols: 7 });
     assert.deepEqual(report.files.descriptorLimits, { soft: 256, hard: 256 });
    }

@@ -5,7 +5,7 @@ import { parseMachO, dyldFixups } from '../js/macho-loader.js';
 import { NativeVst3Guest } from '../js/native-vst3-runtime.js';
 import { readNativeVst3 } from '../js/native-vst3-input.js';
 import { writeZip } from '../js/archive.js';
-import { nativeFixture, nativePackage, nativeSelectorFixture, nativeObjCFixture, leb } from './support/native-vst3-fixture.js';
+import { nativeFixture, nativePackage, nativeSelectorFixture, nativeObjCFixture, nativeStringFixture, leb } from './support/native-vst3-fixture.js';
 import { loadNativeEngine } from '../js/native-vst3-engine.js';
 
 const require = createRequire(import.meta.url), uc = await require('../vendor/unicorn/unicorn.cjs')();
@@ -37,6 +37,21 @@ use(fixture, guest => {
  assert.throws(() => guest.allocate(33 << 20), /allocation/);
 });
 use(nativeFixture({ initializer: true }), guest => { guest.initialize(); assert.equal(guest.initialized, true); });
+for (const constructor of ['C1', 'C2']) use(nativeStringFixture(constructor), guest => {
+ guest.initialize(); assert.equal(guest.factoryInfo().classes[0].cid, '0c636f70696564000000000000000000');
+});
+use(fixture, guest => {
+ const source = guest.allocate(24), destination = guest.allocate(24), pointer = guest.allocate(32), representation = new Uint8Array(24), view = new DataView(representation.buffer);
+ guest.write(pointer, new TextEncoder().encode('a long string with 25 chars\0!'));
+ view.setBigUint64(0, 33n, true); view.setBigUint64(8, 28n, true); view.setBigUint64(16, BigInt(pointer), true);
+ guest.write(source, representation); guest.setRegister('RDI', destination); guest.setRegister('RSI', source);
+ assert.throws(() => guest.invokeImport({ name: '__ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEC1ERKS5_' }), error => error.details.kind === 'unsupported-libcpp');
+ view.setBigUint64(8, 27n, true); guest.write(source, representation);
+ assert.equal(guest.invokeImport({ name: '__ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEC1ERKS5_' }), destination);
+ const copied = guest.pointer(destination + 16); assert.notEqual(copied, pointer); assert.equal(guest.string(copied), 'a long string with 25 chars');
+ guest.setRegister('RDI', 100); assert.equal(guest.invokeImport({ name: '__ZNSt3__112__next_primeEm' }), 101);
+ guest.setRegister('RDI', 1n << 63n); assert.throws(() => guest.invokeImport({ name: '__ZNSt3__112__next_primeEm' }), error => error.details.kind === 'unsupported-libcpp');
+});
 use(nativeFixture({ bundleEntry: true }), guest => assert.throws(() => guest.initialize(), /CFBundle/));
 use(nativeFixture({ importName: '_malloc' }), guest => { assert.ok(guest.call(guest.export('_probe')) >= 0x30000000); assert.equal(guest.report().calls._malloc, 1); });
 use(nativeSelectorFixture(), guest => {

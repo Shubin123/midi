@@ -4,6 +4,7 @@ import { scanGuestIntegers } from './native-vst3-scanf.js';
 import { GuestMutexes } from './native-vst3-mutex.js';
 import { GuestFiles, GuestFileError } from './native-vst3-files.js';
 import { GuestObjC, objcImports } from './native-vst3-objc.js';
+import { copyGuestString, nextGuestPrime } from './native-vst3-libcpp.js';
 
 const IMAGE = 0x10000000, HEAP = 0x30000000, HEAP_SIZE = 32 << 20;
 const STACK = 0x40000000, STACK_SIZE = 1 << 20, IMPORTS = 0x50000000, IMPORT_SIZE = 1 << 20;
@@ -206,6 +207,18 @@ export class NativeVst3Guest {
     return { rax: 0, xmm0: base === 1 || base === -1 && Math.abs(exponent) === Infinity ? 1 : base ** exponent };
    }
    case '_malloc': case '__Znwm': case '__Znam': return this.allocate(destination);
+   case '__ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEC1ERKS5_':
+   case '__ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEC2ERKS5_': {
+    try { return copyGuestString(this, destination, source); }
+    catch (error) {
+     if (error instanceof WebAssembly.RuntimeError) this.poisoned = true;
+     throw new NativeExecutionError(error.message, { ...entry, kind: this.poisoned ? 'emulator-fault' : 'unsupported-libcpp' });
+    }
+   }
+   case '__ZNSt3__112__next_primeEm': {
+    try { return nextGuestPrime(this.argument64(0)); }
+    catch (error) { throw new NativeExecutionError(error.message, { ...entry, kind: 'unsupported-libcpp' }); }
+   }
    case '_realloc': {
     if (!destination) return this.allocate(source);
     if (!this.allocations.has(destination)) throw new NativeExecutionError('realloc received an unknown allocation');
