@@ -4,7 +4,11 @@ import { scanGuestIntegers } from './native-vst3-scanf.js';
 import { GuestMutexes } from './native-vst3-mutex.js';
 import { GuestFiles, GuestFileError } from './native-vst3-files.js';
 import { GuestObjC, objcImports } from './native-vst3-objc.js';
-import { copyGuestString, nextGuestPrime } from './native-vst3-libcpp.js';
+import { GuestStrings, guestStringImport, nextGuestPrime } from './native-vst3-libcpp.js';
+import { GuestLocales, localeImports } from './native-vst3-locale.js';
+import { GuestCoreFoundation, coreImports, coreStringConstants, coreCallbackConstants } from './native-vst3-corefoundation.js';
+import { GuestStdio, stdioImports, stdioGlobals } from './native-vst3-stdio.js';
+import { GuestThreadStorage, tlsImports } from './native-vst3-tls.js';
 
 const IMAGE = 0x10000000, HEAP = 0x30000000, HEAP_SIZE = 32 << 20;
 const STACK = 0x40000000, STACK_SIZE = 1 << 20, IMPORTS = 0x50000000, IMPORT_SIZE = 1 << 20;
@@ -30,8 +34,13 @@ export class NativeVst3Guest {
   this.imports = new Map(); this.importNames = new Map(); this.calls = new Map(); this.allocations = new Map(); this.destructors = []; this.uuids = new Map();
   this.heapTop = HEAP; this.initialized = false; this.initializersCompleted = 0; this.factory = 0; this.hooks = [];
   this.mutexes = new GuestMutexes(this);
+  this.threadStorage = new GuestThreadStorage(this);
   this.files = new GuestFiles(files);
   this.objc = new GuestObjC(this);
+  this.locales = new GuestLocales(this);
+  this.strings = new GuestStrings(this);
+  this.core = new GuestCoreFoundation(this);
+  this.stdio = new GuestStdio(this);
   this.monotonicClock = monotonicClock; this.wallClock = wallClock; this.lastTick = 0n;
   this.engine = new uc.Unicorn(uc.ARCH_X86, uc.MODE_64);
   try {
@@ -94,15 +103,16 @@ export class NativeVst3Guest {
  isExecutable(address) {
   return this.imports.has(address) || this.image.segments.some(segment => segment.protection & 4 && address >= segment.address + this.slide && address < segment.address + this.slide + segment.size);
  }
- floatingRegister(index = 0) {
-  if (!Number.isInteger(index) || index < 0 || index > 7) throw new NativeExecutionError('Invalid floating register');
+ floatingRegister(index = 0, bits = 64) {
+  if (!Number.isInteger(index) || index < 0 || index > 7 || ![32, 64].includes(bits)) throw new NativeExecutionError('Invalid floating register');
   const bytes = this.engine.reg_read(this.uc[`X86_REG_XMM${index}`], 16);
-  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getFloat64(0, true);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength); return bits === 32 ? view.getFloat32(0, true) : view.getFloat64(0, true);
  }
- setFloatingRegister(index, value) {
-  if (!Number.isInteger(index) || index < 0 || index > 7) throw new NativeExecutionError('Invalid floating register');
+ setFloatingRegister(index, value, bits = 64) {
+  if (!Number.isInteger(index) || index < 0 || index > 7 || ![32, 64].includes(bits)) throw new NativeExecutionError('Invalid floating register');
   const bytes = this.engine.reg_read(this.uc[`X86_REG_XMM${index}`], 16);
-  new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).setFloat64(0, value, true);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (bits === 32) view.setFloat32(0, value, true); else view.setFloat64(0, value, true);
   this.engine.reg_write(this.uc[`X86_REG_XMM${index}`], bytes);
  }
  argument64(index) {
@@ -133,6 +143,26 @@ export class NativeVst3Guest {
   if (kind === 'weak' && this.image.symbols.has(name)) return this.image.symbols.get(name) + this.slide;
   const key = `${ordinal}:${name}`;
   if (this.importNames.has(key)) return this.importNames.get(key);
+  if (name === '__DefaultRuneLocale') {
+   const address = this.locales.runeLocale(); this.importNames.set(key, address); return address;
+  }
+  if (stdioGlobals.has(name)) {
+   const address = this.stdio.global(name); this.importNames.set(key, address); return address;
+  }
+  if (coreCallbackConstants.has(name)) {
+   const address = this.core.callbacksGlobal(name); this.importNames.set(key, address); return address;
+  }
+  if (coreStringConstants.has(name)) {
+   const address = this.core.constantGlobal(name); this.importNames.set(key, address); return address;
+  }
+  if (name === '_kCFAllocatorNull') {
+   const address = this.core.nullAllocatorGlobal(); this.importNames.set(key, address); return address;
+  }
+  if (name === '_CGAffineTransformIdentity') {
+   const address = this.allocate(48), bytes = new Uint8Array(48), view = new DataView(bytes.buffer);
+   view.setFloat64(0, 1, true); view.setFloat64(24, 1, true); this.write(address, bytes);
+   this.importNames.set(key, address); return address;
+  }
   if (name === '___stack_chk_guard' || name === '_kCFAllocatorDefault') {
    const address = this.allocate(8);
    this.write(address, name === '___stack_chk_guard' ? crypto.getRandomValues(new Uint8Array(8)) : new Uint8Array(8));
@@ -149,6 +179,35 @@ export class NativeVst3Guest {
   const args = ['RDI', 'RSI', 'RDX', 'RCX', 'R8', 'R9'].map(name => this.register(name));
   const [destination, source, size] = args;
   this.calls.set(entry.name, (this.calls.get(entry.name) || 0) + 1);
+  if (stdioImports.has(entry.name) || entry.name.startsWith('__midi_stdio_')) {
+   try { return this.stdio.invoke(entry.name, args); }
+   catch (error) {
+    if (error instanceof GuestFileError) { const bytes = new Uint8Array(4); new DataView(bytes.buffer).setInt32(0, error.errno, true); this.write(this.errorPointer(), bytes); return ['_fread', '_fwrite'].includes(entry.name) ? 0 : -1; }
+    if (error instanceof WebAssembly.RuntimeError) this.poisoned = true;
+    throw new NativeExecutionError(error.message || String(error), { ...entry, kind: this.poisoned ? 'emulator-fault' : 'unsupported-stdio' });
+   }
+  }
+  if (coreImports.has(entry.name) || entry.name.startsWith('__midi_cf_') || entry.name === '_CFRelease' && this.core.objects.has(destination)) {
+   try { return entry.name === '_CFRelease' ? this.core.release(destination) : this.core.invoke(entry.name, args); }
+   catch (error) {
+    if (error instanceof WebAssembly.RuntimeError) this.poisoned = true;
+    throw new NativeExecutionError(error.message || String(error), { ...entry, kind: this.poisoned ? 'emulator-fault' : 'unsupported-corefoundation' });
+   }
+  }
+  if (guestStringImport(entry.name)) {
+   try { return this.strings.invoke(entry.name, args); }
+   catch (error) {
+    if (error instanceof WebAssembly.RuntimeError) this.poisoned = true;
+    throw new NativeExecutionError(error.message || String(error), { ...entry, kind: this.poisoned ? 'emulator-fault' : 'unsupported-libcpp' });
+   }
+  }
+  if (localeImports.has(entry.name) || entry.name.startsWith('__midi_locale_')) {
+   try { return entry.name.startsWith('__midi_locale_') ? this.locales.virtual(entry.name, args) : this.locales.invoke(entry.name, args); }
+   catch (error) {
+    if (error instanceof WebAssembly.RuntimeError) this.poisoned = true;
+    throw new NativeExecutionError(error.message || String(error), { ...entry, kind: this.poisoned ? 'emulator-fault' : 'unsupported-locale' });
+   }
+  }
   if (objcImports.has(entry.name)) {
    try { return this.objc.invoke(entry.name, args); }
    catch (error) {
@@ -169,6 +228,11 @@ export class NativeVst3Guest {
    }
   }
   if (unaryMath.has(entry.name)) return { rax: 0, xmm0: unaryMath.get(entry.name)(this.floatingRegister()) };
+  if (tlsImports.has(entry.name)) {
+   try { return this.threadStorage.invoke(entry.name, destination, source); }
+   catch (error) { throw new NativeExecutionError(error.message || String(error), { ...entry, kind: 'unsupported-threading' }); }
+  }
+  if (entry.name.endsWith('f') && unaryMath.has(entry.name.slice(0, -1))) return { rax: 0, xmm0f: Math.fround(unaryMath.get(entry.name.slice(0, -1))(this.floatingRegister(0, 32))) };
   if (entry.name.startsWith('_pthread_mutex')) {
    try {
     const result = this.mutexes.invoke(entry.name, destination, source);
@@ -202,19 +266,17 @@ export class NativeVst3Guest {
     return 0;
    }
    case '_exp2': return { rax: 0, xmm0: 2 ** this.floatingRegister() };
+   case '___exp10': return { rax: 0, xmm0: 10 ** this.floatingRegister() };
+   case '_exp2f': case '___exp10f': return { rax: 0, xmm0f: Math.fround((entry.name === '_exp2f' ? 2 : 10) ** this.floatingRegister(0, 32)) };
+   case '_powf': {
+    const base = this.floatingRegister(0, 32), exponent = this.floatingRegister(1, 32);
+    return { rax: 0, xmm0f: Math.fround(base === 1 || base === -1 && Math.abs(exponent) === Infinity ? 1 : base ** exponent) };
+   }
    case '_pow': {
     const base = this.floatingRegister(), exponent = this.floatingRegister(1);
     return { rax: 0, xmm0: base === 1 || base === -1 && Math.abs(exponent) === Infinity ? 1 : base ** exponent };
    }
    case '_malloc': case '__Znwm': case '__Znam': return this.allocate(destination);
-   case '__ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEC1ERKS5_':
-   case '__ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEC2ERKS5_': {
-    try { return copyGuestString(this, destination, source); }
-    catch (error) {
-     if (error instanceof WebAssembly.RuntimeError) this.poisoned = true;
-     throw new NativeExecutionError(error.message, { ...entry, kind: this.poisoned ? 'emulator-fault' : 'unsupported-libcpp' });
-    }
-   }
    case '__ZNSt3__112__next_primeEm': {
     try { return nextGuestPrime(this.argument64(0)); }
     catch (error) { throw new NativeExecutionError(error.message, { ...entry, kind: 'unsupported-libcpp' }); }
@@ -234,7 +296,43 @@ export class NativeVst3Guest {
    case '_memset': fill(destination, size, source); return destination;
    case '_bzero': case '___bzero': fill(destination, source); return 0;
    case '_memcpy': case '_memmove': this.write(destination, this.read(source, size)); return destination;
+   case '_memcmp': {
+    if (!size) return 0;
+    const left = this.read(destination, size), right = this.read(source, size);
+    for (let index = 0; index < size; index++) if (left[index] !== right[index]) return left[index] - right[index];
+    return 0;
+   }
+   case '_memchr': {
+    if (!size) return 0;
+    const index = this.read(destination, size).indexOf(source & 255); return index < 0 ? 0 : destination + index;
+   }
+   case '_strcmp': case '_strncmp': {
+    const length = entry.name === '_strncmp' ? size : 1 << 20;
+    if (!Number.isSafeInteger(length) || length < 0 || length > 1 << 20) throw new NativeExecutionError('Guest string comparison exceeds limit');
+    for (let index = 0; index < length; index++) {
+     const left = this.read(destination + index, 1)[0], right = this.read(source + index, 1)[0];
+     if (left !== right) return left - right;
+     if (!left) return 0;
+    }
+    if (entry.name === '_strcmp') throw new NativeExecutionError('Unterminated guest string comparison');
+    return 0;
+   }
+   case '_strchr': case '_strrchr': {
+    const bytes = this.stringBytes(destination, 1 << 20), character = source & 255;
+    if (!character) return destination + bytes.length;
+    const index = entry.name === '_strchr' ? bytes.indexOf(character) : bytes.lastIndexOf(character); return index < 0 ? 0 : destination + index;
+   }
    case '_strlen': return this.stringBytes(destination).length;
+   case '_atoi': {
+    const bytes = this.stringBytes(destination, 1 << 20); let index = 0, sign = 1n, value = 0n;
+    while (index < bytes.length && [9, 10, 11, 12, 13, 32].includes(bytes[index])) index++;
+    if (bytes[index] === 43 || bytes[index] === 45) { if (bytes[index] === 45) sign = -1n; index++; }
+    while (index < bytes.length && bytes[index] >= 48 && bytes[index] <= 57) {
+     value = value * 10n + BigInt(bytes[index++] - 48);
+     if (value > (sign < 0n ? 2147483648n : 2147483647n)) throw new NativeExecutionError('atoi exceeds signed 32-bit range');
+    }
+    return value * sign;
+   }
    case '_strcpy': case '_strcat': {
     const sourceBytes = this.stringBytes(source, 1 << 20), bytes = new Uint8Array(sourceBytes.length + 1);
     const offset = entry.name === '_strcat' ? this.stringBytes(destination, 1 << 20).length : 0;
@@ -358,8 +456,13 @@ export class NativeVst3Guest {
   if (!this.engine) throw new NativeExecutionError('Guest is closed');
   if (this.poisoned) throw new NativeExecutionError('The emulator faulted; start a fresh worker');
   if (!Number.isSafeInteger(instructionBudget) || instructionBudget <= 0 || instructionBudget > 10000000 || !Number.isFinite(milliseconds) || milliseconds <= 0 || milliseconds > 10000) throw new NativeExecutionError('Invalid execution limits');
-  const stack = STACK + STACK_SIZE - 8;
+  if (!Array.isArray(args) || args.length > 64 || args.some(value => typeof value !== 'bigint' && !Number.isSafeInteger(value) || BigInt(value) < -(1n << 63n) || BigInt(value) > 0xffffffffffffffffn)) throw new NativeExecutionError('Invalid guest call arguments');
+  const stack = STACK + STACK_SIZE - 8 - Math.ceil(Math.max(0, args.length - 6) / 2) * 16;
   this.writePointer(stack, RETURN); this.setRegister('RSP', stack);
+  for (let index = 6; index < args.length; index++) {
+   const bytes = new Uint8Array(8); new DataView(bytes.buffer).setBigUint64(0, BigInt.asUintN(64, BigInt(args[index])), true);
+   this.write(stack + 8 + (index - 6) * 8, bytes);
+  }
   for (const [index, name] of ['RDI', 'RSI', 'RDX', 'RCX', 'R8', 'R9'].entries()) this.setRegister(name, args[index] || 0);
   this.setRegister('RIP', address);
   const deadline = performance.now() + milliseconds;
@@ -389,6 +492,7 @@ export class NativeVst3Guest {
    this.setRegister('RAX', BigInt.asUintN(64, BigInt(typeof result === 'object' ? result.rax : result)));
    if (typeof result === 'object' && result.rdx !== undefined) this.setRegister('RDX', result.rdx);
    if (typeof result === 'object' && result.xmm0 !== undefined) this.setFloatingRegister(0, result.xmm0);
+   if (typeof result === 'object' && result.xmm0f !== undefined) this.setFloatingRegister(0, result.xmm0f, 32);
    if (typeof result === 'object' && result.xmm1 !== undefined) this.setFloatingRegister(1, result.xmm1);
    if (typeof result === 'object' && result.zeroVectors) for (const index of [0, 1]) this.engine.reg_write(this.uc[`X86_REG_XMM${index}`], new Uint8Array(16));
    this.setRegister('RIP', returnAddress);

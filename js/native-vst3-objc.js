@@ -1,8 +1,11 @@
+import { GuestFileError } from './native-vst3-files.js';
+
 const MAX_CLASSES = 256, MAX_SELECTORS = 4096, MAX_METHODS = 16384, MAX_OBJECT = 1 << 20;
 const align = (value, alignment) => Math.ceil(value / alignment) * alignment;
 const encoder = new TextEncoder();
 
 export const objcImports = new Set([
+ '_objc_autoreleasePoolPush', '_objc_autoreleasePoolPop',
  '_objc_allocateClassPair', '_objc_registerClassPair', '_objc_disposeClassPair', '_objc_getClass', '_objc_lookUpClass', '_objc_getMetaClass',
  '_object_getClass', '_object_getIndexedIvars', '_class_getSuperclass', '_class_getName', '_class_isMetaClass', '_class_getInstanceSize',
  '_class_addIvar', '_class_getInstanceVariable', '_ivar_getOffset', '_ivar_getName', '_ivar_getTypeEncoding',
@@ -19,7 +22,7 @@ export class GuestObjCError extends Error {
 export class GuestObjC {
  constructor(memory) {
   this.memory = memory; this.classes = new Map(); this.names = new Map(); this.selectors = new Map();
-  this.methods = new Map(); this.ivars = new Map(); this.objects = new Map(); this.protocols = new Map(); this.protocolNames = new Map(); this.root = 0;
+  this.methods = new Map(); this.ivars = new Map(); this.objects = new Map(); this.protocols = new Map(); this.protocolNames = new Map(); this.root = 0; this.pools = [];
  }
  cstring(value) {
   const bytes = encoder.encode(`${value}\0`), address = this.memory.allocate(bytes.length);
@@ -95,6 +98,13 @@ export class GuestObjC {
  }
  klass(handle) {
   if (!this.classes.has(handle) && this.memory.imports.get(handle)?.name === '_OBJC_CLASS_$_NSObject') this.rootClass();
+  if (!this.classes.has(handle) && this.memory.imports.get(handle)?.name === '_OBJC_CLASS_$_NSString') {
+   const root = this.rootClass(), meta = this.memory.allocate(40), namePointer = this.cstring('NSString');
+   this.memory.write(meta, new Uint8Array(40)); this.memory.writePointer(meta, root.metaclass); this.memory.writePointer(meta + 8, root.metaclass);
+   this.classes.set(handle, { handle, name: 'NSString', namePointer, superclass: root.handle, metaclass: meta, size: 8, registered: true, builtin: true, foundation: 'NSString', methods: new Map(), ivars: new Map(), protocols: new Set() });
+   this.classes.set(meta, { handle: meta, name: 'NSString', namePointer, superclass: root.metaclass, metaclass: root.metaclass, size: 40, registered: true, builtin: true, meta: true, methods: new Map(), ivars: new Map(), protocols: new Set() });
+   this.names.set('NSString', handle);
+  }
   const record = this.classes.get(handle);
   if (!record) throw new GuestObjCError('Unknown Objective-C class', { receiver: `0x${handle.toString(16)}` });
   return record;
@@ -172,10 +182,57 @@ export class GuestObjC {
   if (this.objects.has(receiver)) return this.objects.get(receiver).classHandle;
   return this.klass(receiver).metaclass;
  }
+ autorelease(handle) {
+  if (!this.pools.length) throw new GuestObjCError('Autorelease requires a guest pool');
+  if (this.pools.at(-1).entries.length >= 65536) throw new GuestObjCError('Autorelease pool entry limit exceeded');
+  this.pools.at(-1).entries.push(handle); return handle;
+ }
+ releaseString(handle) {
+  const object = this.objects.get(handle);
+  if (!object || !object.references) throw new GuestObjCError('Invalid NSString release');
+  if (--object.references === 0) {
+   if (object.utf8) this.memory.allocations.delete(object.utf8);
+   this.objects.delete(handle); this.memory.allocations.delete(handle);
+  }
+  return 0;
+ }
+ stringMessage(receiver, name, record, object) {
+  const argument = this.memory.register('RDX');
+  const initialize = (handle, bytes) => {
+   const value = new TextDecoder('utf-8', { fatal: true }).decode(bytes), instance = this.objects.get(handle), storage = new Uint8Array(bytes.length + 1);
+   storage.set(bytes); const pointer = this.memory.allocate(storage.length); this.memory.write(pointer, storage);
+   if (instance.utf8) this.memory.allocations.delete(instance.utf8);
+   instance.text = value; instance.utf8 = pointer; instance.references ??= 1; return handle;
+  };
+  if (!object && name === 'stringWithUTF8String:') return this.autorelease(initialize(this.instance(record.handle, 0), this.memory.stringBytes(argument, 1 << 20)));
+  if (!object) return undefined;
+  if (name === 'initWithUTF8String:') return initialize(receiver, this.memory.stringBytes(argument, 1 << 20));
+  if (name === 'init') return initialize(receiver, new Uint8Array());
+  if (object.text === undefined) return undefined;
+  switch (name) {
+   case 'UTF8String': return object.utf8;
+   case 'length': return object.text.length;
+   case 'retain': case 'copy':
+    if (object.references >= 65536) throw new GuestObjCError('NSString reference limit exceeded');
+    object.references++; return receiver;
+   case 'retainCount': return object.references;
+   case 'release': return this.releaseString(receiver);
+   case 'autorelease': return this.autorelease(receiver);
+   case 'isEqualToString:': return this.objects.get(argument)?.text === object.text ? 1 : 0;
+  }
+ }
  message(receiver, selector, start = null) {
   if (!receiver) return { rax: 0, rdx: 0, zeroVectors: true };
   const name = this.memory.string(selector), canonical = this.selector(name);
   this.memory.setRegister('RSI', canonical);
+  if (this.memory.imports.get(receiver)?.name === '_OBJC_CLASS_$_NSDictionary' && name === 'dictionaryWithContentsOfFile:') {
+   const path = this.objects.get(this.memory.register('RDX'))?.text;
+   if (path === undefined) throw new GuestObjCError('Dictionary file path must be a supported NSString');
+   let descriptor;
+   try { descriptor = this.memory.files.open(path, 0); }
+   catch (error) { if (error instanceof GuestFileError && error.errno === 2) return 0; throw error; }
+   this.memory.files.close(descriptor); throw new GuestObjCError('Property-list parsing is not implemented for mounted dictionary files');
+  }
   const object = this.objects.get(receiver), record = object ? this.klass(object.classHandle) : this.klass(receiver);
   const lookup = start || (object ? record : this.klass(record.metaclass));
   if (!record.registered) throw new GuestObjCError('Message sent to an unregistered Objective-C class');
@@ -185,6 +242,7 @@ export class GuestObjC {
   }
   const method = this.lookup(lookup, name);
   if (method) return { tailCall: method.implementation };
+  if (record.foundation === 'NSString') { const result = this.stringMessage(receiver, name, record, object); if (result !== undefined) return result; }
   let builtin = false;
   for (let current = lookup; current; current = current.superclass ? this.klass(current.superclass) : null) if (current.builtin) builtin = true;
   if (builtin) {
@@ -204,11 +262,26 @@ export class GuestObjC {
   const method = address => { const record = this.methods.get(address); if (!record) throw new GuestObjCError('Unknown Objective-C method'); return record; };
   const ivar = address => { const record = this.ivars.get(address); if (!record) throw new GuestObjCError('Unknown Objective-C ivar'); return record; };
   switch (name) {
+   case '_objc_autoreleasePoolPush': {
+    if (this.pools.length >= 256) throw new GuestObjCError('Autorelease pool nesting limit exceeded');
+    const token = this.memory.allocate(8); this.memory.write(token, new Uint8Array(8)); this.pools.push({ token, entries: [] }); return token;
+   }
+   case '_objc_autoreleasePoolPop': {
+    const index = this.pools.findIndex(pool => pool.token === first); if (index < 0) throw new GuestObjCError('Invalid autorelease pool token');
+    for (const pool of this.pools.splice(index).reverse()) {
+     for (const handle of pool.entries.reverse()) this.releaseString(handle);
+     this.memory.allocations.delete(pool.token);
+    }
+    return 0;
+   }
    case '_objc_allocateClassPair': return this.allocate(first, string(second), third);
    case '_objc_registerClassPair': return this.register(first);
    case '_objc_disposeClassPair': return this.disposeClass(first);
    case '_objc_getClass': case '_objc_lookUpClass': case '_objc_getMetaClass': {
     const requested = string(first); if (requested === 'NSObject') this.rootClass();
+    if (requested === 'NSString' && !this.names.has(requested)) {
+     const imported = [...this.memory.imports].find(([, entry]) => entry.name === '_OBJC_CLASS_$_NSString'); if (imported) this.klass(imported[0]);
+    }
     const record = this.classes.get(this.names.get(requested));
     if (!record && [...this.memory.imports.values()].some(entry => entry.name === `_OBJC_CLASS_$_${requested}`)) throw new GuestObjCError(`Imported Foundation class is not implemented: ${requested}`);
     if (!record?.registered) return 0;

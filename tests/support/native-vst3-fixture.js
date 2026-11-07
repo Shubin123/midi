@@ -77,6 +77,21 @@ export function nativeSelectorFixture() {
  return bytes;
 }
 
+export function nativeLocaleFixture() {
+ const importNames = ['__ZNSt3__16localeC1Ev', '__ZNSt3__15ctypeIcE2idE', '__ZNKSt3__16locale9use_facetERNS0_2idE', '__ZNSt3__16localeD1Ev', '__DefaultRuneLocale'];
+ const bytes = nativeFixture({ importNames, initializer: true }), view = new DataView(bytes.buffer);
+ let offset = 0x380;
+ const emit = values => { bytes.set(values, offset); offset += values.length; };
+ const relative = (prefix, address) => { emit(prefix); view.setInt32(offset, address - offset - 4, true); offset += 4; };
+ const call = index => relative([0xff, 0x15], 0x1600 + index * 8);
+ emit([0x48, 0x83, 0xec, 8]); relative([0x48, 0x8d, 0x3d], 0x1550); call(0);
+ relative([0x48, 0x8d, 0x3d], 0x1550); relative([0x48, 0x8b, 0x35], 0x1608); call(2);
+ emit([0x48, 0x89, 0xc7, 0x48, 0x8b, 0x00, 0xbe, 97, 0, 0, 0, 0xff, 0x50, 16]); relative([0x88, 0x05], 0x1404);
+ relative([0x48, 0x8d, 0x3d], 0x1550); call(3);
+ relative([0x48, 0x8b, 0x05], 0x1620); emit([0x8b, 0x80, 0x40, 1, 0, 0]); relative([0x89, 0x05], 0x1400);
+ emit([0x48, 0x83, 0xc4, 8, 0xc3]); return bytes;
+}
+
 export function nativeObjCFixture() {
  const importNames = ['_objc_getClass', '_objc_allocateClassPair', '_class_addMethod', '_objc_registerClassPair', '_class_createInstance', '_sel_registerName', '_objc_msgSend'];
  const bytes = nativeFixture({ importNames, initializer: true }), view = new DataView(bytes.buffer), encoder = new TextEncoder();

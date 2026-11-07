@@ -1571,10 +1571,12 @@ The synth's existing WebAssembly plugin/audio path is unchanged.
 classes. It deliberately skips initialization, and both class IDs are zero.
 Normal startup passes the previous emulator crash, parses the class IDs, and
 executes mutex, math, guest resource-limit, clock and dynamic Objective-C
-registration imports, plus libc++ string copying and hash-table prime sizing.
-It completes 347 of 768 initializers, then stops at the unsupported libc++
-locale constructor. Generated fixtures also verify
-actual guest Objective-C method dispatch in the browser.
+registration imports, libc++ strings/locales, Darwin character tables, embedded
+font metadata/ownership, CoreFoundation strings/numbers/dictionaries, autorelease
+pools and thread-local key creation. **All 768 static initializers complete in
+the browser.** Startup then stops explicitly because the CFBundle compatibility
+layer for `bundleEntry` is still missing. Generated fixtures also verify actual
+guest Objective-C and locale-facet method dispatch in the browser.
 **Arcade does not play audio.**
 The report always says `playable: false`; passing the harness tests does not
 certify native plugin playback.

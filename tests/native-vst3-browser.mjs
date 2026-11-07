@@ -6,7 +6,7 @@ try {
  await browser.open('tools/native-vst3.html');
  const checks = await browser.evaluate(`(async () => {
   const { probeNativeVst3 } = await import('../js/native-vst3-probe.js');
-  const { nativeFixture, nativePackage, nativeScanFixture, nativeMutexFixture, nativeLimitFixture, nativeObjCFixture, nativeStringFixture } = await import('../tests/support/native-vst3-fixture.js');
+  const { nativeFixture, nativePackage, nativeScanFixture, nativeMutexFixture, nativeLimitFixture, nativeObjCFixture, nativeStringFixture, nativeLocaleFixture } = await import('../tests/support/native-vst3-fixture.js');
   const file = new File([nativeFixture()], 'fixture');
   const checks = [];
   const check = (name, ok) => checks.push({ name, ok });
@@ -25,6 +25,8 @@ try {
   const objectiveC = await probeNativeVst3(new File([nativeObjCFixture()], 'objc-fixture'));
   const stringCopy = await probeNativeVst3(new File([nativeStringFixture()], 'string-fixture'));
   check('native libc++ string copy constructor writes an independent object in the worker', stringCopy.initialized && stringCopy.factory?.classes[0].cid === '0c636f70696564000000000000000000');
+  const locale = await probeNativeVst3(new File([nativeLocaleFixture()], 'locale-fixture'));
+  check('native locale facet dispatch and Darwin rune-table reads execute in the worker', locale.initialized && locale.factory?.classes[0].cid === '0a89050041060708090a0b0c0d0e0f10');
   check('native initializer creates a class and executes its x86 method through Objective-C dispatch', objectiveC.initialized && objectiveC.factory?.classes[0].cid === '2a00000005060708090a0b0c0d0e0f10' && objectiveC.objc.dynamicClasses === 1 && objectiveC.objc.methods === 1 && objectiveC.objc.instances === 1);
   const unsupported = await probeNativeVst3(new File([nativeFixture({ code: [0x0f, 0x05, 0xc3], initializer: true })], 'syscall'));
   check('unsupported startup fails explicitly instead of faking success', unsupported.error?.kind === 'syscall' && unsupported.stage === 'initializers' && !unsupported.playable && !unsupported.initialized);
@@ -46,8 +48,14 @@ try {
   const { nodeId } = await browser.page('DOM.querySelector', { nodeId: root.nodeId, selector: '#plugin' });
   await browser.page('DOM.setFileInputFiles', { nodeId, files: [process.env.ARCADE_PKG] });
   for (const mode of ['factory', 'startup']) {
-   await browser.evaluate(`document.querySelector('#${mode}').click()`);
-   const report = await browser.evaluate(`new Promise((resolve, reject) => {
+   let report;
+   if (mode === 'startup') report = await browser.evaluate(`(async () => {
+    const { probeNativeVst3 } = await import('../js/native-vst3-probe.js');
+    return probeNativeVst3(document.querySelector('#plugin').files[0], { timeout: 120000 });
+   })()`, { timeout: 125000 });
+   else {
+    await browser.evaluate(`document.querySelector('#${mode}').click()`);
+    report = await browser.evaluate(`new Promise((resolve, reject) => {
     const start = Date.now();
     const poll = () => {
      const output = document.querySelector('#result').textContent;
@@ -55,24 +63,28 @@ try {
      if (Date.now() - start > 35000) return reject(new Error(document.querySelector('#status').textContent));
      setTimeout(poll, 50);
     }; poll();
-   })`);
+    })`);
+   }
    assert.equal(report.playable, false);
    if (mode === 'factory') {
     assert.equal(report.factory.vendor, 'Output'); assert.equal(report.factory.classes[0].name, 'Arcade');
     assert.equal(report.initialized, false); assert.equal(report.initializerCount, 768);
     assert.ok(report.calls.__Znwm > 0 && report.calls._memcpy > 0);
    } else {
-    assert.equal(report.stage, 'initializers'); assert.equal(report.error.kind, 'unsupported-import');
-    assert.equal(report.error.name, '__ZNSt3__16localeC1Ev'); assert.equal(report.initializersCompleted, 347);
-    assert.equal(report.calls._CFUUIDCreate, 1); assert.equal(report.calls._CFUUIDGetUUIDBytes, 1); assert.equal(report.calls._CFRelease, 1);
+    assert.equal(report.stage, 'initializers'); assert.equal(report.error.kind, 'unsupported-bundle-entry');
+    assert.equal(report.initializersCompleted, 768); assert.equal(report.initializerCount, 768); assert.equal(report.initialized, false);
+    assert.equal(report.calls._CFUUIDCreate, 1); assert.equal(report.calls._CFUUIDGetUUIDBytes, 1); assert.equal(report.calls._CFRelease, 49);
     assert.equal(report.calls._sprintf, 22); assert.equal(report.calls._strcpy, 2); assert.equal(report.calls._strcat, 20); assert.equal(report.calls._sscanf, 2);
-    assert.equal(report.calls._pthread_mutex_init, 16); assert.equal(report.calls._pthread_mutex_lock, 3589); assert.equal(report.calls._pthread_mutex_unlock, 3589);
+    assert.equal(report.calls._pthread_mutex_init, 37); assert.equal(report.calls._pthread_mutex_lock, 6680); assert.equal(report.calls._pthread_mutex_unlock, 6680);
     assert.equal(report.calls._exp2, 378); assert.equal(report.calls._pow, 8237); assert.equal(report.calls._tan, 15);
     assert.equal(report.calls._getrlimit, 9); assert.equal(report.calls._setrlimit, 9);
-    assert.equal(report.calls._mach_timebase_info, 1); assert.equal(report.calls._mach_absolute_time, 2); assert.equal(report.calls._gettimeofday, 1); assert.equal(report.calls._objc_msgSend, 3);
+    assert.equal(report.calls._mach_timebase_info, 1); assert.equal(report.calls._mach_absolute_time, 4); assert.equal(report.calls._gettimeofday, 2); assert.equal(report.calls._objc_msgSend, 27);
     assert.equal(report.calls._objc_allocateClassPair, 3); assert.equal(report.calls._objc_registerClassPair, 3); assert.equal(report.calls._class_addMethod, 19); assert.equal(report.calls._class_addIvar, 4); assert.equal(report.calls._class_addProtocol, 1); assert.equal(report.calls._realloc, 1);
-    assert.equal(report.calls.__ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEC1ERKS5_, 20); assert.equal(report.calls.__ZNSt3__112__next_primeEm, 2);
-    assert.deepEqual(report.objc, { dynamicClasses: 3, registeredClasses: 4, selectors: 551, methods: 19, ivars: 4, instances: 0, protocols: 7 });
+    assert.equal(report.calls.__ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEC1ERKS5_, 24); assert.equal(report.calls.__ZNSt3__112__next_primeEm, 16);
+    assert.equal(report.calls.__ZNSt3__16localeC1Ev, 1); assert.equal(report.calls.__ZNKSt3__16locale9use_facetERNS0_2idE, 2);
+    for (const name of ['_CFDataCreateWithBytesNoCopy', '_CGDataProviderCreateWithCFData', '_CGFontCreateWithDataProvider', '_CTFontManagerRegisterGraphicsFont', '_CTFontCreateWithGraphicsFont', '_CFNumberCreate', '_CFDictionaryCreate', '_objc_autoreleasePoolPush', '_objc_autoreleasePoolPop']) assert.equal(report.calls[name], 12, name);
+    assert.equal(report.calls._CFStringGetBytes, 48); assert.equal(report.calls.___exp10f, 3); assert.equal(report.calls._pthread_key_create, 1);
+    assert.deepEqual(report.objc, { dynamicClasses: 3, registeredClasses: 5, selectors: 551, methods: 19, ivars: 4, instances: 0, protocols: 7 });
     assert.deepEqual(report.files.descriptorLimits, { soft: 256, hard: 256 });
    }
    console.log(`Arcade ${mode}: ${JSON.stringify(report)}`);

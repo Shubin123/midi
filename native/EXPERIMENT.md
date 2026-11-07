@@ -67,7 +67,7 @@ In **Chrome**, with the package selected directly from disk:
 4. The patched emulator passes the previous Wasm memory-out-of-bounds crash.
    Integer scanning now parses the actual formatted class IDs. Initialization
    executes 22 `sprintf`, two `strcpy`, 20 `strcat`, and two `sscanf` calls.
-5. Sixteen mutexes are initialized; 3,589 lock/unlock pairs execute using tracked
+5. Thirty-seven mutexes are initialized; 6,680 lock/unlock pairs execute using tracked
    single-threaded ownership/depth, not unconditional-success stubs. Floating
    imports execute 378 `exp2`, 8,237 `pow`, and 15 `tan` calls through the SSE ABI.
 6. Nine `getrlimit`/`setrlimit` attempts run against an actual bounded guest
@@ -79,10 +79,19 @@ In **Chrome**, with the package selected directly from disk:
    and four ivars. The bridge canonicalizes 551 selectors and reads seven
    protocol definitions, including the adopted `NSPasteboardItemDataProvider`.
    A tracked `realloc` also executes.
-8. Twenty libc++ string copy constructors and two hash-table prime-sizing calls
-   execute. **347 of 768 initializers complete.** Startup then stops explicitly
-   at the libc++ locale constructor `__ZNSt3__16localeC1Ev`.
-   This remains a startup failure, not a playable conversion.
+8. Twenty-four libc++ string copy constructors, 16 hash-table prime-sizing calls,
+   classic C locale construction/copying and real ctype/collate facet dispatch
+   execute. Imported `_DefaultRuneLocale` supplies the Darwin ASCII tables.
+9. Twelve embedded fonts load through retained CFData/provider/font objects.
+   Bounded SFNT parsing supplies actual font names, units and metrics; UTF-8
+   conversion, CFNumber/dictionary creation and autorelease pools execute.
+   The absent guest `/System/Library/CoreServices/SystemVersion.plist` returns
+   nil through a filesystem lookup, not an unconditional Foundation stub.
+10. Three single-precision `__exp10f` calls and one pthread key creation run.
+    **All 768 static initializers complete**, verified in Node and Chrome.
+    Startup then stops explicitly at the missing CFBundle layer for `bundleEntry`.
+    `initialized` and `playable` remain false: static initialization alone is
+    neither full plugin startup nor a playable conversion.
 
 The old published engine faulted at last CPU entry `0x100412c3`. Source
 profiling and ASAN isolated a TCI adapter temporary-lifetime leak: helper-call
@@ -109,8 +118,8 @@ No licensing checks are patched or suppressed.
 - Segment permissions and zero-filled BSS are modeled. Imports have explicit
   implementations or fail; unknown framework functions are never replaced by
   silent successful no-ops. Imported data also traps when unsupported.
-- Only a small single-threaded libc/C++ bridge and default-allocator/UUID
-  operations are supplied. Allocation is a bounded bump allocator; frees
+- A bounded single-threaded libc/C++ and CoreFoundation subset
+  is supplied. Allocation is a bounded bump allocator; frees
   retire records but do not reclaim space. `realloc` preserves contents when
   growing, tracks shrinking, and preserves the original on allocation failure.
   Destructors are registered but the
@@ -124,10 +133,25 @@ No licensing checks are patched or suppressed.
   retain their inline representation; long strings get independent storage,
   including embedded NUL bytes and a terminating NUL. Contents are bounded to
   1 MiB and malformed sizes/capacities fail explicitly. Both C1/C2 constructor
-  entrypoints are supported, not general string mutation or locale operations.
+  entrypoints and bounded assignment, append, insert, erase, resize, reserve,
+  comparison and search operations are supported. Other string operations fail.
   `__next_prime` returns the lowest prime at least as large as its input, with
   the libc++ zero special case; requests above 2^24 fail explicitly instead of
   truncating 64-bit input or running an unbounded primality search.
+- Locales support only the classic C locale, shared ownership, ctype<char> and
+  collate<char> facets. Their callable guest vtables implement case conversion,
+  widening/narrowing, comparison, transformation and hashing. Darwin rune tables
+  provide ASCII classifications/case mappings; non-ASCII classification is zero.
+  Other facets, named locales and locale loading are not implemented.
+- CoreFoundation supports bounded data, UTF-8/ASCII strings, numbers and immutable
+  dictionaries with standard type callbacks or pointer identity. Font providers
+  retain their source data; SFNT table parsing supplies names and scaled hhea
+  metrics, not glyph rasterization or a complete CoreText implementation. Custom
+  allocators/callbacks, arbitrary CF objects and general Foundation remain unsupported.
+- Darwin FILE globals and bounded descriptor-backed stdio implement integer/string
+  printf and va_list calls, transfers, status flags and callbacks. Floating printf
+  remains unsupported. Calls accept at most 64 integer/pointer arguments, including
+  correctly aligned native stack arguments.
 - `sscanf` supports bounded ASCII integer conversions, field widths, assignment
   suppression, length modifiers and literal/whitespace matching. It writes the
   declared integer size through register/stack pointer arguments and reports
@@ -139,10 +163,14 @@ No licensing checks are patched or suppressed.
   Normal self-deadlock fails explicitly instead of claiming a lock was acquired.
   This only models one guest thread; it provides neither thread creation nor a
   cross-thread scheduler. Priority-ceiling protocols remain unsupported.
-- Scalar double math imports use full 16-byte XMM register reads/writes, with
+- Up to 512 pthread keys track full-width values for the single guest thread.
+  Creation records validated destructor addresses; deletion does not invoke them.
+  Thread exit/destructor execution and real thread creation remain unsupported.
+- Scalar double and selected single-precision math imports use full 16-byte XMM register reads/writes, with
   arguments in XMM0/XMM1 and results in XMM0. They provide numerical values, not
-  a complete macOS libm floating-exception/errno environment. Single-precision
-  and vector math entrypoints remain unsupported.
+  a complete macOS libm floating-exception/errno environment or last-bit libm
+  equivalence guarantee. Single-precision results round to float32; vector math
+  entrypoints remain unsupported.
 - The guest has a 256-slot descriptor table with real soft/hard limit
   enforcement, independent descriptor flags, shared open-file offsets on dup,
   64-bit seeking, close/read/write and a small fcntl subset. `RLIMIT_NOFILE`
@@ -165,8 +193,10 @@ No licensing checks are patched or suppressed.
   methods, aligned ivars, instances and protocol inheritance/conformance. Guest
   method dispatch preserves the native call stack, including nested calls and
   stack arguments. Nil sends clear integer and vector return registers. Only
-  a small NSObject fallback is supplied; Foundation, static class realization,
-  reference counting and autorelease remain unsupported. Custom `+initialize`
+  a small NSObject fallback and managed NSString subset are supplied, with
+  explicit retain/release and bounded nested autorelease pools. Missing-file
+  NSDictionary lookup returns nil; parsing existing property lists fails explicitly.
+  General Foundation and static class realization remain unsupported. Custom `+initialize`
   and C++ object lifecycle callbacks fail explicitly, as do unknown messages.
 - CPU instruction allowances and per-call elapsed-time checks are backed by
   a separate page-side worker watchdog (30 seconds by default). The watchdog
@@ -209,5 +239,15 @@ String tests verify inline/boundary/long copies, independent ownership, embedded
 NULs, invalid representations, both native constructor entrypoints and a browser
 initializer. Prime-sizing tests compare an exhaustive small range with a sieve,
 check the supported upper boundary and reject oversized 64-bit requests.
+Locale tests exercise native facet calls and imported rune-table reads; float32
+tests verify SSE input/output widths. CoreFoundation tests cover data ownership,
+font metadata and malformed tables, names/metrics, UTF-16 ranges, UTF-8 output
+capacity, full-width numbers, dictionary callbacks and autorelease lifetimes.
+Stdio tests verify actual descriptor output, va_list/stack arguments, EOF/errors
+and bounded diagnostics. TLS tests cover independent values, destructor registration,
+deletion/reuse, invalid keys and 512-key exhaustion.
 The optional Arcade test separately verifies factory-only
-execution and the **known startup failure**, not audio playback.
+execution, **768/768 static initializers**, and the explicit CFBundle startup
+boundary, not audio playback. Its startup probe explicitly uses the supported
+120-second watchdog to tolerate concurrent test-suite CPU load; the interactive
+probe's default remains 30 seconds.
