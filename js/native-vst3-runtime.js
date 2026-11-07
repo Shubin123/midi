@@ -3,6 +3,7 @@ import { formatGuestPrintf } from './native-vst3-printf.js';
 import { scanGuestIntegers } from './native-vst3-scanf.js';
 import { GuestMutexes } from './native-vst3-mutex.js';
 import { GuestFiles, GuestFileError } from './native-vst3-files.js';
+import { GuestObjC, objcImports } from './native-vst3-objc.js';
 
 const IMAGE = 0x10000000, HEAP = 0x30000000, HEAP_SIZE = 32 << 20;
 const STACK = 0x40000000, STACK_SIZE = 1 << 20, IMPORTS = 0x50000000, IMPORT_SIZE = 1 << 20;
@@ -29,6 +30,7 @@ export class NativeVst3Guest {
   this.heapTop = HEAP; this.initialized = false; this.initializersCompleted = 0; this.factory = 0; this.hooks = [];
   this.mutexes = new GuestMutexes(this);
   this.files = new GuestFiles(files);
+  this.objc = new GuestObjC(this);
   this.monotonicClock = monotonicClock; this.wallClock = wallClock; this.lastTick = 0n;
   this.engine = new uc.Unicorn(uc.ARCH_X86, uc.MODE_64);
   try {
@@ -49,6 +51,8 @@ export class NativeVst3Guest {
     readPointer: address => this.pointer(address), writePointer: (address, value) => this.writePointer(address, value),
     resolve: (name, ordinal, kind) => this.resolve(name, ordinal, kind),
    });
+   this.objc.prepareSelectors(this.image.selectors, this.slide);
+   this.objc.prepareProtocols(this.image.protocols, this.slide);
    for (const segment of this.image.segments) engine.mem_protect(segment.address + this.slide, Math.ceil(segment.size / 4096) * 4096, segment.protection & 7);
    this.hooks.push(engine.hook_add(uc.HOOK_CODE, (_, address) => {
     this.pending = { address: Number(address), kind: 'call' }; engine.emu_stop();
@@ -86,6 +90,9 @@ export class NativeVst3Guest {
  }
  register(name) { return Number(BigInt.asUintN(64, this.engine.reg_read_i64(this.uc[`X86_REG_${name}`]))); }
  setRegister(name, value) { this.engine.reg_write_i64(this.uc[`X86_REG_${name}`], BigInt(value)); }
+ isExecutable(address) {
+  return this.imports.has(address) || this.image.segments.some(segment => segment.protection & 4 && address >= segment.address + this.slide && address < segment.address + this.slide + segment.size);
+ }
  floatingRegister(index = 0) {
   if (!Number.isInteger(index) || index < 0 || index > 7) throw new NativeExecutionError('Invalid floating register');
   const bytes = this.engine.reg_read(this.uc[`X86_REG_XMM${index}`], 16);
@@ -141,6 +148,13 @@ export class NativeVst3Guest {
   const args = ['RDI', 'RSI', 'RDX', 'RCX', 'R8', 'R9'].map(name => this.register(name));
   const [destination, source, size] = args;
   this.calls.set(entry.name, (this.calls.get(entry.name) || 0) + 1);
+  if (objcImports.has(entry.name)) {
+   try { return this.objc.invoke(entry.name, args); }
+   catch (error) {
+    if (error instanceof WebAssembly.RuntimeError) this.poisoned = true;
+    throw new NativeExecutionError(error.message || String(error), { ...entry, kind: this.poisoned ? 'emulator-fault' : 'unsupported-objc', ...error.details });
+   }
+  }
   if (fileImports.has(entry.name)) {
    try { return this.invokeFile(entry.name, args); }
    catch (error) {
@@ -165,11 +179,6 @@ export class NativeVst3Guest {
    this.write(address, new Uint8Array(length).fill(byte));
   };
   switch (entry.name) {
-   case '_objc_msgSend': {
-    const selector = this.string(source), className = this.imports.get(destination)?.name.match(/^_OBJC_CLASS_\$_(.+)$/)?.[1];
-    if (selector === 'class' && (className === 'NSObject' || destination === 0)) return destination;
-    throw new NativeExecutionError(`Unsupported Objective-C message: ${className || hex(destination)} ${selector}`, { ...entry, kind: 'unsupported-objc', receiver: hex(destination), className: className || null, selector });
-   }
    case '_mach_timebase_info': {
     const bytes = new Uint8Array(8), view = new DataView(bytes.buffer);
     view.setUint32(0, 1, true); view.setUint32(4, 1, true); this.write(destination, bytes); return 0;
@@ -197,6 +206,16 @@ export class NativeVst3Guest {
     return { rax: 0, xmm0: base === 1 || base === -1 && Math.abs(exponent) === Infinity ? 1 : base ** exponent };
    }
    case '_malloc': case '__Znwm': case '__Znam': return this.allocate(destination);
+   case '_realloc': {
+    if (!destination) return this.allocate(source);
+    if (!this.allocations.has(destination)) throw new NativeExecutionError('realloc received an unknown allocation');
+    if (!Number.isSafeInteger(source) || source < 0 || source > HEAP_SIZE) throw new NativeExecutionError('realloc size exceeds guest heap');
+    const previous = this.allocations.get(destination);
+    if (source && source <= previous) { this.allocations.set(destination, source); return destination; }
+    const address = this.allocate(source);
+    if (previous && source) this.write(address, this.read(destination, Math.min(previous, source)));
+    this.allocations.delete(destination); return address;
+   }
    case '_calloc': { const address = this.allocate(destination * source); fill(address, destination * source); return address; }
    case '_free': case '__ZdlPv': case '__ZdaPv': this.allocations.delete(destination); return 0;
    case '_memset': fill(destination, size, source); return destination;
@@ -348,11 +367,17 @@ export class NativeVst3Guest {
    const entry = this.imports.get(pending.address - (pending.address - IMPORTS) % 16);
    if (!entry || pending.kind === 'data') throw new NativeExecutionError(`Unsupported imported data: ${entry?.name || hex(pending.address)}`, { ...entry, kind: 'unsupported-data' });
    const result = this.invokeImport(entry);
+   if (typeof result === 'object' && result.tailCall !== undefined) {
+    if (!this.isExecutable(result.tailCall)) throw new NativeExecutionError('Invalid Objective-C guest method target');
+    this.setRegister('RIP', result.tailCall); continue;
+   }
    const returnAddress = this.pointer(this.register('RSP'));
    this.setRegister('RSP', this.register('RSP') + 8);
    this.setRegister('RAX', BigInt.asUintN(64, BigInt(typeof result === 'object' ? result.rax : result)));
    if (typeof result === 'object' && result.rdx !== undefined) this.setRegister('RDX', result.rdx);
    if (typeof result === 'object' && result.xmm0 !== undefined) this.setFloatingRegister(0, result.xmm0);
+   if (typeof result === 'object' && result.xmm1 !== undefined) this.setFloatingRegister(1, result.xmm1);
+   if (typeof result === 'object' && result.zeroVectors) for (const index of [0, 1]) this.engine.reg_write(this.uc[`X86_REG_XMM${index}`], new Uint8Array(16));
    this.setRegister('RIP', returnAddress);
   }
   throw new NativeExecutionError('Execution limit reached; the guest did not return', { kind: 'execution-limit', address: hex(this.register('RIP')) });
@@ -389,6 +414,6 @@ export class NativeVst3Guest {
   return { vendor: this.string(info, 64), url: this.string(info + 64, 256), email: this.string(info + 320, 128), classes };
  }
  report() {
-  return { architecture: 'x86_64', libraries: this.image.libraries, imports: this.imports.size, initializerCount: this.image.initializers.reduce((sum, section) => sum + section.size / 8, 0), initializersCompleted: this.initializersCompleted, initialized: this.initialized, playable: false, calls: Object.fromEntries(this.calls), files: this.files.report() };
+  return { architecture: 'x86_64', libraries: this.image.libraries, imports: this.imports.size, initializerCount: this.image.initializers.reduce((sum, section) => sum + section.size / 8, 0), initializersCompleted: this.initializersCompleted, initialized: this.initialized, playable: false, calls: Object.fromEntries(this.calls), files: this.files.report(), objc: this.objc.report() };
  }
 }

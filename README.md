@@ -1570,8 +1570,10 @@ The synth's existing WebAssembly plugin/audio path is unchanged.
 `GetPluginFactory` and VST3 virtual methods and returns Output's two Arcade
 classes. It deliberately skips initialization, and both class IDs are zero.
 Normal startup passes the previous emulator crash, parses the class IDs, and
-executes mutex, math, guest resource-limit and clock imports. It completes 77
-of 768 initializers, then stops at unsupported `_objc_allocateClassPair`.
+executes mutex, math, guest resource-limit, clock and dynamic Objective-C
+registration imports. It completes 263 of 768 initializers, then stops at the
+unsupported libc++ string copy constructor. Generated fixtures also verify
+actual guest Objective-C method dispatch in the browser.
 **Arcade does not play audio.**
 The report always says `playable: false`; passing the harness tests does not
 certify native plugin playback.

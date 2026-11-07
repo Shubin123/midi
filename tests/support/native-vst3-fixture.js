@@ -5,7 +5,7 @@ export function leb(value) {
  return result;
 }
 
-export function nativeFixture({ code = [0xb8, 42, 0, 0, 0, 0xc3], importName, dataImport = false, initializer = false, bundleEntry = false } = {}) {
+export function nativeFixture({ code = [0xb8, 42, 0, 0, 0, 0xc3], importName, importNames = [], dataImport = false, initializer = false, bundleEntry = false } = {}) {
  const bytes = new Uint8Array(0x1800), view = new DataView(bytes.buffer), encoder = new TextEncoder();
  const word = (offset, value) => view.setUint32(offset, value, true);
  const pointer = (offset, value) => view.setBigUint64(offset, BigInt(value), true);
@@ -26,9 +26,12 @@ export function nativeFixture({ code = [0xb8, 42, 0, 0, 0, 0xc3], importName, da
  }
  const rebase = [0x11, 0x21, 24, 0x53, 0x21, ...leb(0x100), 0x51, ...(initializer ? [0x21, ...leb(0x700), 0x51] : []), 0];
  bytes.set(rebase, 0x800);
- const bind = importName ? [0x3e, 0x40, ...encoder.encode(importName), 0, 0x51, 0x71, ...leb(0x600), 0x90, 0] : [];
- bytes.set(bind, 0x880);
- word(command, 0x80000022); word(command + 4, 48); word(command + 8, 0x800); word(command + 12, rebase.length); word(command + 16, 0x880); word(command + 20, bind.length); command += 48;
+ const imports = importName ? [importName, ...importNames] : importNames, bind = [];
+ for (const [index, name] of imports.entries()) bind.push(0x3e, 0x40, ...encoder.encode(name), 0, 0x51, 0x71, ...leb(0x600 + index * 8), 0x90);
+ if (imports.length) bind.push(0);
+ const bindOffset = importNames.length ? 0xb00 : 0x880;
+ bytes.set(bind, bindOffset);
+ word(command, 0x80000022); word(command + 4, 48); word(command + 8, 0x800); word(command + 12, rebase.length); word(command + 16, bindOffset); word(command + 20, bind.length); command += 48;
  const symbols = [['_GetPluginFactory', 0x200], ['_probe', 0x300], ...(bundleEntry ? [['_bundleEntry', 0x380]] : [])];
  word(command, 2); word(command + 4, 24); word(command + 8, 0x900); word(command + 12, symbols.length); word(command + 16, 0xa00);
  let stringOffset = 1;
@@ -53,6 +56,34 @@ export function nativeFixture({ code = [0xb8, 42, 0, 0, 0, 0xc3], importName, da
   else { bytes.set([0xbf, 8, 0, 0, 0], 0x300); relative(0x305, [0xff, 0x25], 0x1600); }
  }
  if (initializer) { pointer(0x1700, 0x380); bytes.set(code, 0x380); }
+ return bytes;
+}
+
+export function nativeSelectorFixture() {
+ const bytes = nativeFixture({ initializer: true }), view = new DataView(bytes.buffer), encoder = new TextEncoder();
+ bytes.fill(0, 176, 192); bytes.set(encoder.encode('__objc_selrefs'), 176); view.setUint32(240, 0, true);
+ view.setBigUint64(0x1700, 0x1500n, true); bytes.set(encoder.encode('value:\0'), 0x1500);
+ return bytes;
+}
+
+export function nativeObjCFixture() {
+ const importNames = ['_objc_getClass', '_objc_allocateClassPair', '_class_addMethod', '_objc_registerClassPair', '_class_createInstance', '_sel_registerName', '_objc_msgSend'];
+ const bytes = nativeFixture({ importNames, initializer: true }), view = new DataView(bytes.buffer), encoder = new TextEncoder();
+ let offset = 0x380;
+ const emit = values => { bytes.set(values, offset); offset += values.length; };
+ const relative = (prefix, address) => { emit(prefix); view.setInt32(offset, address - offset - 4, true); offset += 4; };
+ const call = index => relative([0xff, 0x15], 0x1600 + index * 8);
+ emit([0x41, 0x54, 0x41, 0x55, 0x41, 0x56]);
+ relative([0x48, 0x8d, 0x3d], 0x1500); call(0);
+ emit([0x48, 0x89, 0xc7]); relative([0x48, 0x8d, 0x35], 0x1520); emit([0x31, 0xd2]); call(1); emit([0x49, 0x89, 0xc4]);
+ relative([0x48, 0x8d, 0x3d], 0x1540); call(5); emit([0x49, 0x89, 0xc5]);
+ emit([0x4c, 0x89, 0xe7, 0x4c, 0x89, 0xee]); relative([0x48, 0x8d, 0x15], 0x600); relative([0x48, 0x8d, 0x0d], 0x1560); call(2);
+ emit([0x4c, 0x89, 0xe7]); call(3);
+ emit([0x4c, 0x89, 0xe7, 0x31, 0xf6]); call(4); emit([0x49, 0x89, 0xc6]);
+ emit([0x4c, 0x89, 0xf7, 0x4c, 0x89, 0xee, 0xba, 37, 0, 0, 0]); call(6);
+ relative([0x89, 0x05], 0x1400); emit([0x41, 0x5e, 0x41, 0x5d, 0x41, 0x5c, 0xc3]);
+ bytes.set([0x48, 0x8d, 0x42, 5, 0xc3], 0x600);
+ for (const [address, value] of [[0x1500, 'NSObject'], [0x1520, 'BrowserNativeFixture'], [0x1540, 'increment:'], [0x1560, 'Q@:Q']]) bytes.set(encoder.encode(`${value}\0`), address);
  return bytes;
 }
 

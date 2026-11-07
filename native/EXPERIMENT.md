@@ -67,7 +67,7 @@ In **Chrome**, with the package selected directly from disk:
 4. The patched emulator passes the previous Wasm memory-out-of-bounds crash.
    Integer scanning now parses the actual formatted class IDs. Initialization
    executes 22 `sprintf`, two `strcpy`, 20 `strcat`, and two `sscanf` calls.
-5. Five mutexes are initialized; 109 lock/unlock pairs execute using tracked
+5. Eleven mutexes are initialized; 3,019 lock/unlock pairs execute using tracked
    single-threaded ownership/depth, not unconditional-success stubs. Floating
    imports execute 378 `exp2`, 8,237 `pow`, and 15 `tan` calls through the SSE ABI.
 6. Nine `getrlimit`/`setrlimit` attempts run against an actual bounded guest
@@ -75,10 +75,14 @@ In **Chrome**, with the package selected directly from disk:
    raise the guest's hard limit fail with errno rather than claiming success.
    Mach timebase/absolute-time and wall-clock queries execute, as does the
    imported `NSObject` class-identity query.
-7. **77 of 768 initializers complete.** Startup then stops explicitly at
-   `_objc_allocateClassPair`. Dynamic Objective-C classes, their methods and
-   Foundation behavior are not implemented. This remains a startup failure,
-   not a playable conversion.
+7. Objective-C registration creates three dynamic class pairs with 19 methods
+   and four ivars. The bridge canonicalizes 551 selectors and reads seven
+   protocol definitions, including the adopted `NSPasteboardItemDataProvider`.
+   A tracked `realloc` also executes.
+8. **263 of 768 initializers complete.** Startup then stops explicitly at the
+   libc++ string copy constructor
+   `__ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEC1ERKS5_`.
+   This remains a startup failure, not a playable conversion.
 
 The old published engine faulted at last CPU entry `0x100412c3`. Source
 profiling and ASAN isolated a TCI adapter temporary-lifetime leak: helper-call
@@ -107,7 +111,9 @@ No licensing checks are patched or suppressed.
   silent successful no-ops. Imported data also traps when unsupported.
 - Only a small single-threaded libc/C++ bridge and default-allocator/UUID
   operations are supplied. Allocation is a bounded bump allocator; frees
-  retire records but do not reclaim space. Destructors are registered but the
+  retire records but do not reclaim space. `realloc` preserves contents when
+  growing, tracks shrinking, and preserves the original on allocation failure.
+  Destructors are registered but the
   diagnostic worker is discarded rather than implementing macOS unload.
 - `sprintf`/`snprintf` support bounded integer, byte-string, character and
   pointer conversions with register and stack arguments. Unsupported floating,
@@ -146,9 +152,13 @@ No licensing checks are patched or suppressed.
   This conversion does not improve the browser clock's actual resolution.
   `gettimeofday` uses wall time and the Darwin 64-bit timeval field layout;
   legacy timezone output remains unsupported.
-- The Objective-C bridge currently handles only `NSObject`'s class-identity
-  query (and that query on nil). Unknown messages fail with receiver/selector
-  details. It is not a functioning Objective-C or Foundation runtime.
+- The bounded Objective-C bridge models dynamic classes/metaclasses, selectors,
+  methods, aligned ivars, instances and protocol inheritance/conformance. Guest
+  method dispatch preserves the native call stack, including nested calls and
+  stack arguments. Nil sends clear integer and vector return registers. Only
+  a small NSObject fallback is supplied; Foundation, static class realization,
+  reference counting and autorelease remain unsupported. Custom `+initialize`
+  and C++ object lifecycle callbacks fail explicitly, as do unknown messages.
 - CPU instruction allowances and per-call elapsed-time checks are backed by
   a separate page-side worker watchdog (30 seconds by default). The watchdog
   can terminate a wedged Wasm emulator; it does not rely on guest cooperation.
@@ -162,6 +172,7 @@ node tests/native-vst3.mjs
 node tests/native-vst3-scanf.mjs
 node tests/native-vst3-mutex.mjs
 node tests/native-vst3-files.mjs
+node tests/native-vst3-objc.mjs
 node tests/native-vst3-browser.mjs
 ARCADE_PKG='/absolute/path/to/Arcade_OSX_Install_2.2.0.R18263.pkg' node tests/native-vst3-browser.mjs
 npm test
@@ -180,5 +191,9 @@ initializers. File tests fill all 256 descriptor slots and check actual limit
 enforcement, lowering limits with live descriptors, shared offsets, readonly
 resources, 64-bit seeks, errno and short/full diagnostic writes. Clock tests
 verify timebase fields, monotonic samples, negative wall timestamps and padding.
+Objective-C tests cover registration, inheritance, ivar tail padding, protocols,
+method replacement and explicit lifecycle failures. Generated native callbacks
+verify nested dispatch, stack arguments and nil vector returns. A browser
+fixture registers a class and executes its guest method to obtain a factory ID.
 The optional Arcade test separately verifies factory-only
 execution and the **known startup failure**, not audio playback.

@@ -1,0 +1,104 @@
+import assert from 'node:assert/strict';
+import { GuestObjC } from '../js/native-vst3-objc.js';
+
+const bytes = new Uint8Array(1 << 20), view = new DataView(bytes.buffer), encoder = new TextEncoder(), registers = new Map();
+const root = 0x50000000;
+let top = 4096;
+const memory = {
+ imports: new Map([[root, { name: '_OBJC_CLASS_$_NSObject' }], [root + 16, { name: '_OBJC_CLASS_$_NSView' }]]), allocations: new Map(),
+ allocate(size) { const address = top; top += Math.ceil(Math.max(size, 1) / 16) * 16; assert.ok(top < bytes.length); this.allocations.set(address, size); return address; },
+ read: (address, size) => bytes.slice(address, address + size), write: (address, value) => bytes.set(value, address),
+ pointer: address => Number(view.getBigUint64(address, true)), writePointer: (address, value) => view.setBigUint64(address, BigInt(value), true),
+ string(address) { let end = address; while (bytes[end]) end++; return new TextDecoder().decode(bytes.slice(address, end)); },
+ isExecutable: address => [0x800, 0x900, 0xa00].includes(address), setRegister: (name, value) => registers.set(name, value),
+};
+const objc = new GuestObjC(memory), string = value => { const encoded = encoder.encode(`${value}\0`), address = memory.allocate(encoded.length); memory.write(address, encoded); return address; };
+const invoke = (name, ...args) => objc.invoke(`_${name}`, args);
+assert.equal(invoke('objc_getClass', string('NSObject')), root);
+const rootMeta = invoke('object_getClass', root);
+assert.equal(invoke('object_getClass', rootMeta), rootMeta); assert.equal(invoke('class_getSuperclass', root), 0);
+assert.equal(invoke('class_getSuperclass', rootMeta), root); assert.equal(invoke('class_isMetaClass', rootMeta), 1);
+assert.equal(invoke('class_getInstanceSize', root), 8);
+assert.throws(() => invoke('objc_getClass', string('NSView')), /Foundation class is not implemented/);
+assert.equal(invoke('objc_allocateClassPair', root, string('NSView'), 0), 0);
+assert.equal(invoke('objc_getClass', string('Missing')), 0);
+const parent = invoke('objc_allocateClassPair', root, string('Parent'), 16), parentMeta = invoke('object_getClass', parent);
+assert.equal(memory.pointer(parent), parentMeta); assert.equal(memory.pointer(parent + 8), root);
+assert.equal(invoke('objc_getClass', string('Parent')), 0, 'unregistered classes are not globally visible');
+assert.equal(invoke('objc_allocateClassPair', root, string('Parent'), 0), 0);
+assert.equal(invoke('objc_allocateClassPair', parent, string('TooEarly'), 0), 0);
+assert.equal(invoke('object_getIndexedIvars', parent), parent + 40);
+assert.equal(invoke('class_addIvar', parent, string('small'), 1, 0, string('c')), 1);
+assert.equal(invoke('class_addIvar', parent, string('pointer'), 8, 3, string('^v')), 1);
+assert.equal(invoke('class_addIvar', parent, string('pointer'), 8, 3, string('^v')), 0);
+const ivar = invoke('class_getInstanceVariable', parent, string('pointer'));
+assert.equal(invoke('ivar_getOffset', ivar), 16); assert.equal(invoke('class_getInstanceSize', parent), 24);
+assert.equal(memory.string(invoke('ivar_getName', ivar)), 'pointer'); assert.equal(memory.string(invoke('ivar_getTypeEncoding', ivar)), '^v');
+const selector = invoke('sel_registerName', string('value:'));
+assert.equal(invoke('sel_registerName', string('value:')), selector); assert.equal(invoke('sel_getUid', string('value:')), selector);
+assert.equal(invoke('sel_isEqual', selector, string('value:')), 1); assert.equal(invoke('sel_isEqual', 0, selector), 0);
+assert.equal(invoke('class_addMethod', parent, selector, 0x800, string('q@:q')), 1);
+assert.equal(invoke('class_addMethod', parent, selector, 0x900, string('q@:q')), 0);
+assert.equal(invoke('class_replaceMethod', parent, selector, 0x900, string('v@:')), 0x800);
+const method = invoke('class_getInstanceMethod', parent, selector);
+assert.equal(invoke('method_getImplementation', method), 0x900); assert.equal(invoke('method_getName', method), selector);
+assert.equal(memory.string(invoke('method_getTypeEncoding', method)), 'q@:q', 'replacement preserves the original encoding');
+assert.throws(() => invoke('class_addMethod', parent, string('bad'), 0x777, string('v@:')), /not executable/);
+assert.equal(invoke('class_addMethod', parentMeta, string('answer'), 0xa00, string('q@:')), 1);
+assert.equal(invoke('objc_registerClassPair', parent), 0);
+assert.equal(invoke('objc_getClass', string('Parent')), parent); assert.equal(invoke('objc_getMetaClass', string('Parent')), parentMeta);
+assert.equal(invoke('class_addIvar', parent, string('late'), 8, 3, string('q')), 0);
+assert.equal(invoke('objc_registerClassPair', parent), 0, 'registering the same known class again preserves its state');
+const child = invoke('objc_allocateClassPair', parent, string('Child'), 0); invoke('objc_registerClassPair', child);
+assert.equal(invoke('class_getInstanceMethod', child, selector), method);
+assert.equal(invoke('class_getInstanceVariable', child, string('pointer')), ivar);
+const object = invoke('class_createInstance', child, 8);
+assert.equal(invoke('object_getClass', object), child); assert.equal(memory.pointer(object), child);
+assert.ok(memory.read(object + 8, 24).every(byte => byte === 0)); assert.equal(invoke('object_getIndexedIvars', object), object + 24);
+assert.deepEqual(invoke('objc_msgSend', object, string('value:')), { tailCall: 0x900 }); assert.equal(registers.get('RSI'), selector);
+assert.deepEqual(invoke('objc_msgSend', child, string('answer')), { tailCall: 0xa00 });
+assert.equal(invoke('objc_msgSend', object, string('class')), child); assert.equal(invoke('objc_msgSend', object, string('init')), object);
+assert.deepEqual(invoke('objc_msgSend', 0, 0), { rax: 0, rdx: 0, zeroVectors: true });
+assert.throws(() => invoke('objc_msgSend', object, string('unsupported')), error => error.details.selector === 'unsupported');
+const superInfo = memory.allocate(16); memory.writePointer(superInfo, object); memory.writePointer(superInfo + 8, child);
+assert.deepEqual(invoke('objc_msgSendSuper2', superInfo, selector), { tailCall: 0x900 }); assert.equal(registers.get('RDI'), object);
+memory.writePointer(superInfo + 8, root); assert.equal(invoke('objc_msgSendSuper', superInfo, string('init')), object);
+assert.throws(() => invoke('objc_disposeClassPair', parent), /in-use/);
+assert.throws(() => invoke('objc_disposeClassPair', child), /in-use/);
+assert.equal(invoke('object_dispose', object), 0); assert.equal(invoke('objc_disposeClassPair', child), 0);
+const smallParent = invoke('objc_allocateClassPair', root, string('SmallParent'), 0);
+invoke('class_addIvar', smallParent, string('byte'), 1, 0, 0); invoke('objc_registerClassPair', smallParent);
+assert.equal(invoke('class_getInstanceSize', smallParent), 16);
+const smallChild = invoke('objc_allocateClassPair', smallParent, string('SmallChild'), 0);
+invoke('class_addIvar', smallChild, string('secondByte'), 1, 0, 0); invoke('objc_registerClassPair', smallChild);
+const smallIvar = invoke('class_getInstanceVariable', smallChild, string('secondByte'));
+assert.equal(invoke('ivar_getOffset', smallIvar), 9, 'subclass ivars use the unaligned inherited size');
+assert.equal(invoke('ivar_getTypeEncoding', smallIvar), 0);
+
+const protocol = (name, inherited = []) => {
+ const address = memory.allocate(96); memory.write(address, new Uint8Array(96)); memory.writePointer(address + 8, string(name)); view.setUint32(address + 64, 96, true);
+ if (inherited.length) { const list = memory.allocate(8 + inherited.length * 8); memory.writePointer(address + 16, list); memory.writePointer(list, inherited.length); inherited.forEach((parent, index) => memory.writePointer(list + 8 + index * 8, parent)); }
+ return address;
+};
+const baseProtocol = protocol('BaseProtocol'), adopted = protocol('AdoptedProtocol', [baseProtocol]), equivalent = protocol('AdoptedProtocol');
+assert.equal(invoke('class_addProtocol', parent, adopted), 1); assert.equal(invoke('class_addProtocol', parent, adopted), 0);
+assert.equal(invoke('class_conformsToProtocol', parent, baseProtocol), 1);
+assert.equal(invoke('protocol_conformsToProtocol', adopted, baseProtocol), 1); assert.equal(invoke('protocol_conformsToProtocol', baseProtocol, adopted), 0);
+assert.equal(invoke('protocol_isEqual', adopted, equivalent), 1); assert.equal(invoke('objc_getProtocol', string('AdoptedProtocol')), adopted);
+assert.equal(memory.string(invoke('protocol_getName', adopted)), 'AdoptedProtocol');
+const prepared = protocol('PreparedProtocol'), alias = protocol('PreparedProtocol'), list = memory.allocate(16), references = memory.allocate(8);
+memory.writePointer(list, prepared); memory.writePointer(list + 8, alias); memory.writePointer(references, alias);
+objc.prepareProtocols([{ name: '__objc_protolist', address: list, size: 16 }, { name: '__objc_protorefs', address: references, size: 8 }], 0);
+assert.equal(invoke('objc_getProtocol', string('PreparedProtocol')), prepared); assert.equal(memory.pointer(references), prepared);
+const invalidProtocol = memory.allocate(96); memory.write(invalidProtocol, new Uint8Array(96));
+assert.throws(() => invoke('class_addProtocol', parent, invalidProtocol), /protocol layout/);
+const initializable = invoke('objc_allocateClassPair', parent, string('Initializer'), 0);
+invoke('class_addMethod', invoke('object_getClass', initializable), string('initialize'), 0x800, string('v@:')); invoke('objc_registerClassPair', initializable);
+assert.throws(() => invoke('objc_msgSend', initializable, string('alloc')), /initialize callbacks/);
+const constructed = invoke('objc_allocateClassPair', parent, string('Constructed'), 0);
+invoke('class_addMethod', constructed, string('.cxx_construct'), 0x800, string('@@:')); invoke('objc_registerClassPair', constructed);
+assert.throws(() => invoke('class_createInstance', constructed, 0), /constructors/);
+assert.throws(() => invoke('class_getInstanceMethod', root, string('init')), /introspection/);
+assert.throws(() => invoke('class_createInstance', root, (1 << 20) + 1), /exceeds/);
+assert.equal(invoke('object_dispose', 0), 0);
+console.log('native Objective-C: class registration, metaclasses, ivar layout, inheritance, selectors, IMP dispatch, protocols and unsupported lifecycle checks passed');

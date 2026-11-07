@@ -5,7 +5,7 @@ import { parseMachO, dyldFixups } from '../js/macho-loader.js';
 import { NativeVst3Guest } from '../js/native-vst3-runtime.js';
 import { readNativeVst3 } from '../js/native-vst3-input.js';
 import { writeZip } from '../js/archive.js';
-import { nativeFixture, nativePackage, leb } from './support/native-vst3-fixture.js';
+import { nativeFixture, nativePackage, nativeSelectorFixture, nativeObjCFixture, leb } from './support/native-vst3-fixture.js';
 import { loadNativeEngine } from '../js/native-vst3-engine.js';
 
 const require = createRequire(import.meta.url), uc = await require('../vendor/unicorn/unicorn.cjs')();
@@ -39,12 +39,53 @@ use(fixture, guest => {
 use(nativeFixture({ initializer: true }), guest => { guest.initialize(); assert.equal(guest.initialized, true); });
 use(nativeFixture({ bundleEntry: true }), guest => assert.throws(() => guest.initialize(), /CFBundle/));
 use(nativeFixture({ importName: '_malloc' }), guest => { assert.ok(guest.call(guest.export('_probe')) >= 0x30000000); assert.equal(guest.report().calls._malloc, 1); });
+use(nativeSelectorFixture(), guest => {
+ assert.equal(guest.image.initializers.length, 0); assert.equal(guest.image.selectors.length, 1);
+ assert.equal(guest.pointer(guest.slide + 0x1700), guest.objc.selector('value:'));
+ assert.notEqual(guest.pointer(guest.slide + 0x1700), guest.slide + 0x1500, 'selector references are canonicalized after rebasing');
+});
+use(nativeObjCFixture(), guest => {
+ guest.initialize();
+ assert.equal(guest.factoryInfo().classes[0].cid, '2a00000005060708090a0b0c0d0e0f10');
+ assert.equal(guest.objc.report().dynamicClasses, 1); assert.equal(guest.objc.report().instances, 1);
+});
+use(nativeFixture({ importName: '_objc_msgSend' }), guest => {
+ const send = [...guest.imports].find(([, entry]) => entry.name === '_objc_msgSend')[0];
+ const base = guest.objc.rootClass().handle, klass = guest.objc.allocate(base, 'NativeCallback', 0);
+ const address = offset => guest.slide + offset, increment = guest.objc.selector('increment:'), nested = guest.objc.selector('nested:'), stackArg = guest.objc.selector('stackArg:');
+ guest.write(address(0x400), new Uint8Array([0x48, 0x8d, 0x42, 5, 0xc3]));
+ guest.objc.addMethod(klass, 'increment:', address(0x400), 'Q@:Q');
+ const code = new Uint8Array([0x48, 0x83, 0xec, 8, 0x48, 0xbe, ...Array(8).fill(0), 0xff, 0x15, 0, 0, 0, 0, 0x48, 0x83, 0xc4, 8, 0x48, 0x83, 0xc0, 7, 0xc3]);
+ const codeView = new DataView(code.buffer); codeView.setBigUint64(6, BigInt(increment), true); codeView.setInt32(16, address(0x1600) - address(0x450 + 20), true);
+ guest.write(address(0x450), code); guest.objc.addMethod(klass, 'nested:', address(0x450), 'Q@:Q');
+ guest.write(address(0x490), new Uint8Array([0x48, 0x8b, 0x44, 0x24, 8, 0xc3])); guest.objc.addMethod(klass, 'stackArg:', address(0x490), 'Q@:QQQQQ');
+ guest.objc.register(klass); const object = guest.objc.instance(klass, 0);
+ assert.equal(guest.call(send, [object, increment, 37]), 42);
+ assert.equal(guest.call(send, [object, nested, 37]), 49, 'nested message callbacks preserve the guest return stack');
+ const caller = new Uint8Array([0x48, 0x83, 0xec, 24, 0x48, 0xc7, 0x04, 0x24, 37, 0, 0, 0, 0xff, 0x15, 0, 0, 0, 0, 0x48, 0x83, 0xc4, 24, 0xc3]);
+ new DataView(caller.buffer).setInt32(14, address(0x1600) - address(0x500 + 18), true); guest.write(address(0x500), caller);
+ assert.equal(guest.call(address(0x500), [object, stackArg]), 37, 'message dispatch preserves arguments passed on the stack');
+ guest.engine.reg_write(uc.X86_REG_XMM0, new Uint8Array(16).fill(0x77)); guest.engine.reg_write(uc.X86_REG_XMM1, new Uint8Array(16).fill(0x88));
+ guest.setFloatingRegister(0, 123); guest.setFloatingRegister(1, 456);
+ assert.equal(guest.call(send, [0, 0]), 0); assert.equal(guest.floatingRegister(0), 0); assert.equal(guest.floatingRegister(1), 0);
+ assert.ok(guest.engine.reg_read(uc.X86_REG_XMM0, 16).every(byte => byte === 0)); assert.ok(guest.engine.reg_read(uc.X86_REG_XMM1, 16).every(byte => byte === 0));
+});
+use(fixture, guest => {
+ const invoke = (pointer, size) => { guest.setRegister('RDI', pointer); guest.setRegister('RSI', size); return guest.invokeImport({ name: '_realloc' }); };
+ const original = invoke(0, 4); guest.write(original, new Uint8Array([1, 2, 3, 4]));
+ const grown = invoke(original, 32); assert.notEqual(grown, original); assert.deepEqual([...guest.read(grown, 4)], [1, 2, 3, 4]); assert.equal(guest.allocations.has(original), false);
+ assert.equal(invoke(grown, 2), grown); assert.equal(guest.allocations.get(grown), 2);
+ assert.throws(() => invoke(grown, 33 << 20), /size exceeds/); assert.equal(guest.allocations.get(grown), 2, 'failed resize preserves the allocation');
+ const empty = invoke(grown, 0); assert.ok(empty); assert.equal(guest.allocations.get(empty), 0); assert.equal(guest.allocations.has(grown), false);
+ assert.throws(() => invoke(original, 8), /unknown allocation/);
+});
 use(fixture, guest => {
  const receiver = guest.resolve('_OBJC_CLASS_$_NSObject', 1, 'bind'), selector = guest.allocate(32);
  guest.write(selector, new TextEncoder().encode('class\0')); guest.setRegister('RDI', receiver); guest.setRegister('RSI', selector);
  assert.equal(guest.invokeImport({ name: '_objc_msgSend' }), receiver);
- guest.setRegister('RDI', 0); assert.equal(guest.invokeImport({ name: '_objc_msgSend' }), 0); guest.setRegister('RDI', receiver);
+ guest.setRegister('RDI', 0); assert.deepEqual(guest.invokeImport({ name: '_objc_msgSend' }), { rax: 0, rdx: 0, zeroVectors: true }); guest.setRegister('RDI', receiver);
  guest.write(selector, new TextEncoder().encode('notImplemented\0'));
+ guest.setRegister('RSI', selector);
  assert.throws(() => guest.invokeImport({ name: '_objc_msgSend' }), error => error.details.kind === 'unsupported-objc' && error.details.className === 'NSObject' && error.details.selector === 'notImplemented');
 });
 use(fixture, guest => {
