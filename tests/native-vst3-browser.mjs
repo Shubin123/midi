@@ -91,6 +91,7 @@ try {
     }; poll();
     })`);
    }
+   console.log(`Arcade ${mode}: ${JSON.stringify(report)}`);
    assert.equal(report.playable, false);
    if (mode === 'factory') {
     assert.equal(report.factory.vendor, 'Output'); assert.equal(report.factory.classes[0].name, 'Arcade');
@@ -115,11 +116,12 @@ try {
     assert.deepEqual(report.objc, { dynamicClasses: 3, registeredClasses: 5, selectors: 551, methods: 19, ivars: 4, instances: 0, protocols: 7 });
     assert.deepEqual(report.files.descriptorLimits, { soft: 256, hard: 256 });
    } else {
-    assert.equal(report.stage, 'creating-component'); assert.equal(report.error.kind, 'unsupported-objc'); assert.equal(report.error.className, 'NSNotificationCenter');
+    assert.equal(report.stage, 'creating-component'); assert.equal(report.error.kind, 'unsupported-data'); assert.equal(report.error.name, '_NSMenuDidBeginTrackingNotification');
+    assert.equal(report.objc.registeredClasses, 6); assert.equal(report.objc.instances, 2);
+    assert.equal(report.calls._objc_msgSend, 29);
     assert.equal(report.initialized, true); assert.equal(report.initializersCompleted, 768); assert.equal(report.processor.componentCreated, false); assert.equal(report.processor.blocksProcessed, 0);
     assert.equal(report.calls._pthread_self, 1); assert.equal(report.calls._CFRunLoopGetMain, 1); assert.equal(report.calls._CFRunLoopSourceCreate, 1); assert.equal(report.calls._CFRunLoopAddSource, 1);
    }
-   console.log(`Arcade ${mode}: ${JSON.stringify(report)}`);
   }
  }
  assert.deepEqual(browser.errors, []);

@@ -5,7 +5,7 @@ const bytes = new Uint8Array(1 << 20), view = new DataView(bytes.buffer), encode
 const root = 0x50000000;
 let top = 4096;
 const memory = {
- imports: new Map([[root, { name: '_OBJC_CLASS_$_NSObject' }], [root + 16, { name: '_OBJC_CLASS_$_NSView' }]]), allocations: new Map(),
+ imports: new Map([[root, { name: '_OBJC_CLASS_$_NSObject' }], [root + 16, { name: '_OBJC_CLASS_$_NSView' }], [root + 32, { name: '_OBJC_CLASS_$_NSNotificationCenter' }]]), allocations: new Map(),
  allocate(size) { const address = top; top += Math.ceil(Math.max(size, 1) / 16) * 16; assert.ok(top < bytes.length); this.allocations.set(address, size); return address; },
  read: (address, size) => bytes.slice(address, address + size), write: (address, value) => bytes.set(value, address),
  pointer: address => Number(view.getBigUint64(address, true)), writePointer: (address, value) => view.setBigUint64(address, BigInt(value), true),
@@ -101,4 +101,41 @@ assert.throws(() => invoke('class_createInstance', constructed, 0), /constructor
 assert.throws(() => invoke('class_getInstanceMethod', root, string('init')), /introspection/);
 assert.throws(() => invoke('class_createInstance', root, (1 << 20) + 1), /exceeds/);
 assert.equal(invoke('object_dispose', 0), 0);
+const centerClass = root + 32, centerSelector = string('defaultCenter');
+assert.equal(invoke('objc_getClass', string('NSNotificationCenter')), centerClass);
+const center = invoke('objc_msgSend', centerClass, centerSelector);
+assert.ok(center); assert.equal(memory.pointer(center), centerClass);
+assert.equal(invoke('objc_getClass', string('NSNotificationCenter')), centerClass);
+assert.equal(invoke('objc_lookUpClass', string('NSNotificationCenter')), centerClass);
+assert.equal(invoke('objc_getMetaClass', string('NSNotificationCenter')), invoke('object_getClass', centerClass));
+assert.equal(invoke('class_getSuperclass', centerClass), root);
+assert.equal(invoke('objc_msgSend', center, string('class')), centerClass);
+assert.equal(invoke('objc_msgSend', center, string('self')), center);
+assert.equal(invoke('objc_msgSend', center, string('retain')), center);
+assert.equal(invoke('objc_msgSend', center, string('retainCount')), 2);
+const centerPool = invoke('objc_autoreleasePoolPush');
+assert.equal(invoke('objc_msgSend', center, string('autorelease')), center);
+invoke('objc_autoreleasePoolPop', centerPool);
+assert.equal(invoke('objc_msgSend', center, string('retainCount')), 1);
+invoke('objc_msgSend', center, string('release'));
+const singletonPool = invoke('objc_autoreleasePoolPush');
+invoke('objc_msgSend', center, string('autorelease')); invoke('objc_autoreleasePoolPop', singletonPool);
+assert.equal(invoke('objc_msgSend', centerClass, centerSelector), center);
+objc.objects.get(center).references = 65536;
+assert.throws(() => invoke('objc_msgSend', center, string('retain')), /reference limit/);
+objc.objects.get(center).references = 1;
+const centerAllocations = memory.allocations.size;
+for (let index = 0; index < 100; index++) assert.equal(invoke('objc_msgSend', centerClass, centerSelector), center);
+assert.equal(memory.allocations.size, centerAllocations);
+assert.throws(() => invoke('object_dispose', center), /default notification center/);
+assert.throws(() => invoke('objc_msgSend', center, string('addObserver:selector:name:object:')), error => error.details.className === 'NSNotificationCenter' && error.details.selector === 'addObserver:selector:name:object:');
+assert.throws(() => invoke('objc_msgSend', center, centerSelector), /Unsupported Objective-C message/);
+const privateCenter = invoke('objc_msgSend', centerClass, string('new'));
+assert.notEqual(privateCenter, center); assert.equal(invoke('objc_msgSend', privateCenter, string('init')), privateCenter);
+const privatePool = invoke('objc_autoreleasePoolPush');
+invoke('objc_msgSend', privateCenter, string('autorelease')); invoke('objc_autoreleasePoolPop', privatePool);
+assert.equal(objc.objects.has(privateCenter), false);
+const otherObjc = new GuestObjC(memory);
+const otherCenter = otherObjc.invoke('_objc_msgSend', [centerClass, centerSelector]);
+assert.notEqual(otherCenter, center); assert.equal(otherObjc.defaultCenter, otherCenter);
 console.log('native Objective-C: class registration, metaclasses, ivar layout, inheritance, selectors, IMP dispatch, protocols and unsupported lifecycle checks passed');

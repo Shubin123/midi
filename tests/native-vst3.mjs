@@ -37,6 +37,26 @@ use(fixture, guest => {
  assert.throws(() => guest.allocate(33 << 20), /allocation/);
 });
 use(nativeFixture({ initializer: true }), guest => { guest.initialize(); assert.equal(guest.initialized, true); });
+const centerFixture = nativeFixture({ importNames: ['_OBJC_CLASS_$_NSNotificationCenter', '_objc_msgSend'] });
+const centerView = new DataView(centerFixture.buffer);
+centerFixture.set([0x48, 0x8b, 0x3d], 0x300); centerView.setInt32(0x303, 0x1600 - 0x307, true);
+centerFixture.set([0x48, 0x8d, 0x35], 0x307); centerView.setInt32(0x30a, 0x1500 - 0x30e, true);
+centerFixture.set([0xff, 0x25], 0x30e); centerView.setInt32(0x310, 0x1608 - 0x314, true);
+centerFixture.set(new TextEncoder().encode('defaultCenter\0'), 0x1500);
+use(centerFixture, guest => {
+ const center = guest.call(guest.export('_probe'));
+ assert.ok(guest.objc.objects.has(center));
+ assert.equal(guest.pointer(center), guest.pointer(guest.slide + 0x1600));
+ const allocations = guest.allocations.size;
+ assert.equal(guest.call(guest.export('_probe')), center); assert.equal(guest.allocations.size, allocations);
+ assert.equal(guest.report().playable, false);
+});
+use(nativeFixture(), guest => {
+ const name = guest.objc.cstring('NSNotificationCenter');
+ const klass = guest.objc.invoke('_objc_getClass', [name]);
+ assert.equal(guest.objc.klass(klass).name, 'NSNotificationCenter');
+ assert.ok(guest.objc.invoke('_objc_msgSend', [klass, guest.objc.selector('defaultCenter')]));
+});
 for (const constructor of ['C1', 'C2']) use(nativeStringFixture(constructor), guest => {
  guest.initialize(); assert.equal(guest.factoryInfo().classes[0].cid, '0c636f70696564000000000000000000');
 });

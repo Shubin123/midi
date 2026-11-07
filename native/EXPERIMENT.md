@@ -102,8 +102,9 @@ In **Chrome**, with the package selected directly from disk:
     `56534541524344617263616465000000` (controller).
 12. The processor probe invokes the real factory's `createInstance`. It executes
     pthread identity, run-loop source creation/registration and guest Objective-C
-    instance creation, then stops at **`NSNotificationCenter defaultCenter`**.
-    This Cocoa class is not implemented. No Arcade processor has been returned
+    instance creation. **`NSNotificationCenter defaultCenter` now succeeds** and
+    returns a persistent guest-local object. Execution next stops on the imported
+    AppKit data **`_NSMenuDidBeginTrackingNotification`**. No Arcade processor has been returned
     and **zero Arcade audio blocks have run**; `playable` remains false. A passing
     generated audio fixture is not a passing Arcade playback test.
 
@@ -268,7 +269,14 @@ enforcement, lowering limits with live descriptors, shared offsets, readonly
 resources, 64-bit seeks, errno and short/full diagnostic writes. Clock tests
 verify timebase fields, monotonic samples, negative wall timestamps and padding.
 Objective-C tests cover registration, inheritance, ivar tail padding, protocols,
-method replacement and explicit lifecycle failures. Generated native callbacks
+method replacement and explicit lifecycle failures. The supported
+`NSNotificationCenter defaultCenter` returns one persistent center per guest,
+with real class/metaclass lookup, instance identity, bounded retain/release and
+autorelease pool handling. Independently allocated centers have separate
+lifetimes. Observer registration and notification delivery remain unsupported
+and throw explicitly rather than pretending to deliver notifications. Unit and
+x86 dispatch tests cover singleton reuse, ownership and guest isolation.
+Generated native callbacks
 verify nested dispatch, stack arguments and nil vector returns. A browser
 fixture registers a class and executes its guest method to obtain a factory ID.
 String tests verify inline/boundary/long copies, independent ownership, embedded
@@ -284,7 +292,8 @@ and bounded diagnostics. TLS tests cover independent values, destructor registra
 deletion/reuse, invalid keys and 512-key exhaustion.
 The optional Arcade test separately verifies factory-only
 execution, **768/768 static initializers**, and the explicit CFBundle startup
-success, followed by the actual Cocoa failure during processor creation, not
+success and Cocoa default-center creation, followed by the unsupported AppKit
+notification-name data import during processor creation, not
 Arcade audio playback. Its startup/processor probes explicitly use the supported
 120-second watchdog to tolerate concurrent test-suite CPU load; the interactive
 startup probe's default remains 30 seconds. Processor/render UI probes use 120 seconds.

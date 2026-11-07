@@ -22,7 +22,7 @@ export class GuestObjCError extends Error {
 export class GuestObjC {
  constructor(memory) {
   this.memory = memory; this.classes = new Map(); this.names = new Map(); this.selectors = new Map();
-  this.methods = new Map(); this.ivars = new Map(); this.objects = new Map(); this.protocols = new Map(); this.protocolNames = new Map(); this.root = 0; this.pools = [];
+  this.methods = new Map(); this.ivars = new Map(); this.objects = new Map(); this.protocols = new Map(); this.protocolNames = new Map(); this.root = 0; this.pools = []; this.defaultCenter = 0;
  }
  cstring(value) {
   const bytes = encoder.encode(`${value}\0`), address = this.memory.allocate(bytes.length);
@@ -98,12 +98,14 @@ export class GuestObjC {
  }
  klass(handle) {
   if (!this.classes.has(handle) && this.memory.imports.get(handle)?.name === '_OBJC_CLASS_$_NSObject') this.rootClass();
-  if (!this.classes.has(handle) && this.memory.imports.get(handle)?.name === '_OBJC_CLASS_$_NSString') {
-   const root = this.rootClass(), meta = this.memory.allocate(40), namePointer = this.cstring('NSString');
+  const importedName = this.memory.imports.get(handle)?.name;
+  const foundation = importedName?.startsWith('_OBJC_CLASS_$_') ? importedName.slice('_OBJC_CLASS_$_'.length) : null;
+  if (!this.classes.has(handle) && ['NSString', 'NSNotificationCenter'].includes(foundation)) {
+   const root = this.rootClass(), meta = this.memory.allocate(40), namePointer = this.cstring(foundation);
    this.memory.write(meta, new Uint8Array(40)); this.memory.writePointer(meta, root.metaclass); this.memory.writePointer(meta + 8, root.metaclass);
-   this.classes.set(handle, { handle, name: 'NSString', namePointer, superclass: root.handle, metaclass: meta, size: 8, registered: true, builtin: true, foundation: 'NSString', methods: new Map(), ivars: new Map(), protocols: new Set() });
-   this.classes.set(meta, { handle: meta, name: 'NSString', namePointer, superclass: root.metaclass, metaclass: root.metaclass, size: 40, registered: true, builtin: true, meta: true, methods: new Map(), ivars: new Map(), protocols: new Set() });
-   this.names.set('NSString', handle);
+   this.classes.set(handle, { handle, name: foundation, namePointer, superclass: root.handle, metaclass: meta, size: 8, registered: true, builtin: true, foundation, methods: new Map(), ivars: new Map(), protocols: new Set() });
+   this.classes.set(meta, { handle: meta, name: foundation, namePointer, superclass: root.metaclass, metaclass: root.metaclass, size: 40, registered: true, builtin: true, meta: true, methods: new Map(), ivars: new Map(), protocols: new Set() });
+   this.names.set(foundation, handle);
   }
   const record = this.classes.get(handle);
   if (!record) {
@@ -199,6 +201,28 @@ export class GuestObjC {
   }
   return 0;
  }
+ centerMessage(receiver, name, record, object) {
+  if (!object && name === 'defaultCenter') {
+   if (!this.defaultCenter) {
+    this.defaultCenter = this.instance(record.handle, 0);
+    this.objects.get(this.defaultCenter).references = 1;
+   }
+   return this.defaultCenter;
+  }
+  if (!object) return undefined;
+  object.references ??= 1;
+  switch (name) {
+   case 'retain':
+    if (object.references >= 65536) throw new GuestObjCError('NSNotificationCenter reference limit exceeded');
+    object.references++; return receiver;
+   case 'retainCount': return object.references;
+   case 'release':
+    if (receiver === this.defaultCenter && object.references === 1) return 0;
+    if (--object.references === 0) { this.objects.delete(receiver); this.memory.allocations.delete(receiver); }
+    return 0;
+   case 'autorelease': return this.autorelease(receiver);
+  }
+ }
  stringMessage(receiver, name, record, object) {
   const argument = this.memory.register('RDX');
   const initialize = (handle, bytes) => {
@@ -246,6 +270,7 @@ export class GuestObjC {
   const method = this.lookup(lookup, name);
   if (method) return { tailCall: method.implementation };
   if (record.foundation === 'NSString') { const result = this.stringMessage(receiver, name, record, object); if (result !== undefined) return result; }
+  if (record.foundation === 'NSNotificationCenter') { const result = this.centerMessage(receiver, name, record, object); if (result !== undefined) return result; }
   let builtin = false;
   for (let current = lookup; current; current = current.superclass ? this.klass(current.superclass) : null) if (current.builtin) builtin = true;
   if (builtin) {
@@ -272,7 +297,11 @@ export class GuestObjC {
    case '_objc_autoreleasePoolPop': {
     const index = this.pools.findIndex(pool => pool.token === first); if (index < 0) throw new GuestObjCError('Invalid autorelease pool token');
     for (const pool of this.pools.splice(index).reverse()) {
-     for (const handle of pool.entries.reverse()) this.releaseString(handle);
+     for (const handle of pool.entries.reverse()) {
+      const object = this.objects.get(handle);
+      if (object && this.klass(object.classHandle).foundation === 'NSNotificationCenter') this.centerMessage(handle, 'release', null, object);
+      else this.releaseString(handle);
+     }
      this.memory.allocations.delete(pool.token);
     }
     return 0;
@@ -282,8 +311,9 @@ export class GuestObjC {
    case '_objc_disposeClassPair': return this.disposeClass(first);
    case '_objc_getClass': case '_objc_lookUpClass': case '_objc_getMetaClass': {
     const requested = string(first); if (requested === 'NSObject') this.rootClass();
-    if (requested === 'NSString' && !this.names.has(requested)) {
-     const imported = [...this.memory.imports].find(([, entry]) => entry.name === '_OBJC_CLASS_$_NSString'); if (imported) this.klass(imported[0]);
+    if (['NSString', 'NSNotificationCenter'].includes(requested) && !this.names.has(requested)) {
+     const imported = [...this.memory.imports].find(([, entry]) => entry.name === `_OBJC_CLASS_$_${requested}`);
+     this.klass(imported?.[0] ?? this.memory.resolve(`_OBJC_CLASS_$_${requested}`, 0, 'bind'));
     }
     const record = this.classes.get(this.names.get(requested));
     if (!record && [...this.memory.imports.values()].some(entry => entry.name === `_OBJC_CLASS_$_${requested}`)) throw new GuestObjCError(`Imported Foundation class is not implemented: ${requested}`);
@@ -332,6 +362,7 @@ export class GuestObjC {
    case '_class_createInstance': return this.instance(first, second);
    case '_object_dispose': {
     if (!first) return 0;
+    if (first === this.defaultCenter) throw new GuestObjCError('Cannot dispose the default notification center');
     const object = this.objects.get(first); if (!object) throw new GuestObjCError('Unknown Objective-C instance');
     if (this.lookup(this.klass(object.classHandle), '.cxx_destruct')) throw new GuestObjCError('Guest C++ Objective-C instance destructors are not implemented');
     this.objects.delete(first); this.memory.allocations.delete(first); return 0;

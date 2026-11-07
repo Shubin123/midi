@@ -1575,8 +1575,9 @@ registration imports, libc++ strings/locales, Darwin character tables, embedded
 font metadata/ownership, CoreFoundation strings/numbers/dictionaries, autorelease
 pools and thread-local key creation. **All 768 static initializers complete in
 the browser.** The real `bundleEntry` now succeeds and initialized factory class
-IDs are valid. Processor creation then stops at the unsupported Cocoa
-`NSNotificationCenter` class, before any Arcade audio is processed. The experiment
+IDs are valid. Cocoa `NSNotificationCenter defaultCenter` now returns a persistent
+guest-local center. Processor creation then stops at the unsupported AppKit data
+import `_NSMenuDidBeginTrackingNotification`, before any Arcade audio is processed. The experiment
 now has a bounded VST3 processor/MIDI bridge and an offline WAV preview, verified
 with generated x86 fixtures; this does not make Arcade playable or provide
 realtime native MIDI hosting. Generated fixtures also verify actual guest
