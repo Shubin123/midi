@@ -1,5 +1,6 @@
 // Drags every widget in the app in headless Chrome (tests/support/browser.mjs) and checks the space it will
-// drop into (tests/widgets-app.js), at the width of each layout: four columns, two, and one.
+// drop into, and that every widget's content keeps clear of its edges (tests/widgets-app.js), at the width of
+// each layout: four columns, two, and one.
 import { launch, print, unexpected } from './support/browser.mjs';
 
 const t0 = Date.now();

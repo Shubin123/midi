@@ -3,7 +3,8 @@
 // already open, outlined, and empty of other widgets, with the widget itself under the pointer; resting on a
 // widget must not make the space jump back and forth; Escape puts everything back; a drop lands exactly in
 // the outlined space; and the outline left where it was lifted from is empty, with no words, for widgets and
-// plug-in windows alike. Returns { checks: [{ name, ok, problems }] }.
+// plug-in windows alike. First, nothing drawn inside a widget comes closer than 16 px to its left or right
+// edge. Returns { checks: [{ name, ok, problems }] }.
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const workspace = () => document.getElementById('workspace');
@@ -93,9 +94,33 @@ async function drag(el, onto, { drop = false, at = [0.5, 0.5] } = {}) {
  return problems;
 }
 
+// Everything drawn inside a widget (text, a control, a bordered or filled box) keeps 16 px from its left and right
+// edges, as the widget's own labels do, in one column too. What scrolls sideways inside a box is left to the box.
+function insets() {
+ const problems = [];
+ for (const w of visible()) {
+  const r0 = w.getBoundingClientRect(), left = r0.left + w.clientLeft, right = left + w.clientWidth;
+  for (const n of w.querySelectorAll('*')) {
+   if (n.closest('.widget-header, .resize-grip')) continue;
+   const r = n.getBoundingClientRect(), cs = getComputedStyle(n);
+   if (!r.width || !r.height || cs.visibility === 'hidden') continue;
+   let scrolls = false;
+   for (let p = n.parentElement; p !== w && !scrolls; p = p.parentElement) scrolls = getComputedStyle(p).overflowX !== 'visible' && p.scrollWidth > p.clientWidth + 1;
+   const drawn = (parseFloat(cs.borderLeftWidth) > 0 && cs.borderLeftStyle !== 'none') || !/^rgba\(0, 0, 0, 0\)$|^transparent$/.test(cs.backgroundColor)
+    || [...n.childNodes].some(c => c.nodeType === 3 && c.textContent.trim()) || /^(input|select|button|canvas|textarea|svg|img|output)$/i.test(n.tagName);
+   if (scrolls || !drawn) continue;
+   const l = r.left - left, rr = right - r.right;
+   if (l < 15.5 || rr < 15.5) problems.push(`${title(w)}: ${n.tagName.toLowerCase()}${n.className && typeof n.className === 'string' ? `.${n.className.trim().split(/\s+/).join('.')}` : ''} "${(n.textContent || n.value || '').trim().slice(0, 30)}" is ${Math.round(l)} px from the left edge and ${Math.round(rr)} px from the right`);
+  }
+ }
+ return problems;
+}
+
 export async function runWidgets() {
  const checks = [];
  const add = (name, problems) => checks.push({ name, ok: !problems.length, problems });
+ const inset = insets();
+ add('everything inside a widget keeps 16 px from its left and right edges', inset.slice(0, 6).concat(inset.length > 6 ? [`…and ${inset.length - 6} more`] : []));
  const widgets = visible();
  // Every widget onto every other one, cancelled each time so each starts from the same layout.
  for (const el of widgets) {
