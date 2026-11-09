@@ -44,7 +44,7 @@ export function parseMachO(input) {
   if (stop === end) fail('unterminated string');
   return text.decode(bytes.subarray(offset, stop));
  };
- const segments = [], libraries = [], streams = {}, symbols = new Map(), initializers = [], selectors = [], protocols = [];
+ const segments = [], libraries = [], streams = {}, symbols = new Map(), initializers = [], selectors = [], protocols = [], threadLocal = [];
  let symtab, offset = 32;
  for (let index = 0; index < count; index++) {
   range(offset, 8, commandEnd);
@@ -62,6 +62,8 @@ export function parseMachO(input) {
     const sectionOffset = offset + 72 + sectionIndex * 80;
     const address = u64(sectionOffset + 32), length = u64(sectionOffset + 40);
     if (!Number.isSafeInteger(address + length) || address < segment.address || address + length > segment.address + segment.size) fail('section exceeds segment');
+    const sectionType = view.getUint32(sectionOffset + 64, true) & 255;
+    if (sectionType === 0x11 || sectionType === 0x12) threadLocal.push({ address, size: length, zero: sectionType === 0x12 });
     if ((view.getUint32(sectionOffset + 64, true) & 255) === 9) {
      if (length % 8) fail('misaligned initializer section');
      initializers.push({ address, size: length });
@@ -121,7 +123,7 @@ export function parseMachO(input) {
    symbols.set(string(symtab.strings + name, symtab.strings + symtab.size), u64(symbolOffset + 8));
   }
  }
- return { bytes, segments: mapped, dyldSegments: segments, libraries, streams, symbols, initializers, selectors, protocols, minimum, maximum };
+ return { bytes, segments: mapped, dyldSegments: segments, libraries, streams, symbols, initializers, selectors, protocols, threadLocal, minimum, maximum };
 }
 
 export function dyldFixups(image, slide, { readPointer, writePointer, resolve }) {

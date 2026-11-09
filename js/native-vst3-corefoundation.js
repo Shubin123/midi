@@ -3,6 +3,7 @@ import { readSfnt, sfntName } from './native-vst3-font.js';
 export const coreStringConstants = new Map([['_kCTFontFamilyNameKey', 'CTFontFamilyName'], ['_kCTFontStyleNameKey', 'CTFontSubFamilyName'], ['_kCTFontPostScriptNameKey', 'CTFontPostScriptName'], ['_kCTFontAttributeName', 'NSFont'], ['_kCTLigatureAttributeName', 'NSLigature'], ['_kCTKernAttributeName', 'NSKern']]);
 export const coreCallbackConstants = new Set(['_kCFTypeDictionaryKeyCallBacks', '_kCFTypeDictionaryValueCallBacks', '_kCFTypeArrayCallBacks']);
 coreStringConstants.set('_kCFRunLoopDefaultMode', 'kCFRunLoopDefaultMode');
+coreStringConstants.set('_kCGColorSpaceSRGB', 'kCGColorSpaceSRGB');
 coreStringConstants.set('_kCFRunLoopCommonModes', 'kCFRunLoopCommonModes');
 
 export const coreImports = new Set(['_CFDataCreate', '_CFDataCreateWithBytesNoCopy', '_CFDataGetLength', '_CFDataGetBytePtr', '_CFDataCreateCopy', '_CFRetain', '_CFGetRetainCount', '_CGDataProviderCreateWithCFData', '_CGDataProviderRetain', '_CGDataProviderRelease', '_CGFontCreateWithDataProvider', '_CGFontRetain', '_CGFontRelease', '_CTFontManagerRegisterGraphicsFont', '_CTFontManagerUnregisterGraphicsFont', '_CFErrorGetCode', '_CTFontCreateWithGraphicsFont', '_CTFontGetAscent', '_CTFontGetDescent', '_CTFontGetLeading', '_CTFontGetSize', '_CTFontGetUnitsPerEm', '_CTFontGetGlyphCount', '_CTFontCopyName', '_CTFontCopyFamilyName', '_CTFontCopyPostScriptName', '_CGFontCopyPostScriptName', '_CGFontCopyFullName', '_CFStringGetLength', '_CFStringGetCString', '_CFStringGetCStringPtr', '_CFStringGetCharacters', '_CFStringGetMaximumSizeForEncoding', '_CFStringCreateWithCString']);
@@ -60,14 +61,16 @@ export class GuestCoreFoundation {
   this.objects.set(handle, { kind, references: 1, ...properties }); return handle;
  }
  object(handle, kind) {
-  const record = this.objects.get(handle);
+  const cocoa = this.memory.objc?.objects.get(handle), record = this.objects.get(handle) || (cocoa?.kind === 'data' ? cocoa : null);
   if (!record || kind && record.kind !== kind) throw new Error(`Invalid CoreFoundation ${kind || 'object'}`);
   return record;
  }
  release(handle) {
+  if (!this.objects.has(handle) && this.memory.objc?.objects.get(handle)?.kind === 'data') return this.memory.objc.releaseObject(handle);
   const record = this.object(handle);
   if (record.immortal) return 0;
   if (--record.references === 0) {
+   record.finalize?.();
    if (record.owned) this.memory.allocations.delete(record.pointer);
    if (record.retained) this.release(record.retained);
    if (record.retainedMany) for (const child of record.retainedMany) this.release(child);

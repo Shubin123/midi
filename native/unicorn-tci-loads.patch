@@ -1,0 +1,46 @@
+--- a/unicorn/qemu/tcg/tci.c
++++ b/unicorn/qemu/tcg/tci.c
+@@ -596,11 +596,20 @@
+             break;
+         case INDEX_op_ld8s_i32:
+-            TODO();
++            t0 = *tb_ptr++;
++            t1 = tci_read_r(regs, &tb_ptr);
++            t2 = tci_read_s32(&tb_ptr);
++            tci_write_reg32(regs, t0, (uint32_t)(int32_t)*(int8_t *)(t1 + t2));
+             break;
+         case INDEX_op_ld16u_i32:
+-            TODO();
++            t0 = *tb_ptr++;
++            t1 = tci_read_r(regs, &tb_ptr);
++            t2 = tci_read_s32(&tb_ptr);
++            tci_write_reg32(regs, t0, (uint32_t)(int32_t)*(uint16_t *)(t1 + t2));
+             break;
+         case INDEX_op_ld16s_i32:
+-            TODO();
++            t0 = *tb_ptr++;
++            t1 = tci_read_r(regs, &tb_ptr);
++            t2 = tci_read_s32(&tb_ptr);
++            tci_write_reg32(regs, t0, (uint32_t)(int32_t)*(int16_t *)(t1 + t2));
+             break;
+         case INDEX_op_ld_i32:
+@@ -867,5 +876,8 @@
+             break;
+         case INDEX_op_ld8s_i64:
+-            TODO();
++            t0 = *tb_ptr++;
++            t1 = tci_read_r(regs, &tb_ptr);
++            t2 = tci_read_s32(&tb_ptr);
++            tci_write_reg64(regs, t0, (uint64_t)(int64_t)*(int8_t *)(t1 + t2));
+             break;
+         case INDEX_op_ld16u_i64:
+@@ -876,5 +888,8 @@
+             break;
+         case INDEX_op_ld16s_i64:
+-            TODO();
++            t0 = *tb_ptr++;
++            t1 = tci_read_r(regs, &tb_ptr);
++            t2 = tci_read_s32(&tb_ptr);
++            tci_write_reg64(regs, t0, (uint64_t)(int64_t)*(int16_t *)(t1 + t2));
+             break;
+         case INDEX_op_ld32u_i64:

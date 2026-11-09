@@ -1,6 +1,7 @@
 const MAX_STRING = 1 << 20;
 const STRING_PREFIX = /^__ZN(K?)St3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE/;
-export const guestStringImport = name => STRING_PREFIX.test(name);
+const STRING_CONCATENATE = '__ZNSt3__1plIcNS_11char_traitsIcEENS_9allocatorIcEEEENS_12basic_stringIT_T0_T1_EEPKS6_RKS9_';
+export const guestStringImport = name => STRING_PREFIX.test(name) || name === STRING_CONCATENATE;
 
 export function readGuestString(memory, address) {
  const representation = memory.read(address, 24), view = new DataView(representation.buffer, representation.byteOffset, representation.byteLength);
@@ -35,6 +36,13 @@ export class GuestStrings {
  invoke(name, args) {
   const [destination, source, third, fourth, fifth] = args, suffix = name.replace(STRING_PREFIX, ''), memory = this.memory;
   const unsigned = index => memory.argument64(index), count = (value, maximum) => Number(value > BigInt(maximum) ? BigInt(maximum) : value);
+  if (name === STRING_CONCATENATE) {
+   if (destination === third) throw new Error('libc++ string concatenation result cannot alias its source');
+   const left = memory.stringBytes(source, MAX_STRING + 1), right = readGuestString(memory, third).bytes;
+   if (left.length + right.length > MAX_STRING) throw new Error('libc++ string exceeds supported limit');
+   const contents = new Uint8Array(left.length + right.length); contents.set(left); contents.set(right, left.length);
+   return writeGuestString(memory, destination, contents);
+  }
   if (suffix === 'C1ERKS5_' || suffix === 'C2ERKS5_') return copyGuestString(memory, destination, source);
   const record = suffix.startsWith('C') ? null : readGuestString(memory, destination), contents = record?.bytes;
   const position = value => { if (value > BigInt(contents.length)) throw new Error('libc++ string position out of range'); return Number(value); };

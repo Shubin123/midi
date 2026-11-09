@@ -14,6 +14,7 @@ export class GuestRunLoop {
  }
  invoke(name, [first, second, third]) {
   const core = this.memory.core;
+  if (name === '_CFRunLoopGetCurrent' && this.memory.threads && this.memory.threads.current !== this.memory.threads.main) throw new Error('Secondary guest run loops are not implemented');
   if (name === '_CFRunLoopGetMain' || name === '_CFRunLoopGetCurrent') return this.main();
   if (name === '_CFRunLoopSourceCreate') {
    if (first !== 0) throw new Error('Custom run-loop source allocators are unsupported');

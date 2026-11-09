@@ -7,8 +7,8 @@ No commercial plugin code is included.
 - Unicorn.js source: https://github.com/AlexAltea/unicorn.js
 - Unicorn.js commit: `1220477c7fb0f8fe4b500f4bd211de52f6dfe638`
 - Unicorn submodule: `8028ec436f2d9376525352dd38ed9ed6b9f6be10`
-- Engine SHA-256: `75c6b66b745079190372efc245e462374a5db8cc45f9e4edccd242122fc6a632`
-- Corresponding source archive SHA-256: `ff976b48a43115f20e440fe75402fb3049043f93044428d05e9432652de94505`
+- Engine SHA-256: `5ff21197e8c6413b1255b28b219e901b14436d9765de8c3deda176f12fd58191`
+- Corresponding source archive SHA-256: `83cbe49ea9017abeedb6dd150a3201c43af3bf4b33f5cf3d3048dcfe9c14a643`
 - Build toolchain used: Emscripten `6.0.13-git`, Python `3.14.10`, CMake.
 
 `source.tar.gz` contains the complete corresponding source snapshot, including
@@ -26,6 +26,11 @@ call. Previously these temporaries accumulated across a translation block,
 corrupting the compiler context during long memory-instrumented blocks. The
 optimizer is still enabled. The build uses Release optimization, a 4 MiB
 Emscripten stack, and no ASAN/profiling instrumentation.
+
+In `unicorn/qemu/tcg/tci.c`, the `ld8s_i32`, `ld16u_i32`, `ld16s_i32`, `ld8s_i64` and
+`ld16s_i64` interpreter operations were unimplemented `TODO()` aborts. They now perform
+the sign- or zero-extending loads (`native/unicorn-tci-loads.patch`), so instructions
+such as `pextrw` execute instead of aborting the engine.
 
 The independent regression in `tests/native-vst3-engine.mjs` executes a long
 sequence of memory loads/stores with import-range instrumentation. It contains

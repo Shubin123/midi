@@ -128,7 +128,7 @@ const centerAllocations = memory.allocations.size;
 for (let index = 0; index < 100; index++) assert.equal(invoke('objc_msgSend', centerClass, centerSelector), center);
 assert.equal(memory.allocations.size, centerAllocations);
 assert.throws(() => invoke('object_dispose', center), /default notification center/);
-assert.throws(() => invoke('objc_msgSend', center, string('addObserver:selector:name:object:')), error => error.details.className === 'NSNotificationCenter' && error.details.selector === 'addObserver:selector:name:object:');
+assert.throws(() => invoke('objc_msgSend', center, string('addObserverForName:object:queue:usingBlock:')), error => error.details.className === 'NSNotificationCenter' && error.details.selector === 'addObserverForName:object:queue:usingBlock:');
 assert.throws(() => invoke('objc_msgSend', center, centerSelector), /Unsupported Objective-C message/);
 const privateCenter = invoke('objc_msgSend', centerClass, string('new'));
 assert.notEqual(privateCenter, center); assert.equal(invoke('objc_msgSend', privateCenter, string('init')), privateCenter);

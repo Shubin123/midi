@@ -11,19 +11,23 @@
  <main>
   <a href="../index.html">← Back to the synth</a>
   <h1>Native VST3 browser experiment</h1>
-  <p>This attempts to execute Intel macOS plugin machine code through an Emscripten-built x86 emulator, entirely in a disposable browser worker. It is <strong>not a working native plugin player or a source-code decompiler</strong>.</p>
+  <p>This attempts to execute Intel macOS plugin machine code through an Emscripten-built x86 emulator, entirely in a disposable browser worker. Plugins that need no account can be played live here (verified with the free Dexed 0.9.8 synthesizer); it is <strong>not a source-code decompiler</strong>, and many plugins stop on unsupported macOS features.</p>
   <p>Select a macOS <code>.pkg</code>, a ZIP containing one <code>.vst3</code> bundle, or the executable inside <code>Contents/MacOS</code>. Only analyze plugins you are authorized to use. No installer scripts run; no licensing checks are bypassed.</p>
   <label for="plugin">Plugin file</label>
   <input id="plugin" type="file">
+  <label><input id="network" type="checkbox"> Let the plugin use the network (off: its requests fail as offline and nothing is sent)</label>
   <div class="actions">
    <button id="startup" disabled>Try normal startup</button>
    <button id="factory" disabled>Factory-only diagnostic</button>
    <button id="processor" disabled>Try audio processor</button>
    <button id="render" disabled>Render note 60 preview</button>
+   <button id="live" disabled>Play live</button>
    <button id="stop" disabled>Stop</button>
   </div>
-  <p>Normal startup runs initializers and bundle entry. The processor probe attempts the real component and audio interfaces; the render probe processes a bounded quarter-second note offline and offers a WAV preview only if processing succeeds. This is not realtime MIDI playback. Unsupported macOS dependencies stop execution explicitly. Arcade now obtains its Cocoa default notification center, but stops during component creation at the unsupported AppKit notification-name import <code>_NSMenuDidBeginTrackingNotification</code>. Factory-only mode deliberately skips initialization; its metadata can be incomplete or invalid.</p>
+  <p>Normal startup runs initializers and bundle entry. The processor probe attempts the real component and audio interfaces; the render probe processes a bounded quarter-second note offline and offers a WAV preview only if processing succeeds. This is not realtime MIDI playback. Unsupported macOS dependencies stop execution explicitly. Arcade passes Cocoa notification names, malloc zones, RTTI casts, numeric parsing, process-info queries, guest thread creation, Cocoa thread identity/name assignment, chrono clocks, timed condition waits, nothrow allocation, mapped-image lookup, virtual working-directory queries, Darwin64 filesystem statistics, UTC calendar conversion, executable-path lookup, guest application identity/name, HTTP(S) URL parsing, request construction, copied bodies, mutable buffers and delegate pointer-ivar assignment. Disk Arbitration reports its service unavailable, without fabricating a session or disk identity. Eight x86 workers now start; nanosleep parks only its calling thread on a real monotonic deadline. Default session configuration, operation-queue lookup, session construction and suspended data-task creation now pass. URL session tasks deliver the plugin's real delegate callbacks, and Arcade now completes its full VST3 lifecycle and processes a real MIDI note in this worker. Task resume/cancel/suspend, session invalidation, transport and delegate callbacks remain unsupported. Unless you allow network access above, the plugin's requests fail as offline and nothing is sent. Without a signed-in Output account, which is neither provided nor imitated, Arcade renders silence. Operation submission remains unsupported. Realtime priority changes return unsupported, not fabricated success. No Arcade audio has been processed. Factory-only mode deliberately skips initialization; its metadata can be incomplete or invalid.</p>
   <p>The plugin stays on your machine. The patched, integrity-checked GPL-2.0 Unicorn.js engine loads from <code>vendor/unicorn</code>, which includes its corresponding source and license. No CDN or dependency installation is required. File parsing and emulation have size and execution limits; this is not a security audit of untrusted plugins.</p>
+  <div id="keys" role="group" aria-label="Play notes" hidden></div>
+  <p id="live-help" hidden>Play with the on-screen keys, your computer keyboard (A W S E D F T G Y H U J K), or a connected MIDI keyboard.</p>
   <p id="status" role="status" aria-live="polite">Choose a plugin to begin.</p>
   <pre id="result" tabindex="0" aria-label="Execution report"></pre>
   <audio id="preview" controls hidden aria-label="Rendered native plugin audio"></audio>

@@ -1,4 +1,4 @@
-const HASH = '75c6b66b745079190372efc245e462374a5db8cc45f9e4edccd242122fc6a632';
+const HASH = '5ff21197e8c6413b1255b28b219e901b14436d9765de8c3deda176f12fd58191';
 const LOCAL = new URL('../vendor/unicorn/unicorn.cjs', import.meta.url);
 
 export async function loadNativeEngine() {

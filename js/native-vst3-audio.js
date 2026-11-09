@@ -7,12 +7,14 @@ const ids = {
 };
 const hex = bytes => Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
 const fromHex = value => Uint8Array.from(value.match(/../g), byte => parseInt(byte, 16));
+// Uncounted runs are about four times faster but cannot be preempted mid-quantum; the page-side watchdog terminates a wedged worker.
+const LIFECYCLE_LIMITS = { instructionBudget: 20000000000, milliseconds: 110000, longRunning: true, uncounted: true }, BLOCK_LIMITS = { instructionBudget: 100000000, milliseconds: 30000, uncounted: true };
 const returned32 = memory => Number(BigInt.asIntN(32, memory.engine.reg_read_i64(memory.uc.X86_REG_RAX)));
 
 export class NativeVst3Processor {
- constructor(memory) {
+ constructor(memory, { blockLimits = BLOCK_LIMITS } = {}) {
   if (memory.audioHost) throw new Error('A native guest can host only one processor');
-  this.memory = memory; memory.audioHost = this; this.stage = 'new'; this.objects = new Map(); this.events = [];
+  this.memory = memory; this.blockLimits = blockLimits; memory.audioHost = this; this.stage = 'new'; this.objects = new Map(); this.events = [];
   this.component = 0; this.processor = 0; this.componentInitialized = false; this.active = false; this.processing = false;
   this.blocksProcessed = 0; this.framesProcessed = 0; this.failure = null;
  }
@@ -59,9 +61,17 @@ export class NativeVst3Processor {
    default: throw new Error('Unsupported VST3 host callback');
   }
  }
- checked(object, slot, args, operation) {
-  this.memory.virtual(object, slot, args); const code = returned32(this.memory);
+ checked(object, slot, args, operation, limits) {
+  this.virtual(object, slot, args, limits); const code = returned32(this.memory);
   if (code !== 0) throw new Error(`${operation} failed (${code})`);
+ }
+ virtual(object, slot, args = [], limits) {
+  const token = this.memory.objc.invoke('_objc_autoreleasePoolPush', []); let failed = false;
+  try { return this.memory.virtual(object, slot, args, limits); }
+  catch (error) { failed = true; throw error; }
+  finally {
+   try { this.memory.objc.invoke('_objc_autoreleasePoolPop', [token]); } catch (error) { if (!failed) throw error; }
+  }
  }
  open({ classIndex, sampleRate = 48000, maxBlock = 128 } = {}) {
   if (this.stage !== 'new') throw new Error('Native processor has already been opened');
@@ -76,10 +86,10 @@ export class NativeVst3Processor {
    if (!/^[0-9a-f]{32}$/.test(this.classInfo.cid) || /^0+$/.test(this.classInfo.cid)) throw new Error('Audio component class ID is invalid');
    const cid = this.memory.allocate(16), iid = this.memory.allocate(16), output = this.memory.allocate(8);
    this.memory.write(cid, fromHex(this.classInfo.cid)); this.memory.write(iid, fromHex(ids.component)); this.memory.writePointer(output, 0);
-   this.stage = 'creating-component'; this.checked(this.memory.factory, 6, [cid, iid, output], 'createInstance');
+   this.stage = 'creating-component'; this.checked(this.memory.factory, 6, [cid, iid, output], 'createInstance', LIFECYCLE_LIMITS);
    this.component = this.memory.pointer(output); if (!this.component) throw new Error('createInstance returned a null component');
    this.host = this.object('host', ['query', 'retain', 'release', 'name', 'create']);
-   this.stage = 'initializing-component'; this.checked(this.component, 3, [this.host], 'IComponent.initialize'); this.componentInitialized = true;
+   this.stage = 'initializing-component'; this.checked(this.component, 3, [this.host], 'IComponent.initialize', LIFECYCLE_LIMITS); this.componentInitialized = true;
    this.stage = 'querying-processor'; this.memory.write(iid, fromHex(ids.processor)); this.memory.writePointer(output, 0);
    this.checked(this.component, 0, [iid, output], 'IAudioProcessor query'); this.processor = this.memory.pointer(output);
    if (!this.processor) throw new Error('IAudioProcessor query returned null');
@@ -91,15 +101,15 @@ export class NativeVst3Processor {
    this.data = this.memory.allocate(80); this.memory.write(this.data, new Uint8Array(80));
    const setup = this.memory.allocate(24), bytes = new Uint8Array(24), view = new DataView(bytes.buffer);
    view.setInt32(0, 2, true); view.setInt32(8, maxBlock, true); view.setFloat64(16, sampleRate, true); this.memory.write(setup, bytes);
-   this.checked(this.processor, 7, [setup], 'setupProcessing');
+   this.checked(this.processor, 7, [setup], 'setupProcessing', LIFECYCLE_LIMITS);
    for (const [media, direction, buses] of [[0, 0, this.inputBuses], [0, 1, this.outputBuses], [1, 0, this.eventBuses]]) for (let bus = 0; bus < buses.length; bus++) this.checked(this.component, 10, [media, direction, bus, 1], 'activateBus');
-   this.checked(this.component, 11, [1], 'setActive'); this.active = true;
-   this.checked(this.processor, 8, [1], 'setProcessing'); this.processing = true; this.stage = 'processing';
+   this.checked(this.component, 11, [1], 'setActive', LIFECYCLE_LIMITS); this.active = true;
+   this.checked(this.processor, 8, [1], 'setProcessing', LIFECYCLE_LIMITS); this.processing = true; this.stage = 'processing';
    return { name: this.classInfo.name, sampleRate, maxBlock, inputs: this.inputBuses.map(bus => bus.channels), outputs: this.outputBuses.map(bus => bus.channels), eventInputs: this.eventBuses.length };
   } catch (error) { this.failure = error; this.failureStage = this.stage; throw error; }
  }
  buses(media, direction) {
-  this.memory.virtual(this.component, 7, [media, direction]); const count = returned32(this.memory);
+  this.virtual(this.component, 7, [media, direction]); const count = returned32(this.memory);
   if (count < 0 || count > 16) throw new Error('Native bus count exceeds the supported limit');
   const buses = [], info = this.memory.allocate(280); let channels = 0;
   for (let index = 0; index < count; index++) {
@@ -149,7 +159,7 @@ export class NativeVst3Processor {
   view.setBigUint64(24, BigInt(this.inputs.address), true); view.setBigUint64(32, BigInt(this.outputs.address), true); view.setBigUint64(56, BigInt(this.eventBuses.length ? this.eventList : 0), true);
   this.memory.write(this.data, data); this.events = notes;
   try {
-   this.memory.runLoop.drain(); this.checked(this.processor, 9, [this.data], 'process');
+   this.memory.runLoop.drain(); this.checked(this.processor, 9, [this.data], 'process', this.blockLimits);
    const result = this.outputs.channels.map(bus => bus.map(pointer => {
     const bytes = this.memory.read(pointer, frames * 4), samples = new Float32Array(bytes.slice().buffer);
     if (samples.some(value => !Number.isFinite(value))) throw new Error('Native processor returned non-finite audio'); return samples;
@@ -160,11 +170,11 @@ export class NativeVst3Processor {
  close() {
   if (this.stage === 'closed') return;
   try {
-   if (this.processing) { this.checked(this.processor, 8, [0], 'stop processing'); this.processing = false; }
-   if (this.active) { this.checked(this.component, 11, [0], 'deactivate'); this.active = false; }
-   if (this.componentInitialized) { this.checked(this.component, 4, [], 'terminate'); this.componentInitialized = false; }
-   if (this.processor) { this.memory.virtual(this.processor, 2); this.processor = 0; }
-   if (this.component) { this.memory.virtual(this.component, 2); this.component = 0; }
+   if (this.processing) { this.checked(this.processor, 8, [0], 'stop processing', LIFECYCLE_LIMITS); this.processing = false; }
+   if (this.active) { this.checked(this.component, 11, [0], 'deactivate', LIFECYCLE_LIMITS); this.active = false; }
+   if (this.componentInitialized) { this.checked(this.component, 4, [], 'terminate', LIFECYCLE_LIMITS); this.componentInitialized = false; }
+   if (this.processor) { this.virtual(this.processor, 2, [], LIFECYCLE_LIMITS); this.processor = 0; }
+   if (this.component) { this.virtual(this.component, 2, [], LIFECYCLE_LIMITS); this.component = 0; }
   } finally {
    for (const address of [this.host, this.eventList]) if (this.objects.has(address)) this.invoke('__midi_vst3_release', [address]);
    this.stage = 'closed';
@@ -176,7 +186,7 @@ export class NativeVst3Processor {
 export function renderNativeNote(memory, { frames = 12000, sampleRate = 48000, maxBlock = 128, pitch = 60, velocity = 0.8, inputs = [] } = {}, progress = () => {}) {
  if (!Number.isInteger(frames) || frames < 2 || frames > 48000 || !Number.isInteger(pitch) || pitch < 0 || pitch > 127 || !Number.isFinite(velocity) || velocity < 0 || velocity > 1 || !Array.isArray(inputs) || inputs.length > 16) throw new Error('Invalid native render request');
  for (const bus of inputs) if (!Array.isArray(bus) || bus.length > 32 || bus.some(channel => !(channel instanceof Float32Array) || channel.length !== frames)) throw new Error('Invalid native render inputs');
- const processor = new NativeVst3Processor(memory); let failed = false;
+ const processor = new NativeVst3Processor(memory); let failed = false, result;
  try {
   progress('opening-processor'); const info = processor.open({ sampleRate, maxBlock });
   const channels = info.outputs.map(count => Array.from({ length: count }, () => new Float32Array(frames))), release = Math.floor(frames * 0.75);
@@ -190,7 +200,8 @@ export function renderNativeNote(memory, { frames = 12000, sampleRate = 48000, m
     channels[index][channelIndex].set(channel, offset); for (const value of channel) peak = Math.max(peak, Math.abs(value));
    }));
   }
-  return { sampleRate, frames, peak, silent: peak === 0, buses: channels, blocksProcessed: processor.blocksProcessed, realtime: false };
+  result = { sampleRate, frames, peak, silent: peak === 0, buses: channels, blocksProcessed: processor.blocksProcessed, realtime: false };
  } catch (error) { failed = true; throw error; }
- finally { try { processor.close(); } catch (error) { if (!failed) throw error; } }
+ finally { try { processor.close(); } catch (error) { if (!failed) result.closeError = error.message; } }
+ return result;
 }

@@ -1576,15 +1576,57 @@ font metadata/ownership, CoreFoundation strings/numbers/dictionaries, autoreleas
 pools and thread-local key creation. **All 768 static initializers complete in
 the browser.** The real `bundleEntry` now succeeds and initialized factory class
 IDs are valid. Cocoa `NSNotificationCenter defaultCenter` now returns a persistent
-guest-local center. Processor creation then stops at the unsupported AppKit data
-import `_NSMenuDidBeginTrackingNotification`, before any Arcade audio is processed. The experiment
-now has a bounded VST3 processor/MIDI bridge and an offline WAV preview, verified
-with generated x86 fixtures; this does not make Arcade playable or provide
-realtime native MIDI hosting. Generated fixtures also verify actual guest
-Objective-C and locale-facet method dispatch in the browser.
-**Arcade does not play audio.**
+guest-local center, with synchronous selector-based observer delivery verified
+using generated x86 callbacks. The supplied-installer processor probe passes
+`_NSMenuDidBeginTrackingNotification`, filesystem/Unicode calls, Darwin malloc
+zones, atomic CAS, libc++ concatenation, RTTI casts, C-locale numeric parsing,
+floating-point diagnostics, combined sine/cosine and `NSProcessInfo` CPU queries.
+Thread attribute initialization, detach/scheduling settings and page-aligned
+stack/guard-size accessors are supported. Bounded guest pthreads now execute real
+x86 entry points with separate guarded stacks, CPU contexts, TLS, errno and
+autorelease pools; mutex/condition handoffs, join, detach and exit are implemented.
+Realtime priority requests explicitly return unsupported rather than claiming
+realtime execution. Arcade now passes **`NSThread currentThread` and `setName:`**
+in its actual worker thread during component creation.
+Guest-local Cocoa thread identity, main-thread queries, copied names, lifecycle
+queries and cooperative cancellation flags are now implemented and verified with
+generated x86 fixtures. The installer-backed probe now passes libc++ steady/system
+clocks, deadline-aware condition waits, nothrow array allocation, mapped-image
+`dladdr` lookup and virtual `getcwd`. Darwin64 filesystem statistics now describe the actual read-only
+guest executable and bounded virtual storage, without exposing host disk metadata.
+Disk Arbitration takes its documented unavailable-service failure path, returning
+NULL rather than inventing a disk session. UTC calendar conversion and executable
+path lookup now pass. Guest-local `NSRunningApplication currentApplication` and
+its localized name also pass, followed by HTTP(S) `NSURL` parsing, mutable request
+construction, copied request bodies, mutable response buffers and native delegate
+pointer-ivar assignment. Eight x86 workers now start; `_nanosleep` parks only its
+calling thread on a real monotonic deadline. Default session configuration and
+operation-queue lookup, session construction and suspended data-task creation now
+pass. `NSURLSessionDataTask resume` now delivers the plugin's real delegate
+callbacks on a guest thread. With real PNG decoding, Accelerate, libc++ number
+formatting and added libc, the real plugin completes component creation,
+initialization, activation, and a real MIDI note through 94 audio blocks and a
+clean shutdown, in Node and Chrome. Network access is off unless you tick the
+page's checkbox: Arcade's requests then fail as offline and no telemetry is sent.
+The experiment also has a bounded VST3 processor/MIDI bridge and an offline WAV
+preview; this is not realtime native MIDI hosting. Generated fixtures also verify
+actual guest Objective-C and locale-facet method dispatch in the browser.
+**Arcade renders silence.** It reports `mIsLoggedIn=false`: it needs a signed-in
+Output account, and neither an account nor an imitation of one is provided here.
+
+**Dexed 0.9.8, a free GPL-3.0 FM synthesizer, plays live** on the experiment page: select
+its official `.pkg`, press **Play live**, and use the on-screen keys, your computer
+keyboard or a MIDI keyboard. Notes measure within about 2 cents of the expected pitch,
+and Chrome streamed it with no audio dropouts in testing. Native plugins are not
+wired into the main workspace's audio graph.
 The report always says `playable: false`; passing the harness tests does not
 certify native plugin playback.
+
+Factory/startup probes retain a 32 MiB guest heap; processor/render workers use
+a bounded 256 MiB heap. Reports show live allocations, high-water usage and
+free space. Component lifecycle calls share a 20-billion-instruction/110-second
+allowance; each audio block has 100 million instructions/30 seconds.
+Neither allowance removes the independent worker watchdog.
 
 Serve the repository root on localhost or HTTPS and open the experiment page.
 The patched Unicorn.js engine is bundled in `vendor/unicorn` and checked against

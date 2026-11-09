@@ -1,6 +1,7 @@
 import { writeGuestString } from './native-vst3-libcpp.js';
 
 export const localeImports = new Set([
+ '_toupper', '_tolower', '___toupper', '___tolower',
  '__ZNSt3__16localeC1Ev', '__ZNSt3__16localeC2Ev', '__ZNSt3__16localeC1ERKS0_', '__ZNSt3__16localeC2ERKS0_',
  '__ZNSt3__16localeD1Ev', '__ZNSt3__16localeD2Ev', '__ZNSt3__16localeaSERKS0_', '__ZNSt3__16locale7classicEv',
  '__ZNKSt3__16localeeqERKS0_',
@@ -34,7 +35,7 @@ export class GuestLocales {
  }
  facet(kind) {
   if (this.facets.has(kind)) return this.facets.get(kind);
-  const operations = kind === 'ctype' ? ['destroy', 'destroy', 'upper', 'upperRange', 'lower', 'lowerRange', 'widen', 'widenRange', 'narrow', 'narrowRange'] : ['destroy', 'destroy', 'compare', 'transform', 'hash'];
+  const operations = kind === 'ctype' ? ['destroy', 'destroy', 'destroy', 'upper', 'upperRange', 'lower', 'lowerRange', 'widen', 'widenRange', 'narrow', 'narrowRange'] : ['destroy', 'destroy', 'destroy', 'compare', 'transform', 'hash'];
   const object = this.memory.allocate(32), table = this.memory.allocate(operations.length * 8);
   this.memory.write(object, new Uint8Array(32)); this.memory.writePointer(object, table); this.memory.writePointer(object + 8, 1);
   operations.forEach((operation, index) => this.memory.writePointer(table + index * 8, this.memory.resolve(`__midi_locale_${kind}_${operation}`, 0, 'bind')));
@@ -92,6 +93,10 @@ export class GuestLocales {
   if (!this.instances.has(address) || this.memory.pointer(address) !== this.implementation) throw new Error('Unknown or modified guest locale');
  }
  invoke(name, [destination, source]) {
+  if (['_toupper', '_tolower', '___toupper', '___tolower'].includes(name)) {
+   const character = Number(BigInt.asIntN(32, this.memory.argument64(0))), upper = name.endsWith('toupper');
+   return upper && character >= 97 && character <= 122 ? character - 32 : !upper && character >= 65 && character <= 90 ? character + 32 : character;
+  }
   switch (name) {
    case '__ZNSt3__16localeC1Ev': case '__ZNSt3__16localeC2Ev': return this.create(destination);
    case '__ZNSt3__16localeC1ERKS0_': case '__ZNSt3__16localeC2ERKS0_': this.check(source); return this.create(destination);

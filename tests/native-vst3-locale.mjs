@@ -10,6 +10,9 @@ const call = (name, args = []) => guest.call(guest.resolve(name, 0, 'bind'), arg
 const text = value => { const bytes = new TextEncoder().encode(`${value}\0`), address = guest.allocate(bytes.length); guest.write(address, bytes); return address; };
 const decode = address => new TextDecoder().decode(readGuestString(guest, address).bytes);
 try {
+ for (const [name, code, expected] of [['___toupper', 97, 65], ['_toupper', 122, 90], ['___tolower', 65, 97], ['_tolower', 90, 122], ['___toupper', 255, 255], ['___tolower', 0, 0], ['___toupper', -1, -1]]) {
+  call(name, [code]); assert.equal(Number(BigInt.asIntN(32, guest.engine.reg_read_i64(uc.X86_REG_RAX))), expected);
+ }
  const first = guest.allocate(8), second = guest.allocate(8), output = guest.allocate(24);
  call('__ZNSt3__16localeC1Ev', [first]); call('__ZNSt3__16localeC1ERKS0_', [second, first]);
  assert.equal(guest.locales.references, 2); assert.equal(guest.pointer(first), guest.pointer(second));
@@ -20,15 +23,15 @@ try {
  assert.equal(guest.locales.references, 3);
  const ctype = call('__ZNKSt3__16locale9use_facetERNS0_2idE', [first, guest.resolve('__ZNSt3__15ctypeIcE2idE', 0, 'bind')]);
  const collate = call('__ZNKSt3__16locale9use_facetERNS0_2idE', [first, guest.resolve('__ZNSt3__17collateIcE2idE', 0, 'bind')]);
- assert.equal(guest.virtual(ctype, 2, [97]), 65); assert.equal(guest.virtual(ctype, 4, [90]), 122);
- assert.equal(guest.virtual(ctype, 2, [255]), 255); assert.equal(guest.virtual(ctype, 6, [255]), 255);
- assert.equal(guest.virtual(ctype, 8, [255, 63]), 63); assert.equal(guest.virtual(ctype, 8, [65, 63]), 65);
+ assert.equal(guest.virtual(ctype, 3, [97]), 65); assert.equal(guest.virtual(ctype, 5, [90]), 122);
+ assert.equal(guest.virtual(ctype, 3, [255]), 255); assert.equal(guest.virtual(ctype, 7, [255]), 255);
+ assert.equal(guest.virtual(ctype, 9, [255, 63]), 63); assert.equal(guest.virtual(ctype, 9, [65, 63]), 65);
  const range = text('aBcZ'), end = range + 4, destination = guest.allocate(8);
- assert.equal(guest.virtual(ctype, 3, [range, end]), end); assert.equal(guest.string(range), 'ABCZ');
- assert.equal(guest.virtual(ctype, 5, [range, end]), end); assert.equal(guest.string(range), 'abcz');
+ assert.equal(guest.virtual(ctype, 4, [range, end]), end); assert.equal(guest.string(range), 'ABCZ');
+ assert.equal(guest.virtual(ctype, 6, [range, end]), end); assert.equal(guest.string(range), 'abcz');
  guest.write(range, new Uint8Array([65, 255, 0]));
- assert.equal(guest.virtual(ctype, 7, [range, range + 2, destination]), range + 2); assert.deepEqual(Array.from(guest.read(destination, 2)), [65, 255]);
- assert.equal(guest.virtual(ctype, 9, [range, range + 2, 63, destination]), range + 2); assert.deepEqual(Array.from(guest.read(destination, 2)), [65, 63]);
+ assert.equal(guest.virtual(ctype, 8, [range, range + 2, destination]), range + 2); assert.deepEqual(Array.from(guest.read(destination, 2)), [65, 255]);
+ assert.equal(guest.virtual(ctype, 10, [range, range + 2, 63, destination]), range + 2); assert.deepEqual(Array.from(guest.read(destination, 2)), [65, 63]);
  const table = guest.pointer(ctype + 16), mask = code => new DataView(guest.read(table + code * 4, 4).buffer).getUint32(0, true);
  assert.ok(mask(65) & 0x100); assert.ok(mask(65) & 0x8000); assert.equal(mask(65) & 0x1000, 0);
  assert.ok(mask(97) & 0x1000); assert.ok(mask(48) & 0x400); assert.ok(mask(32) & 0x4000); assert.ok(mask(9) & 0x20000);
@@ -45,21 +48,32 @@ try {
  guest.setFloatingRegister(0, 3, 32); guest.setFloatingRegister(1, 2, 32); call('_powf'); assert.equal(guest.floatingRegister(0, 32), 9);
  assert.throws(() => guest.floatingRegister(0, 16), /Invalid floating register/);
  const left = text('abc'), right = text('abd');
- assert.equal(guest.virtual(collate, 2, [left, left + 3, right, right + 3]), Number(0xffffffffffffffffn));
- assert.equal(guest.virtual(collate, 2, [left, left + 2, left, left + 3]), Number(0xffffffffffffffffn));
- assert.equal(guest.virtual(collate, 2, [left, left + 3, left, left + 3]), 0);
- const transform = guest.pointer(guest.pointer(collate) + 24);
+ assert.equal(guest.virtual(collate, 3, [left, left + 3, right, right + 3]), Number(0xffffffffffffffffn));
+ assert.equal(guest.virtual(collate, 3, [left, left + 2, left, left + 3]), Number(0xffffffffffffffffn));
+ assert.equal(guest.virtual(collate, 3, [left, left + 3, left, left + 3]), 0);
+ const transform = guest.pointer(guest.pointer(collate) + 32);
  call('__ZNSt3__16localeaSERKS0_', [second, first]);
  assert.equal(guest.call(transform, [output, collate, left, left + 3]), output); assert.equal(decode(output), 'abc');
- assert.equal(guest.virtual(collate, 4, [left, left + 3]), 26499);
+ assert.equal(guest.virtual(collate, 5, [left, left + 3]), 26499);
  assert.throws(() => guest.virtual(ctype, 0), /permanent/);
- assert.throws(() => guest.virtual(ctype, 3, [end, range]), /range/);
+ assert.throws(() => guest.virtual(ctype, 4, [end, range]), /range/);
  assert.throws(() => call('__ZNKSt3__16locale9use_facetERNS0_2idE', [first, 0]), /Unsupported/);
  call('__ZNSt3__16localeD1Ev', [second]); assert.equal(guest.locales.references, 2);
  assert.throws(() => call('__ZNSt3__16localeD1Ev', [second]), /Unknown/);
  assert.throws(() => call('__ZNSt3__16localeD1Ev', [classic]), /permanent/);
  const string = guest.allocate(24); writeGuestString(guest, string, new TextEncoder().encode('abcdef'));
  const prefix = '__ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE';
+ const concatenate = '__ZNSt3__1plIcNS_11char_traitsIcEENS_9allocatorIcEEEENS_12basic_stringIT_T0_T1_EEPKS6_RKS9_';
+ for (const [left, right] of [['', ''], ['prefix/', 'name'], ['a'.repeat(22), 'b'], ['left', 'x'.repeat(30)], ['left', 'a\0b']]) {
+  const source = guest.allocate(24), result = guest.allocate(24), literal = text(left);
+  writeGuestString(guest, source, new TextEncoder().encode(right)); guest.write(result, new Uint8Array(24).fill(0xa5));
+  const original = guest.read(source, 24); assert.equal(call(concatenate, [result, literal, source]), result);
+  assert.equal(decode(result), left + right); assert.deepEqual(guest.read(source, 24), original);
+  if (readGuestString(guest, result).pointer) assert.notEqual(readGuestString(guest, result).pointer, readGuestString(guest, source).pointer);
+  call(prefix + 'D1Ev', [source]); assert.equal(decode(result), left + right); call(prefix + 'D1Ev', [result]);
+  guest.allocations.delete(source); guest.allocations.delete(result); guest.allocations.delete(literal);
+ }
+ assert.throws(() => call(concatenate, [string, text('prefix'), string]), /alias/);
  call(prefix + '6appendEPKc', [string, text('ghijklmnopqrstuvwxyz')]); assert.equal(decode(string), 'abcdefghijklmnopqrstuvwxyz');
  const pointer = guest.pointer(string + 16); call(prefix + '5eraseEmm', [string, 2, 22]); assert.equal(decode(string), 'abyz'); assert.equal(guest.pointer(string + 16), pointer);
  call(prefix + '6insertEmPKc', [string, 2, text('cd')]); assert.equal(decode(string), 'abcdyz');

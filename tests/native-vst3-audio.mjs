@@ -52,3 +52,38 @@ try {
  assert.throws(() => renderNativeNote(creation, { frames: 16 }), /createInstance failed \(-1\)/);
  assert.equal(creation.audioHost.report().stage, 'creating-component'); assert.equal(creation.audioHost.blocksProcessed, 0);
 } finally { creation.close(); }
+const pooled = new NativeVst3Guest(uc, nativeAudioFixture()), pooledProcessor = new NativeVst3Processor(pooled);
+try {
+ pooledProcessor.open();
+ const text = pooled.objc.cstring('temporary'), klass = pooled.objc.foundationClass('NSString'), selector = pooled.objc.selector('stringWithUTF8String:'), message = pooled.resolve('_objc_msgSend', 0, 'bind');
+ const code = new Uint8Array(64), view = new DataView(code.buffer); let offset = 0;
+ for (const [operation, value] of [[0xbf, klass], [0xbe, selector], [0xba, text], [0xb8, message]]) {
+  code.set([0x48, operation], offset); view.setBigUint64(offset + 2, BigInt(value), true); offset += 10;
+ }
+ code.set([0x48, 0x83, 0xec, 0x08, 0xff, 0xd0, 0x48, 0x83, 0xc4, 0x08, 0x31, 0xc0, 0xc3], offset);
+ pooled.write(pooled.slide + 0x600, code);
+ const allocations = pooled.allocations.size, instances = pooled.objc.objects.size;
+ for (let index = 0; index < 20; index++) {
+  pooledProcessor.process(8); assert.equal(pooled.objc.pools.length, 0); assert.equal(pooled.allocations.size, allocations); assert.equal(pooled.objc.objects.size, instances);
+ }
+ assert.ok(pooled.objc.freePoolTokens.length <= 256); pooledProcessor.close();
+} finally { pooled.close(); }
+const constructorBytes = nativeAudioFixture(), constructorView = new DataView(constructorBytes.buffer);
+const finiteLoop = [0x41, 0xb8, 0x60, 0xe3, 0x16, 0, 0x41, 0xff, 0xc8, 0x75, 0xfb];
+constructorBytes.set([...finiteLoop, 0x48, 0x8d, 0x05, 0, 0, 0, 0, 0x48, 0x89, 0x01, 0x31, 0xc0, 0xc3], 0x400);
+constructorView.setInt32(0x40e, 0x1a00 - 0x412, true);
+const heavy = new NativeVst3Guest(uc, constructorBytes), heavyProcessor = new NativeVst3Processor(heavy, { blockLimits: { instructionBudget: 2000000, milliseconds: 30000 } });
+try {
+ assert.equal(heavyProcessor.open().name, 'Native fixture');
+ heavy.write(heavy.slide + 0x600, new Uint8Array([...finiteLoop, 0x31, 0xc0, 0xc3]));
+ assert.throws(() => heavyProcessor.process(8), error => error.details.kind === 'execution-limit' && error.details.reason === 'instruction-budget');
+ assert.equal(heavyProcessor.blocksProcessed, 0); assert.equal(heavy.objc.pools.length, 0); heavyProcessor.close();
+} finally { heavy.close(); }
+{
+ const closing = new NativeVst3Guest(uc, nativeAudioFixture()), close = NativeVst3Processor.prototype.close;
+ NativeVst3Processor.prototype.close = function () { close.call(this); throw new Error('teardown failed'); };
+ try {
+  const audio = renderNativeNote(closing, { frames: 256 });
+  assert.equal(audio.closeError, 'teardown failed'); assert.equal(audio.blocksProcessed, 2);
+ } finally { NativeVst3Processor.prototype.close = close; closing.close(); }
+}

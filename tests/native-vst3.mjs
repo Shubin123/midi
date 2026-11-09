@@ -5,8 +5,9 @@ import { parseMachO, dyldFixups } from '../js/macho-loader.js';
 import { NativeVst3Guest } from '../js/native-vst3-runtime.js';
 import { readNativeVst3 } from '../js/native-vst3-input.js';
 import { writeZip } from '../js/archive.js';
-import { nativeFixture, nativePackage, nativeSelectorFixture, nativeObjCFixture, nativeStringFixture, leb } from './support/native-vst3-fixture.js';
+import { nativeFixture, nativePackage, nativeSelectorFixture, nativeObjCFixture, nativeStringFixture, nativeTimedWaitFixture, leb } from './support/native-vst3-fixture.js';
 import { loadNativeEngine } from '../js/native-vst3-engine.js';
+import { darwinErrorMessages } from '../js/native-vst3-errno.js';
 
 const require = createRequire(import.meta.url), uc = await require('../vendor/unicorn/unicorn.cjs')();
 const fixture = nativeFixture(), parsed = parseMachO(fixture);
@@ -34,9 +35,18 @@ use(fixture, guest => {
  assert.equal(guest.report().initialized, false); assert.equal(guest.report().playable, false);
  guest.initialize(); assert.equal(guest.report().initialized, true);
  assert.throws(() => guest.call(guest.export('_probe'), [], { instructionBudget: -1 }), /limits/);
+ assert.throws(() => guest.call(guest.export('_probe'), [], { instructionBudget: 100000001 }), /limits/);
+ assert.throws(() => guest.call(guest.export('_probe'), [], { milliseconds: 30001 }), /limits/);
+ assert.equal(guest.call(guest.export('_probe'), [], { instructionBudget: 100000001, milliseconds: 30001, longRunning: true }), 42);
+ assert.throws(() => guest.call(guest.export('_probe'), [], { instructionBudget: 20000000001, longRunning: true }), /limits/);
+ assert.throws(() => guest.call(guest.export('_probe'), [], { milliseconds: 110001, longRunning: true }), /limits/);
  assert.throws(() => guest.allocate(33 << 20), /allocation/);
 });
 use(nativeFixture({ initializer: true }), guest => { guest.initialize(); assert.equal(guest.initialized, true); });
+use(nativeTimedWaitFixture(), guest => {
+ guest.initialize(); assert.equal(guest.factoryInfo().classes[0].cid, '01000000000000000000000000000000');
+ assert.equal(guest.threads.main.conditionWait, null);
+});
 const centerFixture = nativeFixture({ importNames: ['_OBJC_CLASS_$_NSNotificationCenter', '_objc_msgSend'] });
 const centerView = new DataView(centerFixture.buffer);
 centerFixture.set([0x48, 0x8b, 0x3d], 0x300); centerView.setInt32(0x303, 0x1600 - 0x307, true);
@@ -56,6 +66,33 @@ use(nativeFixture(), guest => {
  const klass = guest.objc.invoke('_objc_getClass', [name]);
  assert.equal(guest.objc.klass(klass).name, 'NSNotificationCenter');
  assert.ok(guest.objc.invoke('_objc_msgSend', [klass, guest.objc.selector('defaultCenter')]));
+ const access = guest.resolve('_access', 0, 'bind');
+ assert.equal(guest.call(access, [guest.objc.cstring('/plugin'), 5]), 0);
+ guest.call(access, [guest.objc.cstring('/missing-file'), 0]);
+ assert.equal(BigInt.asIntN(32, guest.engine.reg_read_i64(uc.X86_REG_RAX)), -1n);
+ assert.equal(new DataView(guest.read(guest.errorPointer(), 4).buffer).getInt32(0, true), 2);
+ guest.call(access, [0, 0]);
+ assert.equal(new DataView(guest.read(guest.errorPointer(), 4).buffer).getInt32(0, true), 14);
+ const stat = guest.resolve('_stat$INODE64', 0, 'bind'), metadata = guest.allocate(160);
+ guest.write(metadata, new Uint8Array(160).fill(0xa5));
+ assert.equal(guest.call(stat, [guest.objc.cstring('/Users/plugin'), metadata]), 0);
+ assert.equal(new DataView(guest.read(metadata, 144).buffer).getUint16(4, true), 0x4000 | 0o700);
+ assert.ok(guest.read(metadata + 144, 16).every(byte => byte === 0xa5));
+ guest.write(metadata, new Uint8Array(160).fill(0x5a));
+ guest.call(stat, [guest.objc.cstring('/missing-file'), metadata]);
+ assert.ok(guest.read(metadata, 160).every(byte => byte === 0x5a));
+ assert.equal(new DataView(guest.read(guest.errorPointer(), 4).buffer).getInt32(0, true), 2);
+ const strerror = guest.resolve('_strerror', 0, 'bind');
+ assert.equal(darwinErrorMessages.length, 108);
+ for (let code = 0; code < darwinErrorMessages.length; code++) {
+  const pointer = guest.call(strerror, [code]); assert.equal(guest.string(pointer), darwinErrorMessages[code]); assert.equal(guest.call(strerror, [code]), pointer);
+ }
+ assert.equal(guest.string(guest.call(strerror, [30])), 'Read-only file system');
+ assert.equal(guest.string(guest.call(strerror, [84])), 'Value too large to be stored in data type');
+ const unknown = guest.call(strerror, [-1]); assert.equal(guest.string(unknown), 'Unknown error: -1');
+ assert.equal(new DataView(guest.read(guest.errorPointer(), 4).buffer).getInt32(0, true), 22);
+ assert.equal(guest.call(strerror, [2147483647]), unknown); assert.equal(guest.string(unknown), 'Unknown error: 2147483647');
+ assert.equal(guest.errorStrings.size, 108);
 });
 for (const constructor of ['C1', 'C2']) use(nativeStringFixture(constructor), guest => {
  guest.initialize(); assert.equal(guest.factoryInfo().classes[0].cid, '0c636f70696564000000000000000000');
@@ -73,7 +110,7 @@ use(fixture, guest => {
  guest.setRegister('RDI', 1n << 63n); assert.throws(() => guest.invokeImport({ name: '__ZNSt3__112__next_primeEm' }), error => error.details.kind === 'unsupported-libcpp');
 });
 use(nativeFixture({ bundleEntry: true }), guest => { guest.initialize(); assert.equal(guest.initialized, true); assert.equal(guest.startupStage, 'ready'); });
-use(nativeFixture({ importName: '_malloc' }), guest => { assert.ok(guest.call(guest.export('_probe')) >= 0x30000000); assert.equal(guest.report().calls._malloc, 1); });
+use(nativeFixture({ importName: '_malloc' }), guest => { assert.ok(guest.call(guest.export('_probe')) >= 0x20000000); assert.equal(guest.report().calls._malloc, 1); });
 use(nativeSelectorFixture(), guest => {
  assert.equal(guest.image.initializers.length, 0); assert.equal(guest.image.selectors.length, 1);
  assert.equal(guest.pointer(guest.slide + 0x1700), guest.objc.selector('value:'));
@@ -112,7 +149,7 @@ use(fixture, guest => {
  assert.equal(invoke(grown, 2), grown); assert.equal(guest.allocations.get(grown), 2);
  assert.throws(() => invoke(grown, 33 << 20), /size exceeds/); assert.equal(guest.allocations.get(grown), 2, 'failed resize preserves the allocation');
  const empty = invoke(grown, 0); assert.ok(empty); assert.equal(guest.allocations.get(empty), 0); assert.equal(guest.allocations.has(grown), false);
- assert.throws(() => invoke(original, 8), /unknown allocation/);
+ assert.throws(() => invoke(grown, 8), /unknown allocation/);
 });
 use(fixture, guest => {
  const receiver = guest.resolve('_OBJC_CLASS_$_NSObject', 1, 'bind'), selector = guest.allocate(32);
@@ -163,6 +200,37 @@ use(fixture, guest => {
   assert.equal(guest.poisoned, true, 'host-import engine faults cannot be mistaken for an ordinary errno');
  } finally { guest.write = originalWrite; guest.poisoned = false; }
 });
+use(fixture, guest => {
+ for (const [allocate, release] of [['__ZnwmRKSt9nothrow_t', '__ZdlPvRKSt9nothrow_t'], ['__ZnamRKSt9nothrow_t', '__ZdaPvRKSt9nothrow_t']]) {
+  const address = guest.resolve(allocate, 0, 'bind'), dispose = guest.resolve(release, 0, 'bind');
+  for (const requested of [0, 17]) {
+   const pointer = guest.call(address, [requested, 0]); assert.ok(pointer); assert.equal(guest.allocations.get(pointer), requested);
+   guest.call(dispose, [pointer, 0]); assert.equal(guest.allocations.has(pointer), false);
+  }
+  assert.equal(guest.call(address, [guest.heapSize + 1, 0]), 0); assert.equal(guest.call(address, [0xffffffffffffffffn, 0]), 0);
+  const block = guest.allocate(guest.allocations.report().largestFreeBytes);
+  assert.equal(guest.call(address, [16, 0]), 0); guest.allocations.delete(block);
+  const original = guest.allocate;
+  guest.allocate = () => { throw new WebAssembly.RuntimeError('not an allocation failure'); };
+  try { assert.throws(() => guest.call(address, [16, 0]), /not an allocation failure/); }
+  finally { guest.allocate = original; }
+ }
+});
+use(fixture, guest => {
+ const address = guest.resolve('_getcwd', 0, 'bind'), buffer = guest.allocate(16), errno = () => new DataView(guest.read(guest.errorPointer(), 4).buffer).getInt32(0, true);
+ guest.write(buffer, new Uint8Array(16).fill(0xa5));
+ assert.equal(guest.call(address, [buffer, 8]), buffer); assert.equal(guest.string(buffer), '/plugin'); assert.ok(guest.read(buffer + 8, 8).every(byte => byte === 0xa5));
+ for (const [capacity, expected] of [[7, 34], [0, 22]]) {
+  guest.write(buffer, new Uint8Array(16).fill(0xa5)); assert.equal(guest.call(address, [buffer, capacity]), 0); assert.equal(errno(), expected); assert.ok(guest.read(buffer, 16).every(byte => byte === 0xa5));
+ }
+ assert.equal(guest.call(address, [1, 8]), 0); assert.equal(errno(), 14);
+ for (const capacity of [0, 1, 16, 0xffffffffffffffffn]) {
+  const owned = guest.call(address, [0, capacity]); assert.equal(guest.string(owned), '/plugin'); assert.equal(guest.allocations.get(owned), 8); guest.allocations.delete(owned);
+ }
+ const block = guest.allocate(guest.allocations.report().largestFreeBytes);
+ assert.equal(guest.call(address, [0, 0]), 0); assert.equal(errno(), 12); guest.allocations.delete(block);
+ assert.equal(guest.files.path('relative'), `${guest.string(guest.call(address, [buffer, 16]))}/relative`);
+});
 const clockSamples = [12.5, 12.25, 13, NaN];
 use(fixture, guest => {
  const info = guest.allocate(16); guest.write(info, new Uint8Array(16).fill(0x77)); guest.setRegister('RDI', info);
@@ -172,6 +240,28 @@ use(fixture, guest => {
  for (const expected of [12500000n, 12500000n, 13000000n]) assert.equal(guest.invokeImport({ name: '_mach_absolute_time' }), expected);
  assert.throws(() => guest.invokeImport({ name: '_mach_absolute_time' }), /Invalid guest monotonic clock/);
 }, { monotonicClock: () => clockSamples.shift() });
+const steadySamples = [12.5, 12.25, 9000000000.125, NaN];
+use(fixture, guest => {
+ const address = guest.resolve('__ZNSt3__16chrono12steady_clock3nowEv', 22, 'bind');
+ for (const expected of [12500000n, 12500000n, 9000000000125000n]) {
+  guest.call(address);
+  assert.equal(guest.engine.reg_read_i64(uc.X86_REG_RAX), expected);
+ }
+ assert.throws(() => guest.call(address), /Invalid guest monotonic clock/);
+}, { monotonicClock: () => steadySamples.shift() });
+const sharedSamples = [1, 2, 1];
+use(fixture, guest => {
+ for (const [name, expected] of [['_mach_absolute_time', 1000000n], ['__ZNSt3__16chrono12steady_clock3nowEv', 2000000n], ['_mach_absolute_time', 2000000n]]) assert.equal(guest.invokeImport({ name }), expected);
+}, { monotonicClock: () => sharedSamples.shift() });
+const systemSamples = [1500.25, -0.25, 1794096000123.456, NaN];
+use(fixture, guest => {
+ const address = guest.resolve('__ZNSt3__16chrono12system_clock3nowEv', 22, 'bind');
+ for (const expected of [1500250n, -250n, 1794096000123456n]) {
+  guest.call(address);
+  assert.equal(BigInt.asIntN(64, guest.engine.reg_read_i64(uc.X86_REG_RAX)), expected);
+ }
+ assert.throws(() => guest.call(address), /Invalid guest wall clock/);
+}, { wallClock: () => systemSamples.shift() });
 const wallSamples = [1500.25, -0.25];
 use(fixture, guest => {
  const info = guest.allocate(16); guest.write(info, new Uint8Array(16).fill(0x77)); guest.setRegister('RDI', info); guest.setRegister('RSI', 0);
@@ -191,6 +281,19 @@ use(nativeFixture({ importName: '_exp2' }), guest => {
  }
  assert.throws(() => guest.floatingRegister(8), /Invalid floating register/);
  assert.deepEqual([...guest.engine.reg_read(uc.X86_REG_XMM0, 16).slice(8)], Array(8).fill(0x77));
+});
+for (const name of ['___sincos_stret', '___sincosf_stret']) use(nativeFixture({ importName: name }), guest => {
+ const floating = name === '___sincosf_stret';
+ for (const input of [0, -0, Math.PI / 4, 1e10, Infinity, NaN]) {
+  guest.engine.reg_write(uc.X86_REG_XMM0, new Uint8Array(16).fill(0x77));
+  guest.engine.reg_write(uc.X86_REG_XMM1, new Uint8Array(16).fill(0x66));
+  guest.setFloatingRegister(0, input, floating ? 32 : 64); guest.call(guest.export('_probe'));
+  const bytes = guest.engine.reg_read(uc.X86_REG_XMM0, 16), view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), value = floating ? Math.fround(input) : input;
+  assert.equal(floating ? view.getFloat32(0, true) : view.getFloat64(0, true), floating ? Math.fround(Math.sin(value)) : Math.sin(value));
+  assert.equal(floating ? view.getFloat32(4, true) : guest.floatingRegister(1), floating ? Math.fround(Math.cos(value)) : Math.cos(value));
+  assert.ok(bytes.slice(8).every(byte => byte === 0x77));
+  assert.ok(guest.engine.reg_read(uc.X86_REG_XMM1, 16).slice(8).every(byte => byte === 0x66));
+ }
 });
 use(nativeFixture({ importName: '_pow' }), guest => {
  for (const [base, exponent, expected] of [[2, 3, 8], [4, -0.5, 0.5], [-2, 3, -8], [1, NaN, 1], [-1, Infinity, 1], [-2, 0.5, NaN]]) {
@@ -263,7 +366,7 @@ use(fixture, guest => {
  guest.invokeImport({ name: '_CFRelease' }); assert.equal(guest.uuids.size, 0);
  assert.throws(() => guest.invokeImport({ name: '_CFRelease' }), /unsupported object/);
 });
-use(nativeFixture({ code: [0xeb, 0xfe] }), guest => assert.throws(() => guest.call(guest.export('_probe'), [], { instructionBudget: 100 }), /Execution limit/));
+use(nativeFixture({ code: [0xeb, 0xfe] }), guest => assert.throws(() => guest.call(guest.export('_probe'), [], { instructionBudget: 100 }), error => /Execution limit/.test(error.message) && error.details.reason === 'instruction-budget' && error.details.remaining === 0));
 use(nativeFixture({ code: [0x0f, 0x05, 0xc3] }), guest => assert.throws(() => guest.call(guest.export('_probe')), /syscall/));
 use(nativeFixture({ code: [0x48, 0x31, 0xc0, 0x48, 0x8b, 0, 0xc3] }), guest => assert.throws(() => guest.call(guest.export('_probe')), /CPU stopped/));
 use(nativeFixture({ code: [0xf3, 0x0f, 0x10, 7, 0xf3, 0x0f, 0x58, 0xc0, 0xf3, 0x0f, 0x11, 7, 0xc3] }), guest => {

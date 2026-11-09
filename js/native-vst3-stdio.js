@@ -1,8 +1,9 @@
 import { formatGuestPrintf } from './native-vst3-printf.js';
 import { GuestFileError } from './native-vst3-files.js';
+import { guestVariadicArguments } from './native-vst3-varargs.js';
 
 export const stdioGlobals = new Map([['___stdinp', 0], ['___stdoutp', 1], ['___stderrp', 2]]);
-export const stdioImports = new Set(['_fprintf', '_printf', '_vfprintf', '_vprintf', '_fwrite', '_fread', '_fputs', '_puts', '_fflush', '_fileno', '_fclose', '_ferror', '_feof', '_clearerr', '_fputc', '_putc', '_fgetc', '_getc', '___swbuf', '___srget']);
+export const stdioImports = new Set(['_vsnprintf', '_vswprintf', '_fprintf', '_printf', '_vfprintf', '_vprintf', '_fwrite', '_fread', '_fputs', '_puts', '_fflush', '_fileno', '_fclose', '_ferror', '_feof', '_clearerr', '_fputc', '_putc', '_fgetc', '_getc', '___swbuf', '___srget']);
 
 export class GuestStdio {
  constructor(memory) { this.memory = memory; this.streams = new Map(); this.standard = new Map(); }
@@ -37,17 +38,19 @@ export class GuestStdio {
   if (bytes.length < length) { record.eof = true; this.status(handle, record); }
   return bytes.length;
  }
- format(pointer, index, vaList = 0) {
-  const next = () => {
-   if (!vaList) return this.memory.argument64(index++);
-   const header = this.memory.read(vaList, 24), view = new DataView(header.buffer, header.byteOffset, header.byteLength), offset = view.getUint32(0, true);
-   let address;
-   if (offset <= 40 && offset % 8 === 0) { address = this.memory.pointer(vaList + 16) + offset; view.setUint32(0, offset + 8, true); this.memory.write(vaList, header); }
-   else if (offset === 48) { address = this.memory.pointer(vaList + 8); this.memory.writePointer(vaList + 8, address + 8); }
-   else throw new Error('Invalid integer va_list register offset');
-   const bytes = this.memory.read(address, 8); return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getBigUint64(0, true);
-  };
-  return formatGuestPrintf(this.memory.stringBytes(pointer), next, (address, precision) => {
+ wideFormat(pointer) {
+  const memory = this.memory, bytes = [];
+  for (let offset = 0; ; offset += 4) {
+   if (offset >= 1 << 16) throw new Error('Guest wide format exceeds limit');
+   const part = memory.read(pointer + offset, 4), unit = new DataView(part.buffer, part.byteOffset, part.byteLength).getUint32(0, true);
+   if (!unit) return new Uint8Array(bytes);
+   if (unit > 127) throw new Error('Non-ASCII wide printf formats are not implemented');
+   bytes.push(unit);
+  }
+ }
+ format(pointer, index, vaList = 0, formatBytes = null) {
+  const next = guestVariadicArguments(this.memory, index, vaList);
+  return formatGuestPrintf(formatBytes ?? this.memory.stringBytes(pointer), next, (address, precision) => {
    address = Number(address); if (!Number.isSafeInteger(address)) throw new Error('Invalid printf pointer');
    if (precision === null) return this.memory.stringBytes(address, 1 << 20);
    const bytes = [];
@@ -57,6 +60,24 @@ export class GuestStdio {
  }
  invoke(name, [first, second, third, fourth]) {
   switch (name) {
+   case '_vsnprintf': {
+    if (!fourth) throw new Error('Null va_list is not supported');
+    const bytes = this.format(third, 0, fourth);
+    if (second) { const output = new Uint8Array(Math.min(bytes.length, second - 1) + 1); output.set(bytes.subarray(0, output.length - 1)); this.memory.write(first, output); }
+    return bytes.length;
+   }
+   case '_vswprintf': {
+    if (!fourth) throw new Error('Null va_list is not supported');
+    const bytes = new TextDecoder().decode(this.format(third, 0, fourth, this.wideFormat(third))), units = Array.from(bytes, character => character.codePointAt(0));
+    if (units.length >= second) {
+     if (second) this.memory.write(first, new Uint8Array(4));
+     const code = new Uint8Array(4); new DataView(code.buffer).setInt32(0, 84, true); this.memory.write(this.memory.errorPointer(), code);
+     return -1;
+    }
+    const output = new Uint8Array((units.length + 1) * 4), view = new DataView(output.buffer);
+    units.forEach((unit, index) => view.setUint32(index * 4, unit, true));
+    this.memory.write(first, output); return units.length;
+   }
    case '_fprintf': case '_printf': case '_vfprintf': case '_vprintf': {
     const standard = name === '_printf' || name === '_vprintf', handle = standard ? this.stream(1) : first;
     if (name === '_vfprintf' && !third || name === '_vprintf' && !second) throw new Error('Null va_list is not supported');

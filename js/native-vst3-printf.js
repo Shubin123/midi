@@ -1,3 +1,5 @@
+import { formatGuestFixed } from './native-vst3-float.js';
+
 const LIMIT = 1 << 20;
 
 export function formatGuestPrintf(format, nextArgument, readString) {
@@ -18,7 +20,7 @@ export function formatGuestPrintf(format, nextArgument, readString) {
    const end = source.indexOf('%', offset), stop = end < 0 ? source.length : end;
    append(source.slice(offset, stop)); offset = stop; continue;
   }
-  const match = /^%([-+ #0]*)(\*|\d*)(?:\.(\*|\d*))?(hh|ll|[hljzt])?([diuoxXscp%])/.exec(source.slice(offset));
+  const match = /^%([-+ #0]*)(\*|\d*)(?:\.(\*|\d*))?(hh|ll|[hljzt])?([diuoxXscpfF%])/.exec(source.slice(offset));
   if (!match) throw new Error('Unsupported printf conversion');
   offset += match[0].length;
   let [, flags, widthText, precisionText, modifier, conversion] = match;
@@ -31,8 +33,15 @@ export function formatGuestPrintf(format, nextArgument, readString) {
    if (match[0] !== '%%') throw new Error('Unsupported printf percent modifiers');
    append('%'); continue;
   }
-  const argument = nextArgument();
-  if (conversion === 's' || conversion === 'c') {
+  const argument = nextArgument('fF'.includes(conversion) ? 'float' : 'integer');
+  if ('fF'.includes(conversion)) {
+   if (modifier && modifier !== 'l') throw new Error('Unsupported printf floating modifier');
+   const formatted = formatGuestFixed(argument, precision ?? 6, flags.includes('#'));
+   prefix = formatted.negative ? '-' : flags.includes('+') ? '+' : flags.includes(' ') ? ' ' : '';
+   digits = conversion === 'F' ? formatted.digits.toUpperCase() : formatted.digits;
+   if (flags.includes('0') && !flags.includes('-') && !formatted.special) digits = digits.padStart(Math.max(0, width - prefix.length), '0');
+   bytes = Uint8Array.from(prefix + digits, character => character.charCodeAt(0));
+  } else if (conversion === 's' || conversion === 'c') {
    if (modifier) throw new Error('Unsupported printf wide character conversion');
    bytes = conversion === 'c' ? new Uint8Array([Number(argument & 255n)]) : readString(argument, precision);
   } else {

@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
-const ONLY_ON = { 'native-id.mjs': 'darwin' };
+const ONLY_ON = { 'native-id.mjs': 'darwin', 'native-tlv-compiler.mjs': 'darwin', 'native-rtti-compiler.mjs': 'darwin', 'native-thread-compiler.mjs': 'darwin' };
 const suites = readdirSync(DIR).filter(f => f.endsWith('.mjs') && f !== 'all.mjs').sort();
 const t0 = Date.now();
 

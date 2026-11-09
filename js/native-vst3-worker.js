@@ -14,8 +14,9 @@ self.onmessage = async ({ data }) => {
   const uc = await loadNativeEngine();
   progress('mapping');
   const { NativeVst3Guest } = await import('./native-vst3-runtime.js');
+  const network = data.network === true ? (await import('./native-vst3-network.js')).sendGuestRequest : null;
   const bundleName = binary.name.match(/([^/]+\.vst3)\/Contents\/MacOS\/[^/]+$/i)?.[1] || 'Plugin.vst3';
-  guest = new NativeVst3Guest(uc, binary.bytes, { bundlePath: `/plugin/${bundleName}` });
+  guest = new NativeVst3Guest(uc, binary.bytes, { bundlePath: `/plugin/${bundleName}`, executableName: binary.name.split('/').at(-1), heapSize: data.mode === 'processor' || data.mode === 'render' ? 256 << 20 : undefined, network });
   if (data.mode === 'render' || data.mode === 'processor') {
    const { NativeVst3Processor, renderNativeNote } = await import('./native-vst3-audio.js');
    let audio, configuration;

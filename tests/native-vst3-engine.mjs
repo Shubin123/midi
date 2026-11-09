@@ -23,7 +23,13 @@ if (!process.env.NATIVE_ENGINE_CHILD) {
   engine.emu_start(0x10000, 0x10000 + code.length, 0, 0);
   assert.equal(BigInt.asUintN(64, engine.reg_read_i64(uc.X86_REG_RAX)), 0xae456e15db8d8822n);
   assert.deepEqual([...engine.mem_read(0x20000, 8)], [0x22, 0x88, 0x8d, 0xdb, 0x15, 0x6e, 0x45, 0xae]);
-  console.log('native engine: 512 instrumented load/store groups execute without TCI temporary exhaustion');
+  const vector = [0x66, 0x48, 0x0f, 0x6e, 0xc8, 0x66, 0x0f, 0xc5, 0xc1, 0x00, 0x66, 0x0f, 0xc5, 0xd9, 0x03, 0x90];
+  engine.mem_write(0x18000, vector);
+  engine.reg_write_i64(uc.X86_REG_RAX, 0xfedcba9876543210n);
+  engine.emu_start(0x18000, 0x18000 + vector.length, 0, 0);
+  assert.equal(BigInt.asUintN(64, engine.reg_read_i64(uc.X86_REG_RAX)), 0x3210n, 'pextrw reads the low word');
+  assert.equal(BigInt.asUintN(64, engine.reg_read_i64(uc.X86_REG_RBX)), 0xfedcn, 'pextrw reads the high word');
+  console.log('native engine: 512 instrumented load/store groups execute without TCI temporary exhaustion and pextrw loads execute');
  } finally {
   for (const hook of hooks) engine.hook_del(hook);
   engine.close();

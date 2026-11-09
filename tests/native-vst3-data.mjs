@@ -1,0 +1,54 @@
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { NativeVst3Guest } from '../js/native-vst3-runtime.js';
+import { nativeFixture, nativeDataFixture } from './support/native-vst3-fixture.js';
+
+const uc = await createRequire(import.meta.url)('../vendor/unicorn/unicorn.cjs')();
+const guest = new NativeVst3Guest(uc, nativeFixture());
+try {
+ const call = (name, ...args) => guest.call(guest.resolve(`_${name}`, 0, 'bind'), args);
+ const send = (receiver, name, ...args) => call('objc_msgSend', receiver, guest.objc.selector(name), ...args);
+ const klass = guest.objc.foundationClass('NSData'), mutableClass = guest.objc.foundationClass('NSMutableData'), source = guest.allocate(8), output = guest.allocate(16);
+ assert.equal(call('class_getSuperclass', mutableClass), klass);
+ guest.write(source, new Uint8Array([0, 1, 2, 3, 4, 5, 254, 255]));
+ const pool = call('objc_autoreleasePoolPush'), data = send(klass, 'dataWithBytes:length:', source, 8);
+ guest.write(source, new Uint8Array(8).fill(9));
+ assert.equal(send(data, 'length'), 8); assert.equal(call('CFDataGetLength', data), 8); assert.equal(call('CFDataGetBytePtr', data), send(data, 'bytes'));
+ assert.equal(guest.read(send(data, 'bytes'), 1)[0], 0); assert.equal(send(data, 'isEqualToData:', 0), 0);
+ assert.throws(() => call('object_dispose', data), /managed Foundation/);
+ guest.write(output, new Uint8Array(16).fill(0x5a)); send(data, 'getBytes:length:', output, 0xffffffffffffffffn);
+ assert.deepEqual(guest.read(output, 8), new Uint8Array([0, 1, 2, 3, 4, 5, 254, 255])); assert.ok(guest.read(output + 8, 8).every(byte => byte === 0x5a));
+ send(data, 'getBytes:range:', output, 5, 3); assert.deepEqual(guest.read(output, 3), new Uint8Array([5, 254, 255]));
+ assert.throws(() => send(data, 'getBytes:range:', output, 0xffffffffffffffffn, 1), /range exceeds/);
+ send(data, 'getBytes:range:', 0, 8, 0);
+ const bridge = call('CFDataCreateCopy', 0, data); assert.equal(send(bridge, 'length'), 8); assert.equal(send(bridge, 'class'), klass); assert.equal(call('object_getClass', bridge), klass); assert.equal(send(bridge, 'isEqualToData:', data), 1);
+ assert.equal(call('objc_retain', bridge), bridge); call('objc_release', bridge); assert.equal(send(bridge, 'copy'), bridge); send(bridge, 'release'); call('CFRelease', bridge);
+ const owned = send(klass, 'alloc'); assert.equal(send(owned, 'initWithData:', data), owned);
+ const previous = send(owned, 'bytes'); send(owned, 'initWithBytes:length:', previous + 2, 3); assert.deepEqual(guest.read(send(owned, 'bytes'), 3), new Uint8Array([2, 3, 4])); assert.equal(guest.allocations.has(previous), false); send(owned, 'release');
+ const empty = send(klass, 'data'); assert.equal(send(empty, 'length'), 0); assert.equal(send(empty, 'bytes'), 0); send(empty, 'getBytes:', 0);
+ const mutable = send(data, 'mutableCopy'), snapshot = send(mutable, 'copy'); assert.equal(guest.pointer(snapshot), klass); assert.equal(guest.pointer(mutable), mutableClass);
+ const originalBytes = send(mutable, 'mutableBytes'); guest.write(originalBytes, new Uint8Array([42])); assert.equal(guest.read(send(snapshot, 'bytes'), 1)[0], 0);
+ send(mutable, 'appendData:', mutable); assert.equal(send(mutable, 'length'), 16); assert.equal(guest.read(send(mutable, 'bytes') + 8, 1)[0], 42);
+ send(mutable, 'setLength:', 20); assert.ok(guest.read(send(mutable, 'bytes') + 16, 4).every(byte => byte === 0));
+ send(mutable, 'replaceBytesInRange:withBytes:length:', 2, 16, source, 3); assert.equal(send(mutable, 'length'), 7);
+ assert.deepEqual(guest.read(send(mutable, 'bytes'), 7), new Uint8Array([42, 1, 9, 9, 9, 0, 0]));
+ const pointer = send(mutable, 'mutableBytes'); send(mutable, 'replaceBytesInRange:withBytes:', 1, 2, source); assert.equal(send(mutable, 'mutableBytes'), pointer);
+ send(mutable, 'resetBytesInRange:', 1, 3); assert.deepEqual(guest.read(pointer, 7), new Uint8Array([42, 0, 0, 0, 9, 0, 0]));
+ send(mutable, 'increaseLengthBy:', 1); assert.equal(send(mutable, 'length'), 8); assert.equal(guest.read(send(mutable, 'bytes') + 7, 1)[0], 0);
+ assert.throws(() => send(mutable, 'setLength:', 0xffffffffffffffffn), /16 MiB/); assert.equal(send(mutable, 'length'), 8);
+ assert.throws(() => send(mutable, 'replaceBytesInRange:withBytes:length:', 9, 0, 0, 0), /range exceeds/);
+ send(mutable, 'setData:', data); assert.equal(send(mutable, 'isEqualToData:', data), 1); send(mutable, 'appendBytes:length:', source, 2); assert.equal(send(mutable, 'length'), 10);
+ const capacity = send(mutableClass, 'dataWithCapacity:', 1024), zeros = send(mutableClass, 'dataWithLength:', 5);
+ assert.equal(send(capacity, 'length'), 0); assert.ok(guest.read(send(zeros, 'bytes'), 5).every(byte => byte === 0));
+ assert.throws(() => send(klass, 'dataWithBytes:length:', 0, (16 << 20) + 1), /16 MiB/);
+ send(snapshot, 'release'); send(mutable, 'release');
+ const pointerOwnedByData = send(data, 'bytes'), provider = call('CGDataProviderCreateWithCFData', data);
+ call('objc_autoreleasePoolPop', pool); assert.ok(guest.objc.objects.has(data)); assert.ok(guest.allocations.has(pointerOwnedByData));
+ call('CGDataProviderRelease', provider); assert.equal(guest.objc.objects.has(data), false); assert.equal(guest.allocations.has(pointerOwnedByData), false);
+ const allocations = guest.allocations.size;
+ assert.throws(() => send(klass, 'data'), /guest pool/); assert.equal(guest.allocations.size, allocations);
+ assert.equal(guest.objc.objects.size, 0); assert.equal(guest.core.objects.size, 0);
+ console.log('native data: immutable snapshots, zero/range/canary behavior, mutable append/resize/replacement, copy independence, bounded growth, CFData/Objective-C ownership and provider lifetimes passed');
+} finally { guest.close(); }
+const fixture = new NativeVst3Guest(uc, nativeDataFixture());
+try { fixture.initialize(); assert.equal(fixture.factoryInfo().classes[0].cid, '01000000000000000000000000000000'); assert.equal(fixture.objc.objects.size, 0); } finally { fixture.close(); }

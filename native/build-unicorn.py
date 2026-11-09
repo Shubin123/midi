@@ -10,7 +10,7 @@ root = Path(__file__).resolve().parent.parent
 if sys.version_info < (3, 12):
     raise SystemExit("Python 3.12 or later is required for safe archive extraction")
 archive = root / "vendor/unicorn/source.tar.gz"
-expected = "ff976b48a43115f20e440fe75402fb3049043f93044428d05e9432652de94505"
+expected = "83cbe49ea9017abeedb6dd150a3201c43af3bf4b33f5cf3d3048dcfe9c14a643"
 if hashlib.sha256(archive.read_bytes()).hexdigest() != expected:
     raise SystemExit("Unicorn source archive failed its SHA-256 integrity check")
 if len(sys.argv) != 2:
